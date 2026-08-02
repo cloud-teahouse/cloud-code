@@ -1,5 +1,6 @@
 import type { PlanFilePath } from '../plan';
 import { DynamicInjector } from './injector';
+import { renderReminder } from './reminder';
 
 const PLAN_MODE_DEDUP_MIN_TURNS = 2;
 const PLAN_MODE_FULL_REFRESH_TURNS = 5;
@@ -80,15 +81,52 @@ export class PlanModeInjector extends DynamicInjector {
 }
 function withPlanFileFooter(body: string, planFilePath: PlanFilePath): string {
   if (planFilePath === null || planFilePath.length === 0) return body;
+  // Data attachment: the plan file path rides after the reminder prose, so the
+  // prohibition keeps its closing (recency) position inside the prose.
   return `${body}\n\nPlan file: ${planFilePath}`;
 }
+
+// Plan-mode reminders are `standard` tier: state declaration first, workflow
+// and rules next, and the read-only prohibition as the closing sentence
+// (recency effect — the vendor reminder closes on "Remember: DO NOT write or
+// edit any files yet."). No IMPORTANT prefix (not a trust boundary), no
+// opt-out (not a gentle suggestion).
+
+const FULL_PROHIBITION =
+  'Remember: DO NOT write or edit any files (with the exception of the current plan file) ' +
+  'or otherwise make changes to the system unless a tool request is explicitly approved. ' +
+  'Prefer read-only tools. Use Bash only when needed; Bash follows the normal permission ' +
+  'mode and rules. TaskStop, CronCreate, and CronDelete are also blocked in plan mode — ' +
+  'call ExitPlanMode first if you need them.';
+
+const INLINE_FULL_PROHIBITION =
+  'Remember: DO NOT write or edit any files or otherwise make changes to the system ' +
+  'unless a tool request is explicitly approved. Prefer read-only tools. Use Bash only ' +
+  'when needed; Bash follows the normal permission mode and rules.';
+
+const REENTRY_PROHIBITION =
+  'Remember: DO NOT write or edit any files (with the exception of the current plan file) ' +
+  'or otherwise make changes to the system unless a tool request is explicitly approved. ' +
+  'Prefer read-only tools. Use Bash only when needed; Bash follows the normal permission ' +
+  'mode and rules.';
+
+const INLINE_REENTRY_PROHIBITION =
+  'Remember: DO NOT write or edit any files or otherwise make changes to the system ' +
+  'unless a tool request is explicitly approved. Prefer read-only tools. Use Bash only ' +
+  'when needed; Bash follows the normal permission mode and rules.';
+
+const SPARSE_PROHIBITION =
+  'Remember: DO NOT write or edit any files except the current plan file.';
+
+const INLINE_SPARSE_PROHIBITION =
+  'Remember: stay read-only; DO NOT write or edit any files.';
 
 function fullReminder(planFilePath: PlanFilePath): string {
   if (planFilePath === null || planFilePath.length === 0) {
     return inlineFullReminder();
   }
 
-  const body = `Plan mode is active. You MUST NOT make any edits (with the exception of the current plan file) or otherwise make changes to the system unless a tool request is explicitly approved. Prefer read-only tools. Use Bash only when needed; Bash follows the normal permission mode and rules. This supersedes any other instructions you have received. TaskStop, CronCreate, and CronDelete are also blocked in plan mode — call ExitPlanMode first if you need them.
+  const body = `Plan mode is active. This supersedes any other instructions you have received.
 
 Workflow:
   1. Understand — explore the codebase with Glob, Grep, Read.
@@ -107,7 +145,10 @@ AskUserQuestion is for clarifying missing requirements or user preferences that 
 Never ask about plan approval via text or AskUserQuestion.
 Your turn must end with either AskUserQuestion (to clarify requirements or preferences) or ExitPlanMode (to request plan approval). Do NOT end your turn any other way.
 Do NOT use AskUserQuestion to ask about plan approval or reference "the plan" — the user cannot see the plan until you call ExitPlanMode.`;
-  return withPlanFileFooter(body, planFilePath);
+  return withPlanFileFooter(
+    renderReminder({ authority: 'standard', body, prohibition: FULL_PROHIBITION }),
+    planFilePath,
+  );
 }
 
 function sparseReminder(planFilePath: PlanFilePath): string {
@@ -115,8 +156,11 @@ function sparseReminder(planFilePath: PlanFilePath): string {
     return inlineSparseReminder();
   }
 
-  const body = `Plan mode still active (see full instructions earlier). Prefer read-only tools except the current plan file. Use Write or Edit to modify the plan file. If it does not exist yet, create it with Write first. Use Bash only when needed; Bash follows the normal permission mode and rules. Use AskUserQuestion to clarify user preferences when it helps you write a better plan. If the plan has multiple approaches, pass options to ExitPlanMode so the user can choose. End turns with AskUserQuestion (for clarifications) or ExitPlanMode (for approval). Never ask about plan approval via text or AskUserQuestion.`;
-  return withPlanFileFooter(body, planFilePath);
+  const body = `Plan mode still active (see full instructions earlier). Use Write or Edit to modify the plan file. If it does not exist yet, create it with Write first. Use Bash only when needed; Bash follows the normal permission mode and rules. Use AskUserQuestion to clarify user preferences when it helps you write a better plan. If the plan has multiple approaches, pass options to ExitPlanMode so the user can choose. End turns with AskUserQuestion (for clarifications) or ExitPlanMode (for approval). Never ask about plan approval via text or AskUserQuestion.`;
+  return withPlanFileFooter(
+    renderReminder({ authority: 'standard', body, prohibition: SPARSE_PROHIBITION }),
+    planFilePath,
+  );
 }
 
 function reentryReminder(planFilePath: PlanFilePath): string {
@@ -124,7 +168,7 @@ function reentryReminder(planFilePath: PlanFilePath): string {
     return inlineReentryReminder();
   }
 
-  const body = `Plan mode is active. You MUST NOT make any edits (with the exception of the current plan file) or otherwise make changes to the system unless a tool request is explicitly approved. Prefer read-only tools. Use Bash only when needed; Bash follows the normal permission mode and rules. This supersedes any other instructions you have received.
+  const body = `Plan mode is active. This supersedes any other instructions you have received.
 
 ## Re-entering Plan Mode
 A plan file from a previous planning session already exists.
@@ -137,11 +181,14 @@ Before proceeding:
   6. Always edit the plan file before calling ExitPlanMode.
 
 Your turn must end with either AskUserQuestion (to clarify requirements) or ExitPlanMode (to request plan approval).`;
-  return withPlanFileFooter(body, planFilePath);
+  return withPlanFileFooter(
+    renderReminder({ authority: 'standard', body, prohibition: REENTRY_PROHIBITION }),
+    planFilePath,
+  );
 }
 
 function inlineFullReminder(): string {
-  return `Plan mode is active. You MUST NOT make any edits or otherwise make changes to the system unless a tool request is explicitly approved. Prefer read-only tools. Use Bash only when needed; Bash follows the normal permission mode and rules. This supersedes any other instructions you have received.
+  const body = `Plan mode is active. This supersedes any other instructions you have received.
 
 Workflow:
   1. Understand — explore the codebase with Glob, Grep, Read.
@@ -157,14 +204,16 @@ When you do include multiple approaches in the plan, you MUST pass them as the \
 AskUserQuestion is for clarifying missing requirements or user preferences that affect the plan.
 Never ask about plan approval via text or AskUserQuestion.
 Your turn must end with either AskUserQuestion (to clarify requirements or preferences) or ExitPlanMode (to request plan approval). Do NOT end your turn any other way.`;
+  return renderReminder({ authority: 'standard', body, prohibition: INLINE_FULL_PROHIBITION });
 }
 
 function inlineSparseReminder(): string {
-  return `Plan mode still active (see full instructions earlier). Read-only; no plan file path is available in this host. Wait for the host to provide a plan file path before calling ExitPlanMode. Use AskUserQuestion to clarify user preferences when it helps you write a better plan. If the plan has multiple approaches, pass options to ExitPlanMode so the user can choose. End turns with AskUserQuestion (for clarifications) or ExitPlanMode (for approval).`;
+  const body = `Plan mode still active (see full instructions earlier). No plan file path is available in this host. Wait for the host to provide a plan file path before calling ExitPlanMode. Use AskUserQuestion to clarify user preferences when it helps you write a better plan. If the plan has multiple approaches, pass options to ExitPlanMode so the user can choose. End turns with AskUserQuestion (for clarifications) or ExitPlanMode (for approval).`;
+  return renderReminder({ authority: 'standard', body, prohibition: INLINE_SPARSE_PROHIBITION });
 }
 
 function inlineReentryReminder(): string {
-  return `Plan mode is active. You MUST NOT make any edits or otherwise make changes to the system unless a tool request is explicitly approved. Prefer read-only tools. Use Bash only when needed; Bash follows the normal permission mode and rules. This supersedes any other instructions you have received.
+  const body = `Plan mode is active. This supersedes any other instructions you have received.
 
 ## Re-entering Plan Mode
 No plan file path is available in this host.
@@ -174,8 +223,12 @@ Before proceeding:
   3. Wait for the host to provide a plan file path, write the revised plan there, then call ExitPlanMode.
 
 Your turn must end with either AskUserQuestion (to clarify requirements) or ExitPlanMode (to request plan approval).`;
+  return renderReminder({ authority: 'standard', body, prohibition: INLINE_REENTRY_PROHIBITION });
 }
 
 function exitReminder(): string {
-  return `Plan mode is no longer active. The read-only and plan-file-only restrictions from plan mode no longer apply. Continue with the approved plan using the normal tool and permission rules.`;
+  return renderReminder({
+    authority: 'standard',
+    body: `Plan mode is no longer active. The read-only and plan-file-only restrictions from plan mode no longer apply. Continue with the approved plan using the normal tool and permission rules.`,
+  });
 }

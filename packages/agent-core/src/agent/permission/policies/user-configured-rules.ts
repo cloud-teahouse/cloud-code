@@ -1,5 +1,6 @@
 import type { Agent } from '../..';
 import {
+  collectCoveredSubjects,
   matchPermissionRule,
   type PermissionRuleMatch,
 } from '../matches-rule';
@@ -21,15 +22,17 @@ const USER_CONFIGURED_SCOPES = new Set<PermissionRuleScope>([
 abstract class UserConfiguredPermissionPolicy {
   constructor(protected readonly agent: Agent) {}
 
+  protected userConfiguredRules(decision: PermissionRuleDecision): PermissionRule[] {
+    return this.agent.permission.data().rules.filter((rule): rule is PermissionRule =>
+      USER_CONFIGURED_SCOPES.has(rule.scope) && rule.decision === decision,
+    );
+  }
+
   protected firstMatchingRule(
     context: PermissionPolicyContext,
     decision: PermissionRuleDecision,
   ): PermissionRuleMatch | undefined {
-    const rules = this.agent.permission.data().rules.filter((rule): rule is PermissionRule =>
-      USER_CONFIGURED_SCOPES.has(rule.scope),
-    );
-    for (const rule of rules) {
-      if (rule.decision !== decision) continue;
+    for (const rule of this.userConfiguredRules(decision)) {
       const match = matchPermissionRule({
         rule,
         toolName: context.toolCall.name,
@@ -69,12 +72,39 @@ export class UserConfiguredAllowPermissionPolicy
   readonly name = 'user-configured-allow';
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
+    // Decomposable executions (compound Bash commands): a single allow rule
+    // must not approve the whole call. Approve only when the union of all
+    // allow rules — session-runtime grants included, so a session grant and
+    // a configured rule can each cover part of one compound command —
+    // covers every segment (design doc §3.3).
+    if (context.execution.ruleMatch !== undefined) {
+      return this.evaluateUnionCover(context);
+    }
     const match = this.firstMatchingRule(context, 'allow');
     if (match === undefined) return;
     return {
       kind: 'approve',
       reason: userRuleReason('allow', match),
     };
+  }
+
+  private evaluateUnionCover(
+    context: PermissionPolicyContext,
+  ): PermissionPolicyResult | undefined {
+    const cover = collectCoveredSubjects({
+      rules: this.allowUnionRules(),
+      toolName: context.toolCall.name,
+      execution: context.execution,
+    });
+    if (cover?.fullyCovered !== true || cover.firstMatch === undefined) return;
+    return {
+      kind: 'approve',
+      reason: userRuleReason('allow', cover.firstMatch),
+    };
+  }
+
+  private allowUnionRules(): PermissionRule[] {
+    return [...this.agent.permission.sessionApprovalRules, ...this.userConfiguredRules('allow')];
   }
 }
 

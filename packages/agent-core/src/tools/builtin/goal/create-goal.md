@@ -16,5 +16,11 @@ Include a `completionCriterion` when the user provides one, or when it can be st
 inventing new requirements. Keep `objective` concise; reference long task descriptions by file
 path rather than pasting them.
 
+Set `sizeHint` to your estimate of the goal scope: `small` for a single-file change or one
+focused problem, `medium` for a multi-file feature, `large` for a broad refactor or open-ended
+research. The tier picks the default turn/token budget caps the goal starts with (when omitted,
+the tier is inferred from the objective length). A budget the user states explicitly always
+wins over these defaults — never let `sizeHint` override it.
+
 Creating a goal fails if one already exists, so use `replace: true` only when the user explicitly
 wants to abandon the current goal and start a new one.

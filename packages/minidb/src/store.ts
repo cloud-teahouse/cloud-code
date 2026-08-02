@@ -205,7 +205,9 @@ export class Store {
   }
 
   set(key: string | Buffer, value: Buffer, expireAt = 0, dt: Record<string, number> | null = null): void {
-    this.setRef(key, { kind: 'memory', value: Buffer.from(value) }, expireAt, dt);
+    // No defensive copy here: setRef unconditionally cloneRef()s, so the stored
+    // buffer is already a private copy and caller-side mutation cannot alias it.
+    this.setRef(key, { kind: 'memory', value }, expireAt, dt);
   }
 
   setRef(key: string | Buffer, ref: ValueRef, expireAt = 0, dt: Record<string, number> | null = null): void {

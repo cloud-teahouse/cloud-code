@@ -9,6 +9,13 @@ export interface SkillMetadata {
   readonly isSubSkill?: boolean | undefined;
   readonly safe?: boolean | undefined;
   readonly arguments?: readonly unknown[] | string | undefined;
+  /**
+   * Gitignore-style path patterns (e.g. `["src/api/**"]`) gating model
+   * visibility: a skill declaring them stays out of the skill listing until
+   * the agent touches a matching file (Edit/Write/Bash), then activates for
+   * the rest of the session. Only meaningful on inline skill types.
+   */
+  readonly paths?: readonly string[] | undefined;
   readonly [key: string]: unknown;
 }
 

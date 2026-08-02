@@ -9,7 +9,7 @@ export type Doc = unknown;
 
 type Path = string | readonly (string | number)[];
 
-function tokenizePath(path: Path): (string | number)[] {
+export function tokenizePath(path: Path): (string | number)[] {
   if (Array.isArray(path)) return [...path];
   const tokens: (string | number)[] = [];
   for (const seg of String(path).split('.')) {
@@ -29,13 +29,18 @@ function tokenizePath(path: Path): (string | number)[] {
   return tokens;
 }
 
-export function getPath(doc: Doc, path: Path): unknown {
+/** getPath over an already-tokenized path (see compileMatch/compileProject). */
+export function getPathTokens(doc: Doc, tokens: readonly (string | number)[]): unknown {
   let cur: unknown = doc;
-  for (const t of tokenizePath(path)) {
+  for (const t of tokens) {
     if (cur === null || cur === undefined) return undefined;
     cur = (cur as Record<string | number, unknown>)[t];
   }
   return cur;
+}
+
+export function getPath(doc: Doc, path: Path): unknown {
+  return getPathTokens(doc, tokenizePath(path));
 }
 
 export function setPath(obj: Doc, path: Path, value: unknown): Doc {
@@ -55,12 +60,23 @@ export function setPath(obj: Doc, path: Path, value: unknown): Doc {
 /** Keep only the given paths (inclusion). Returns a new object. */
 export function project(doc: Doc, paths?: readonly string[]): Doc {
   if (!paths || !paths.length) return doc;
+  return projectTokens(doc, paths.map(tokenizePath));
+}
+
+/** project() over paths tokenized once up front (see compileProject). */
+export function projectTokens(doc: Doc, paths: readonly (readonly (string | number)[])[]): Doc {
   const out: Record<string, unknown> = {};
-  for (const p of paths) {
-    const v = getPath(doc, p);
-    if (v !== undefined) setPath(out, p, v);
+  for (const tokens of paths) {
+    const v = getPathTokens(doc, tokens);
+    if (v !== undefined) setPath(out, tokens, v);
   }
   return out;
+}
+
+/** Tokenize projection paths once for a per-document loop. Returns null for a
+ *  missing/empty list, where project() is the identity (returns the doc). */
+export function compileProject(paths?: readonly string[]): readonly (string | number)[][] | null {
+  return paths && paths.length > 0 ? paths.map(tokenizePath) : null;
 }
 
 // --- filter --------------------------------------------------------------
@@ -133,21 +149,66 @@ function matchCond(val: unknown, cond: Cond): boolean {
 
 /** Does `doc` satisfy the Mongo-like `filter`? */
 export function match(doc: Doc, filter?: Record<string, unknown> | null): boolean {
-  if (!filter || Object.keys(filter).length === 0) return true;
-  for (const key of Object.keys(filter)) {
-    const cond = filter[key];
-    if (key === '$and') {
-      if (!Array.isArray(cond) || !cond.every((f) => match(doc, f as Record<string, unknown>))) return false;
-    } else if (key === '$or') {
-      if (!Array.isArray(cond) || !cond.some((f) => match(doc, f as Record<string, unknown>))) return false;
-    } else if (key === '$nor') {
-      if (!Array.isArray(cond) || cond.some((f) => match(doc, f as Record<string, unknown>))) return false;
-    } else if (key === '$not') {
-      if (match(doc, cond as Record<string, unknown>)) return false;
-    } else {
-      if (!matchCond(getPath(doc, key), cond)) return false;
+  return compileMatch(filter)(doc);
+}
+
+type Matcher = (doc: Doc) => boolean;
+
+// One compiled clause per filter key, mirroring match()'s $-key handling
+// exactly; path clauses carry the key's tokens so a per-document loop never
+// re-tokenizes the same path.
+type Clause =
+  | { kind: 'path'; tokens: (string | number)[]; cond: Cond }
+  | { kind: 'and'; subs: Matcher[] | null }
+  | { kind: 'or'; subs: Matcher[] | null }
+  | { kind: 'nor'; subs: Matcher[] | null }
+  | { kind: 'not'; sub: Matcher };
+
+/**
+ * Compile a filter once for a per-document loop. The semantics are exactly
+ * match()'s: clause order and short-circuiting are unchanged, and matchCond —
+ * including its stateful-RegExp lastIndex reset — still runs per document.
+ */
+export function compileMatch(filter?: Record<string, unknown> | null): Matcher {
+  const clauses: Clause[] = [];
+  if (filter) {
+    for (const key of Object.keys(filter)) {
+      const cond = filter[key];
+      if (key === '$and') {
+        clauses.push({ kind: 'and', subs: Array.isArray(cond) ? cond.map((f) => compileMatch(f as Record<string, unknown>)) : null });
+      } else if (key === '$or') {
+        clauses.push({ kind: 'or', subs: Array.isArray(cond) ? cond.map((f) => compileMatch(f as Record<string, unknown>)) : null });
+      } else if (key === '$nor') {
+        clauses.push({ kind: 'nor', subs: Array.isArray(cond) ? cond.map((f) => compileMatch(f as Record<string, unknown>)) : null });
+      } else if (key === '$not') {
+        clauses.push({ kind: 'not', sub: compileMatch(cond as Record<string, unknown>) });
+      } else {
+        clauses.push({ kind: 'path', tokens: tokenizePath(key), cond });
+      }
     }
   }
-  return true;
+  if (clauses.length === 0) return () => true;
+  return (doc) => {
+    for (const c of clauses) {
+      switch (c.kind) {
+        case 'path':
+          if (!matchCond(getPathTokens(doc, c.tokens), c.cond)) return false;
+          break;
+        case 'and':
+          if (c.subs === null || !c.subs.every((s) => s(doc))) return false;
+          break;
+        case 'or':
+          if (c.subs === null || !c.subs.some((s) => s(doc))) return false;
+          break;
+        case 'nor':
+          if (c.subs === null || c.subs.some((s) => s(doc))) return false;
+          break;
+        case 'not':
+          if (c.sub(doc)) return false;
+          break;
+      }
+    }
+    return true;
+  };
 }
 

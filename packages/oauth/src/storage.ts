@@ -2,7 +2,7 @@
  * File-based OAuth token storage.
  *
  * Tokens are persisted under a directory (default
- * `~/.kimi-code/credentials/`) as `<name>.json` with mode 0600 (parent
+ * `~/.cloud-code/credentials/`) as `<name>.json` with mode 0600 (parent
  * dir 0700). Wire format uses snake_case to match the server contract.
  *
  * Write semantics: write to `<name>.tmp.<pid>.<rand>` → fsync → rename.
@@ -10,6 +10,7 @@
  *
  * Load semantics: missing file → undefined. Corrupt JSON / wrong shape →
  * undefined (never throws). Callers treat undefined as "no token stored".
+ * Loads are cached per path keyed on the file's mtime (see `load`).
  */
 
 import { randomBytes } from 'node:crypto';
@@ -22,6 +23,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeSync,
 } from 'node:fs';
@@ -38,8 +40,19 @@ export interface TokenStorage {
   list(): Promise<string[]>;
 }
 
+/**
+ * Per-path cache entry for `FileTokenStorage.load`. `mtimeMs` is the file's
+ * mtime at the moment `value` was read (or `'missing'` when the file was
+ * absent); `value` is undefined for missing/corrupt files.
+ */
+interface LoadCacheEntry {
+  readonly mtimeMs: number | 'missing';
+  readonly value: TokenInfo | undefined;
+}
+
 export class FileTokenStorage implements TokenStorage {
   private readonly dir: string;
+  private readonly loadCache = new Map<string, LoadCacheEntry>();
 
   constructor(dir: string) {
     this.dir = dir;
@@ -71,20 +84,52 @@ export class FileTokenStorage implements TokenStorage {
 
   async load(name: string): Promise<TokenInfo | undefined> {
     const file = this.pathFor(name);
+    // Mtime-guarded cache: every load still stats the file, so a rewrite by
+    // any process (atomic rename in `save`) bumps mtimeMs and forces a
+    // re-read below. Same-instance writes never rely on this comparison —
+    // `save`/`remove` write the cache through synchronously, so e.g.
+    // `getAuthHeaders` observes the accountId persisted by a refresh
+    // milliseconds earlier even when both writes land in the same mtime tick.
+    //
+    // Residual window: a PEER-process write whose resulting mtime equals the
+    // cached marker keeps serving the stale value until the file changes
+    // again — ~1 ms on ns-precision filesystems (ext4/APFS), longer on
+    // coarse ones (FAT, some network mounts).
+    let mtimeMs: number | 'missing';
+    try {
+      mtimeMs = statSync(file).mtimeMs;
+    } catch {
+      mtimeMs = 'missing';
+    }
+    const cached = this.loadCache.get(file);
+    if (cached !== undefined && cached.mtimeMs === mtimeMs) {
+      // Shallow copy per call: TokenInfo fields are all primitives, and this
+      // preserves the previous contract where every load returned a fresh
+      // object from `tokenFromWire`.
+      return cached.value === undefined ? undefined : { ...cached.value };
+    }
     let raw: string;
     try {
       raw = readFileSync(file, 'utf-8');
     } catch {
+      this.loadCache.set(file, { mtimeMs, value: undefined });
       return undefined;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
+      this.loadCache.set(file, { mtimeMs, value: undefined });
       return undefined;
     }
-    if (!isRecord(parsed)) return undefined;
-    return tokenFromWire(parsed as Partial<TokenInfoWire>);
+    const value = isRecord(parsed) ? tokenFromWire(parsed as Partial<TokenInfoWire>) : undefined;
+    // A 'missing' stat with a successful read means a peer created the file
+    // in between; 'missing' does not describe this content, so skip caching
+    // rather than pair a value with a marker a future absent file would match.
+    if (mtimeMs !== 'missing' || value === undefined) {
+      this.loadCache.set(file, { mtimeMs, value });
+    }
+    return value === undefined ? undefined : { ...value };
   }
 
   async save(name: string, token: TokenInfo): Promise<void> {
@@ -105,7 +150,14 @@ export class FileTokenStorage implements TokenStorage {
     try {
       // chmod again in case umask stripped bits during open
       chmodSync(tmp, 0o600);
+      // Capture the mtime before the rename: rename(2) preserves it, and the
+      // tmp path is exclusively ours, so this marker cannot race a peer
+      // write. Write-through keeps same-instance readers consistent even
+      // when the new mtime lands in the same tick as the previously cached
+      // one. Cache a snapshot — callers may reuse/mutate `token` after save.
+      const mtimeMs = statSync(tmp).mtimeMs;
       renameSync(tmp, target);
+      this.loadCache.set(target, { mtimeMs, value: { ...token } });
     } catch (error) {
       try {
         unlinkSync(tmp);
@@ -117,13 +169,18 @@ export class FileTokenStorage implements TokenStorage {
   }
 
   async remove(name: string): Promise<void> {
+    const file = this.pathFor(name);
     try {
-      unlinkSync(this.pathFor(name));
+      unlinkSync(file);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error;
       }
     }
+    // Write-through: from this instance's perspective the file is gone
+    // (unlinked, or already absent). A peer recreate bumps the stat marker
+    // from 'missing' to a number, forcing a re-read on the next load.
+    this.loadCache.set(file, { mtimeMs: 'missing', value: undefined });
   }
 
   async list(): Promise<string[]> {

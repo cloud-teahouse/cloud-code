@@ -1,6 +1,6 @@
 // bench/session-store.ts
 //
-// Schema + query layer for the kimi-code session store, built on minidb.
+// Schema + query layer for the Cloud Code session store, built on minidb.
 //
 // Two logical "tables" via key prefixes in one db:
 //   ws:<workspaceId>    -> WorkspaceDoc

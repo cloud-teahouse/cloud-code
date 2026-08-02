@@ -9,11 +9,11 @@
  */
 
 import { createDecorator } from '../../di';
-import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+import type { CloudCodeHostIdentity } from '@cloud-code/oauth';
 
 export interface IEnvironmentService {
   readonly _serviceBrand: undefined;
-  /** Resolved kimi home directory (e.g. `~/.kimi-code`). */
+  /** Resolved kimi home directory (e.g. `~/.cloud-code`). */
   readonly homeDir: string;
   /** Resolved absolute path to `config.toml`. */
   readonly configPath: string;
@@ -24,7 +24,7 @@ export interface IEnvironmentService {
    * contract; real hosts always set it. Rides on this bag because the DI
    * registry has no options channel that reaches OAuthService & co.
    */
-  readonly identity?: KimiHostIdentity;
+  readonly identity?: CloudCodeHostIdentity;
 }
 
 export const IEnvironmentService = createDecorator<IEnvironmentService>(

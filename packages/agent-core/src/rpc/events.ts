@@ -1,4 +1,17 @@
-export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@moonshot-ai/protocol';
+export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@cloud-code/protocol';
+
+// Runtime validators for the per-tool `structured` payloads of a tool
+// result (see packages/protocol/src/structured.ts) — clients safeParse
+// these instead of trusting the loose record.
+export {
+  agentResultStructuredSchema,
+  agentSwarmResultStructuredSchema,
+  askUserQuestionStructuredSchema,
+  backgroundTaskStructuredSchema,
+  exitPlanModeStructuredSchema,
+  goalSnapshotStructuredSchema,
+  readMediaFileStructuredSchema,
+} from '@cloud-code/protocol';
 
 export type {
   AgentEvent,
@@ -14,8 +27,11 @@ export type {
   CronFiredEvent,
   ErrorEvent,
   Event,
+  GoalReasonCode,
   GoalUpdatedEvent,
   HookResultEvent,
+  MailboxActivityEvent,
+  MailboxActivityMessage,
   McpOAuthAuthorizationUrlUpdateData,
   McpServerStatusEvent,
   McpServerStatusPayload,
@@ -30,6 +46,11 @@ export type {
   SubagentSpawnedEvent,
   SubagentStartedEvent,
   SubagentSuspendedEvent,
+  TeamMemberWire,
+  TeamTaskWire,
+  TeamTaskWireStatus,
+  TeamUpdatedEvent,
+  TeamWire,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -37,10 +58,14 @@ export type {
   ToolListUpdatedEvent,
   ToolListUpdatedReason,
   ToolProgressEvent,
+  ToolResultDisplayRef,
   ToolResultEvent,
+  ToolResultStructured,
   ToolUpdate,
   TurnEndedEvent,
   TurnEndReason,
+  TurnRateLimitPausedEvent,
+  TurnRateLimitResumingEvent,
   TurnStartedEvent,
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
@@ -48,6 +73,6 @@ export type {
   TurnStepStartedEvent,
   UsageStatus,
   WarningEvent,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
-export type { KimiErrorPayload } from '../errors';
+export type { CloudCodeErrorPayload } from '../errors';

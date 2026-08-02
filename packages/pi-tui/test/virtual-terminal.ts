@@ -2,7 +2,6 @@ import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import xterm from "@xterm/headless";
 import type { Terminal } from "../src/terminal.ts";
 
-// Extract Terminal class from the module
 const XtermTerminal = xterm.Terminal;
 
 /**
@@ -19,11 +18,9 @@ export class VirtualTerminal implements Terminal {
 		this._columns = columns;
 		this._rows = rows;
 
-		// Create xterm instance with specified dimensions
 		this.xterm = new XtermTerminal({
 			cols: columns,
 			rows: rows,
-			// Disable all interactive features for testing
 			disableStdin: true,
 			allowProposedApi: true,
 		});
@@ -66,10 +63,8 @@ export class VirtualTerminal implements Terminal {
 
 	moveBy(lines: number): void {
 		if (lines > 0) {
-			// Move down
 			this.xterm.write(`\x1b[${lines}B`);
 		} else if (lines < 0) {
-			// Move up
 			this.xterm.write(`\x1b[${-lines}A`);
 		}
 		// lines === 0: no movement
@@ -101,6 +96,20 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	setProgress(_active: boolean): void {}
+
+	enterAltScreen(): void {
+		this.write("\x1b[?1049h");
+	}
+
+	exitAltScreen(): void {
+		this.write("\x1b[?1049l");
+	}
+
+	setMouseReporting(enabled: boolean): void {
+		// xterm parses and tracks the mode; nothing else needed for tests.
+		// Mirrors ProcessTerminal: SGR coords (1006) + presses (1000) + any-motion (1003).
+		this.write(enabled ? "\x1b[?1006h\x1b[?1000h\x1b[?1003h" : "\x1b[?1003l\x1b[?1000l\x1b[?1006l");
+	}
 
 	// Test-specific methods not in Terminal interface
 
@@ -151,7 +160,6 @@ export class VirtualTerminal implements Terminal {
 		const lines: string[] = [];
 		const buffer = this.xterm.buffer.active;
 
-		// Get only the visible lines (viewport)
 		for (let i = 0; i < this.xterm.rows; i++) {
 			const line = buffer.getLine(buffer.viewportY + i);
 			if (line) {
@@ -171,7 +179,6 @@ export class VirtualTerminal implements Terminal {
 		const lines: string[] = [];
 		const buffer = this.xterm.buffer.active;
 
-		// Get all lines in the buffer (including scrollback)
 		for (let i = 0; i < buffer.length; i++) {
 			const line = buffer.getLine(i);
 			if (line) {

@@ -14,9 +14,9 @@ description: |
 - `mcp__plugin-kimi-datasource_data__get_data_source_desc`
 - `mcp__plugin-kimi-datasource_data__call_data_source_tool`
 
-这两个工具由 Kimi Code 托管执行，参数直接按 tool schema 传 JSON。
+这两个工具由 Cloud Code 托管执行，参数直接按 tool schema 传 JSON。
 
-工具会读取当前 Kimi Code 环境对应的本地 OAuth 登录凭据；当设置了 `KIMI_CODE_OAUTH_HOST` / `KIMI_CODE_BASE_URL` 时，会使用对应环境的隔离凭据。如果没有登录凭据，让用户先在 Kimi Code 里执行 `/login`。
+工具会读取当前 Cloud Code 环境对应的本地 OAuth 登录凭据；当设置了 `CLOUD_CODE_OAUTH_HOST` / `CLOUD_CODE_BASE_URL` 时，会使用对应环境的隔离凭据。如果没有登录凭据，让用户先在 Cloud Code 里执行 `/login`。
 
 ## 1. 这个 skill 提供什么能力
 

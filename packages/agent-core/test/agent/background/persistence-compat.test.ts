@@ -100,7 +100,6 @@ describe('BackgroundTaskPersistence legacy compatibility', () => {
     const persistence = new BackgroundTaskPersistence(sessionDir);
     const agent = {
       emitEvent: vi.fn(),
-      telemetry: { track: vi.fn() },
       context: { appendUserMessage: vi.fn() },
       turn: { steer: vi.fn() },
       hooks: undefined,

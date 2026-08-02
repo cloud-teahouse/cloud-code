@@ -15,7 +15,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import type { ProviderConfig } from '@moonshot-ai/kosong';
+import type { ProviderConfig } from '@cloud-code/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedAgentProfile } from '../../src/profile';

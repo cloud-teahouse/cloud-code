@@ -27,7 +27,7 @@ import type { SessionSummary } from '../../rpc';
 import type {
   Message,
   PageResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { SessionNotFoundError } from '../session/session';

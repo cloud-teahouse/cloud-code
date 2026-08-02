@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, type Event, type KimiError } from '#/index';
+import { createCloudCodeHarness, type Event, type CloudCodeError } from '#/index';
 
 import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -24,7 +24,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-work-');
     await writeTestConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_plan_runtime', workDir });
@@ -63,7 +63,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-toggle-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-toggle-work-');
     await writeTestConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_plan_toggle_runtime', workDir });
@@ -91,15 +91,15 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-compact-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-compact-work-');
     await writeTestConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_compact_runtime', workDir });
 
       await expect(session.compact({ instruction: 'Keep important facts.' })).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'compaction.unable',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -109,7 +109,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-usage-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-usage-work-');
     await writeTestConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_usage_runtime', workDir });
@@ -124,7 +124,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-work-');
     await writeTestConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const created = await harness.createSession({
@@ -161,7 +161,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-work-');
     await writeTestConfig(homeDir);
-    const createdHarness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const createdHarness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
     let sessionId = '';
     let sessionDir = '';
 
@@ -182,7 +182,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
 
     await removeManualPlanIds(sessionDir);
 
-    const resumedHarness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const resumedHarness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
     try {
       const resumed = await resumedHarness.resumeSession({ id: sessionId });
 
@@ -199,7 +199,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-work-');
     await writeTestConfig(homeDir);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const source = await harness.createSession({
@@ -299,13 +299,13 @@ describe('Session plan, compact, usage, and resume APIs', () => {
 
   it('rejects an empty resume id', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-empty-home-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(harness.resumeSession({ id: '   ' })).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.id_empty',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }

@@ -477,7 +477,7 @@ export const transcriptGradeSpecSchema = z.record(z.string(), transcriptGradeSch
  * Wire payload of the v1 WS `subscribe_v2` control frame — the ONLY carrier of
  * transcript subscriptions: one session, its grade map, and the optional
  * per-agent op-batch seq cursor. This contract is owned by THIS package
- * (transcript types never live in `@moonshot-ai/protocol`); the v1 connection
+ * (transcript types never live in `@cloud-code/protocol`); the v1 connection
  * layer validates the payload with this schema and answers malformed frames
  * with an ack error.
  *

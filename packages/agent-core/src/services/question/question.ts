@@ -2,7 +2,7 @@
  * Question service interface + protocol adapter.
  *
  * **Service interface** (`IQuestionService`): Reverse-RPC one-shot broker
- * role — routes `QuestionRequest`s coming out of `KimiCore` to a waiter
+ * role — routes `QuestionRequest`s coming out of `CloudCodeCore` to a waiter
  * (web client over WS, mock handler in tests) and resolves the
  * promise when the response arrives — or `dismiss()`-es it if the user
  * closes the panel (SCHEMAS.md §6.3).
@@ -25,7 +25,7 @@
  * Bridges two representations of the same question interaction:
  *
  *   1. **In-process SDK shape** (agent-core, camelCase) — what
- *      `BridgeClientAPI` sees from `KimiCore.requestQuestion(...)`. See
+ *      `BridgeClientAPI` sees from `CloudCodeCore.requestQuestion(...)`. See
  *      `packages/agent-core/src/rpc/sdk-api.ts:50-54`:
  *        `QuestionRequest { turnId?, toolCallId?, questions: QuestionItem[] }`
  *      where `QuestionItem` has `question, header?, body?, options[],
@@ -55,8 +55,8 @@ import type {
   QuestionOption as ProtocolQuestionOption,
   QuestionRequest as ProtocolQuestionRequest,
   QuestionResponse as ProtocolQuestionResponse,
-} from '@moonshot-ai/protocol';
-import type {} from '@moonshot-ai/protocol'; // type-only marker — keep protocol dep referenced
+} from '@cloud-code/protocol';
+import type {} from '@cloud-code/protocol'; // type-only marker — keep protocol dep referenced
 
 // Re-export for service-side consumers.
 export type { QuestionRequest, QuestionResult };
@@ -65,7 +65,7 @@ export interface IQuestionService {
   readonly _serviceBrand: undefined;
 
   /**
-   * Called by the adapter when KimiCore needs the user to answer a question.
+   * Called by the adapter when CloudCodeCore needs the user to answer a question.
    * Resolves with the in-process `QuestionResult` (null = no handler / fully
    * dismissed). Concrete impls own timeout policy.
    */

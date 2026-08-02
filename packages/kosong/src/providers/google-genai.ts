@@ -290,11 +290,15 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
           args = parsed as Record<string, unknown>;
         } else {
-          throw new ChatProviderError('Tool call arguments must be a JSON object.');
+          throw new ChatProviderError(
+            `Tool call arguments must be a JSON object (tool: ${toolCall.name}, id: ${toolCall.id}).`,
+          );
         }
       } catch (error) {
         if (error instanceof ChatProviderError) throw error;
-        throw new ChatProviderError('Tool call arguments must be valid JSON.');
+        throw new ChatProviderError(
+          `Tool call arguments must be valid JSON (tool: ${toolCall.name}, id: ${toolCall.id}).`,
+        );
       }
     }
 

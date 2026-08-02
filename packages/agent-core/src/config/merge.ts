@@ -1,24 +1,24 @@
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import {
-  KimiConfigPatchSchema,
+  CloudCodeConfigPatchSchema,
   formatConfigValidationError,
-  type KimiConfig,
-  type KimiConfigPatch,
+  type CloudCodeConfig,
+  type CloudCodeConfigPatch,
   validateConfig,
 } from '#/config/schema';
 
-export function mergeConfigPatch(config: KimiConfig, patch: KimiConfigPatch): KimiConfig {
+export function mergeConfigPatch(config: CloudCodeConfig, patch: CloudCodeConfigPatch): CloudCodeConfig {
   const base = validateConfig(config);
   const parsedPatch = parsePatch(patch);
   const merged = deepMerge(base, parsedPatch);
   return validateConfig(merged);
 }
 
-function parsePatch(patch: KimiConfigPatch): KimiConfigPatch {
+function parsePatch(patch: CloudCodeConfigPatch): CloudCodeConfigPatch {
   try {
-    return stripUndefinedDeep(KimiConfigPatchSchema.parse(patch)) as KimiConfigPatch;
+    return stripUndefinedDeep(CloudCodeConfigPatchSchema.parse(patch)) as CloudCodeConfigPatch;
   } catch (error) {
-    throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid configuration patch: ${formatConfigValidationError(error)}`, {
+    throw new CloudCodeError(ErrorCodes.CONFIG_INVALID, `Invalid configuration patch: ${formatConfigValidationError(error)}`, {
       cause: error,
     });
   }

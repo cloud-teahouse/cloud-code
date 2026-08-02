@@ -4,8 +4,8 @@ import { InstantiationService, Trace } from '#/di/instantiationService';
 import { ServiceCollection } from '#/di/serviceCollection';
 
 /**
- * P0.2: `Trace` class + `_enableTracing` ctor param installed. These
- * assertions verify the class is reachable and the constructor follows the
+ * `Trace` class + `_enableTracing` ctor param: these assertions verify the
+ * class is reachable and the constructor follows the
  * VS Code argument order `(services, strict, parent, enableTracing)`.
  */
 

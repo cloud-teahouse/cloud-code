@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
+import type { RateLimitSnapshot } from '@cloud-code/kosong';
+
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../src/agent/records';
 import { UsageRecorder } from '../../src/agent/usage';
+import { testAgent } from './harness/agent';
 
 describe('Agent usage', () => {
   it('accumulates usage by model', () => {
@@ -136,5 +143,100 @@ describe('Agent usage', () => {
       },
       currentTurn: undefined,
     });
+  });
+
+  it('keeps the latest rate-limit snapshot, latest wins', () => {
+    const usage = new UsageRecorder();
+    expect(usage.data().rateLimit).toBeUndefined();
+
+    const first = {
+      planType: 'plus',
+      activeLimit: 'premium',
+      primary: { usedPercent: 26, windowMinutes: 10080, resetsAt: 1900000000 },
+      secondary: null,
+      credits: null,
+      capturedAt: 1900000000000,
+    };
+    const second = { ...first, capturedAt: 1900000060000 };
+    usage.recordRateLimit(first);
+    expect(usage.data().rateLimit).toEqual(first);
+
+    usage.recordRateLimit(second);
+    expect(usage.data().rateLimit).toEqual(second);
+    expect(usage.status()?.rateLimit).toEqual(second);
+  });
+});
+
+describe('Agent usage rate-limit persistence', () => {
+  const snapshot: RateLimitSnapshot = {
+    planType: 'plus',
+    activeLimit: 'premium',
+    primary: { usedPercent: 26, windowMinutes: 300, resetsAt: 1900000000 },
+    secondary: { usedPercent: 62.5, windowMinutes: 10080, resetsAt: 1900500000 },
+    credits: { hasCredits: true, unlimited: false, balance: '120.5' },
+    capturedAt: 1900000000000,
+  };
+
+  it('logs a usage.rate_limit wire record with the full snapshot', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const { agent } = testAgent({ persistence });
+
+    agent.usage.recordRateLimit(snapshot);
+    await agent.records.flush();
+
+    expect(persistence.records).toHaveLength(2);
+    expect(persistence.records[0]?.type).toBe('metadata');
+    expect(persistence.records[1]).toMatchObject({
+      type: 'usage.rate_limit',
+      snapshot,
+    });
+  });
+
+  it('restores the persisted snapshot on replay, latest record wins', async () => {
+    const newer: RateLimitSnapshot = {
+      ...snapshot,
+      primary: { usedPercent: 41, windowMinutes: 300, resetsAt: 1900001000 },
+      capturedAt: snapshot.capturedAt + 60_000,
+    };
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'usage.rate_limit', snapshot },
+      { type: 'usage.rate_limit', snapshot: newer },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await agent.records.replay();
+
+    expect(agent.usage.data().rateLimit).toEqual(newer);
+    expect(agent.usage.status()?.rateLimit).toEqual(newer);
+  });
+
+  it('does not re-log the record while replaying it', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'usage.rate_limit', snapshot },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await agent.records.replay();
+
+    expect(agent.usage.data().rateLimit).toEqual(snapshot);
+    expect(
+      persistence.records.filter((record) => record.type === 'usage.rate_limit'),
+    ).toHaveLength(1);
+  });
+
+  it('round-trips a live capture into a resumed agent', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const live = testAgent({ persistence });
+    live.agent.usage.recordRateLimit(snapshot);
+    await live.agent.records.flush();
+
+    const resumed = testAgent({
+      persistence: new InMemoryAgentRecordPersistence([...persistence.records]),
+    });
+    await resumed.agent.records.replay();
+
+    expect(resumed.agent.usage.data().rateLimit).toEqual(snapshot);
   });
 });

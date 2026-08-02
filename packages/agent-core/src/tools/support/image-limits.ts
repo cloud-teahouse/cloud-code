@@ -1,7 +1,7 @@
 /**
  * Owner-scoped resolution of the `[image]` config limits.
  *
- * One instance per owner (KimiCore in production; a fresh default for a
+ * One instance per owner (CloudCodeCore in production; a fresh default for a
  * standalone Agent), mirroring the FlagResolver lifecycle: the owner pushes
  * its config on load and reload via {@link ImageLimits.setConfig}, and every
  * consumer resolves through the instance it was handed. Nothing is stored in

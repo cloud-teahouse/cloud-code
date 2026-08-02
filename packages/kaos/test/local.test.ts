@@ -799,7 +799,6 @@ describe('LocalKaos', () => {
 
       expect(proc.pid).toBeGreaterThan(0);
 
-      // Use a short timeout via Promise.race
       const result = await Promise.race([
         proc.wait().then((exitCode) => ({ kind: 'exited' as const, code: exitCode })),
         new Promise<{ kind: 'timeout' }>((resolve) =>
@@ -811,7 +810,6 @@ describe('LocalKaos', () => {
 
       expect(result.kind).toBe('timeout');
 
-      // Kill the process
       await proc.kill('SIGKILL');
       const exitCode = await proc.wait();
       // On Unix, killed processes typically have negative exit or 137
@@ -1048,6 +1046,43 @@ describe('LocalProcess.kill safety', () => {
     },
     30_000,
   );
+});
+
+describe('LocalProcess stdin', () => {
+  let kaos: LocalKaos;
+
+  beforeEach(async () => {
+    kaos = await LocalKaos.create();
+  });
+
+  it('attaches an error listener so a broken pipe cannot go unhandled', async () => {
+    const proc = await kaos.exec(...nodeArgs('setTimeout(() => {}, 50)'));
+    // Without one, Node re-throws the stream's 'error' event as an uncaught
+    // exception and takes the whole process down.
+    expect(proc.stdin.listenerCount('error')).toBeGreaterThan(0);
+    proc.stdin.end();
+    await proc.wait();
+  });
+
+  it('survives writing to a child that exited without reading stdin', async () => {
+    // `git check-ignore --stdin` against a non-repository is the real case:
+    // the child exits immediately, then our write hits a broken pipe. The
+    // write error arrives asynchronously, so the `try { write() } catch {}`
+    // at the call site cannot catch it — only the stream listener can.
+    const proc = await kaos.exec(...nodeArgs('process.exit(0)'));
+    const exitCode = await proc.wait();
+    expect(exitCode).toBe(0);
+
+    // Comfortably past the OS pipe buffer so the write reaches the dead peer
+    // instead of being absorbed.
+    proc.stdin.write('x'.repeat(1024 * 1024));
+    proc.stdin.end();
+    // Give the asynchronous 'error' event a turn to fire; an unhandled one
+    // would fail this file as an unhandled error rather than an assertion.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(proc.exitCode).toBe(0);
+  });
 });
 
 async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {

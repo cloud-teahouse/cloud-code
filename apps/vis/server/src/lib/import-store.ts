@@ -64,7 +64,7 @@ export async function importSessionZip(
     const hasMainWire = await pathExists(join(dir, 'agents', 'main', 'wire.jsonl'));
     if (!hasMainWire) {
       throw new ZipImportError(
-        'zip does not look like a kimi-code session bundle (missing agents/main/wire.jsonl)',
+        'zip does not look like a cloud-code session bundle (missing agents/main/wire.jsonl)',
       );
     }
 

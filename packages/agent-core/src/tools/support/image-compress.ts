@@ -32,9 +32,8 @@
  *    so its raw `<system>` markup never renders in the UI.
  */
 
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
-import type { TelemetryClient } from '#/telemetry';
 
 import { sniffImageDimensions } from './file-type';
 import {
@@ -198,35 +197,7 @@ export interface CompressImageOptions {
   readonly byteBudget?: number;
   /** Override the raw-byte ceiling above which compression is skipped. */
   readonly maxDecodeBytes?: number;
-  /**
-   * Report an `image_compress` event per compression call (and an
-   * `image_crop` event per {@link cropImageForModel} call). Absent → silent.
-   */
-  readonly telemetry?: ImageCompressionTelemetry;
 }
-
-/** Wiring for the optional compression telemetry events. */
-export interface ImageCompressionTelemetry {
-  readonly client: TelemetryClient;
-  /** Where the image entered the pipeline, e.g. 'read_media', 'tui_paste'. */
-  readonly source: string;
-}
-
-/**
- * How a compression call ended, as reported in the `image_compress` event.
- * Every `passthrough_*` variant returns the input bytes unchanged: `fast` is
- * the within-budgets hot path, `guard` a decode-safety refusal (pixel bomb or
- * byte cap), `unsupported` a format the codec cannot re-encode (or empty
- * input), `unhelpful` a re-encode that saved neither bytes nor pixels, and
- * `error` a decode/encode failure.
- */
-type CompressOutcome =
-  | 'compressed'
-  | 'passthrough_fast'
-  | 'passthrough_guard'
-  | 'passthrough_unsupported'
-  | 'passthrough_unhelpful'
-  | 'passthrough_error';
 
 export interface CompressImageResult {
   /** Bytes to send: the re-encoded image, or the original when unchanged. */
@@ -263,7 +234,6 @@ export async function compressImageForModel(
   mimeType: string,
   options: CompressImageOptions = {},
 ): Promise<CompressImageResult> {
-  const startedAt = Date.now();
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
@@ -281,24 +251,13 @@ export async function compressImageForModel(
     originalByteLength: bytes.length,
     finalByteLength: bytes.length,
   });
-  const finish = (outcome: CompressOutcome, result: CompressImageResult): CompressImageResult => {
-    reportCompressEvent(options.telemetry, {
-      outcome,
-      startedAt,
-      inputMime: normalizedMime,
-      exifTransposed: dims?.transposed === true,
-      result,
-    });
-    return result;
-  };
-
-  if (bytes.length === 0) return finish('passthrough_unsupported', passthrough());
+  if (bytes.length === 0) return passthrough();
   // Only re-encode formats the codec handles; everything else passes through.
-  if (!RECODABLE_MIME.has(normalizedMime)) return finish('passthrough_unsupported', passthrough());
+  if (!RECODABLE_MIME.has(normalizedMime)) return passthrough();
   // Animated WebP would be flattened to one frame by decoding — pass it
   // through whole, the same reason GIF is never re-encoded.
   if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
-    return finish('passthrough_unsupported', passthrough());
+    return passthrough();
   }
 
   // Fast path: already within both budgets — no codec load, no allocation.
@@ -306,17 +265,17 @@ export async function compressImageForModel(
   const withinBytes = bytes.length <= byteBudget;
   const withinEdge = longestEdge > 0 && longestEdge <= maxEdge;
   if (withinBytes && (withinEdge || longestEdge === 0)) {
-    return finish('passthrough_fast', passthrough());
+    return passthrough();
   }
 
   // Decompression-bomb guard: refuse to decode absurd pixel counts. The sniff
   // above gave us the dimensions without decoding, so this costs nothing.
   if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) {
-    return finish('passthrough_guard', passthrough());
+    return passthrough();
   }
   // Refuse to decode very large byte payloads (e.g. a huge or invalid image
   // from an MCP tool) that would be loaded just to be dropped downstream.
-  if (bytes.length > maxDecodeBytes) return finish('passthrough_guard', passthrough());
+  if (bytes.length > maxDecodeBytes) return passthrough();
 
   try {
     const image = await decodeToJimp(bytes, normalizedMime);
@@ -349,9 +308,9 @@ export async function compressImageForModel(
     const finalPixels = encoded.width * encoded.height;
     const shrankBytes = encoded.data.length < bytes.length;
     const shrankPixels = finalPixels < originalPixels;
-    if (!shrankBytes && !shrankPixels) return finish('passthrough_unhelpful', passthrough());
+    if (!shrankBytes && !shrankPixels) return passthrough();
 
-    return finish('compressed', {
+    return {
       data: encoded.data,
       mimeType: encoded.mimeType,
       width: encoded.width,
@@ -361,10 +320,10 @@ export async function compressImageForModel(
       changed: true,
       originalByteLength: bytes.length,
       finalByteLength: encoded.data.length,
-    });
+    };
   } catch {
     // Decode/encode failure — keep the original bytes.
-    return finish('passthrough_error', passthrough());
+    return passthrough();
   }
 }
 
@@ -404,7 +363,6 @@ export async function compressBase64ForModel(
   // Skip very large payloads before allocating: base64 decodes to ~3/4 its
   // length, so a payload whose decoded size would exceed the cap is passed
   // through without the Buffer.from allocation (and without touching Jimp).
-  const startedAt = Date.now();
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const approxBytes = Math.floor((base64.length * 3) / 4);
   if (approxBytes > maxDecodeBytes) {
@@ -419,13 +377,6 @@ export async function compressBase64ForModel(
       originalByteLength: approxBytes,
       finalByteLength: approxBytes,
     };
-    reportCompressEvent(options.telemetry, {
-      outcome: 'passthrough_guard',
-      startedAt,
-      inputMime: normalizeImageMime(mimeType),
-      exifTransposed: false,
-      result,
-    });
     return result;
   }
   let bytes: Buffer;
@@ -443,16 +394,8 @@ export async function compressBase64ForModel(
       originalByteLength: 0,
       finalByteLength: 0,
     };
-    reportCompressEvent(options.telemetry, {
-      outcome: 'passthrough_error',
-      startedAt,
-      inputMime: normalizeImageMime(mimeType),
-      exifTransposed: false,
-      result,
-    });
     return result;
   }
-  // The event for this call is emitted inside compressImageForModel.
   const result = await compressImageForModel(bytes, mimeType, options);
   if (!result.changed) {
     return {
@@ -717,34 +660,25 @@ export async function cropImageForModel(
   region: ImageCropRegion,
   options: CropImageOptions = {},
 ): Promise<CropImageOutcome> {
-  const startedAt = Date.now();
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const normalizedMime = normalizeImageMime(mimeType);
 
-  const fail = (errorKind: CropErrorKind, error: string): CropImageFailure => {
-    reportCropEvent(options.telemetry, { startedAt, ok: false, errorKind });
-    return { ok: false, error };
-  };
-  const succeed = (result: CropImageSuccess): CropImageSuccess => {
-    reportCropEvent(options.telemetry, { startedAt, ok: true, result });
-    return result;
-  };
+  const fail = (error: string): CropImageFailure => ({ ok: false, error });
 
   if (bytes.length === 0) {
-    return fail('empty', 'The image is empty.');
+    return fail('The image is empty.');
   }
   if (!RECODABLE_MIME.has(normalizedMime)) {
     return fail(
-      'unsupported_format',
       `Cropping is only supported for PNG, JPEG, and WebP images; got ${mimeType}.`,
     );
   }
   // A crop is a still image by definition; decoding an animated WebP would
   // silently crop a single frame, so refuse explicitly.
   if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
-    return fail('unsupported_format', 'Cropping is not supported for animated WebP images.');
+    return fail('Cropping is not supported for animated WebP images.');
   }
   // NaN slips past every </>= comparison in the bounds guard below, so gate
   // on finiteness explicitly rather than surfacing a codec-internal error.
@@ -752,20 +686,18 @@ export async function cropImageForModel(
     ![region.x, region.y, region.width, region.height].every((value) => Number.isFinite(value))
   ) {
     return fail(
-      'region_invalid',
       `Region coordinates must be finite numbers; got x=${String(region.x)}, ` +
-        `y=${String(region.y)}, width=${String(region.width)}, height=${String(region.height)}.`,
+      `y=${String(region.y)}, width=${String(region.width)}, height=${String(region.height)}.`,
     );
   }
   const dims = sniffImageDimensions(bytes);
   if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) {
     return fail(
-      'too_large',
       `The image (${String(dims.width)}x${String(dims.height)} pixels) is too large to decode for cropping.`,
     );
   }
   if (bytes.length > maxDecodeBytes) {
-    return fail('too_large', 'The image is too large to decode for cropping.');
+    return fail('The image is too large to decode for cropping.');
   }
 
   try {
@@ -777,7 +709,6 @@ export async function cropImageForModel(
     const y = Math.floor(region.y);
     if (x < 0 || y < 0 || x >= originalWidth || y >= originalHeight || region.width < 1 || region.height < 1) {
       return fail(
-        'out_of_bounds',
         `Region (x=${String(region.x)}, y=${String(region.y)}, width=${String(region.width)}, ` +
           `height=${String(region.height)}) lies outside the ${String(originalWidth)}x${String(originalHeight)} image.`,
       );
@@ -799,14 +730,13 @@ export async function cropImageForModel(
         : await image.getBuffer('image/jpeg', { quality: 90 });
       if (buffer.length > byteBudget) {
         return fail(
-          'budget',
           `The cropped region encodes to ${String(buffer.length)} bytes ` +
-            `(${formatByteSize(buffer.length)}), over the ${String(byteBudget)}-byte ` +
-            `(${formatByteSize(byteBudget)}) per-image limit. ` +
-            'Choose a smaller region, or allow downscaling.',
+          `(${formatByteSize(buffer.length)}), over the ${String(byteBudget)}-byte ` +
+          `(${formatByteSize(byteBudget)}) per-image limit. ` +
+          'Choose a smaller region, or allow downscaling.',
         );
       }
-      return succeed({
+      return {
         ok: true,
         data: new Uint8Array(buffer),
         mimeType: preferLossless ? 'image/png' : 'image/jpeg',
@@ -818,7 +748,7 @@ export async function cropImageForModel(
         resized: false,
         originalByteLength: bytes.length,
         finalByteLength: buffer.length,
-      });
+      };
     }
 
     fitWithinEdge(image, maxEdge);
@@ -827,7 +757,7 @@ export async function cropImageForModel(
       byteBudget,
       fallbackEdges: FALLBACK_EDGES_PX,
     });
-    return succeed({
+    return {
       ok: true,
       data: new Uint8Array(encoded.data),
       mimeType: encoded.mimeType,
@@ -839,10 +769,9 @@ export async function cropImageForModel(
       resized: encoded.width !== w || encoded.height !== h,
       originalByteLength: bytes.length,
       finalByteLength: encoded.data.length,
-    });
+    };
   } catch (error) {
     return fail(
-      'decode_failed',
       `Failed to decode the image for cropping: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
@@ -1095,100 +1024,4 @@ function fitWithinEdge(image: JimpImage, edge: number): boolean {
     h: Math.max(1, Math.round(image.height * factor)),
   });
   return true;
-}
-
-// ── telemetry ────────────────────────────────────────────────────────
-
-/** Failure classification carried by the `image_crop` event. */
-type CropErrorKind =
-  | 'empty'
-  | 'unsupported_format'
-  | 'region_invalid'
-  | 'too_large'
-  | 'out_of_bounds'
-  | 'budget'
-  | 'decode_failed';
-
-/** The subset of a compression result the `image_compress` event reads. */
-interface CompressEventResult {
-  readonly mimeType: string;
-  readonly width: number;
-  readonly height: number;
-  readonly originalWidth: number;
-  readonly originalHeight: number;
-  readonly originalByteLength: number;
-  readonly finalByteLength: number;
-}
-
-/**
- * Emit the `image_compress` event. Properties are all numeric/enum — never
- * paths or content — and a throwing client is swallowed so telemetry can
- * never affect the compression result.
- */
-function reportCompressEvent(
-  telemetry: ImageCompressionTelemetry | undefined,
-  input: {
-    readonly outcome: CompressOutcome;
-    readonly startedAt: number;
-    readonly inputMime: string;
-    readonly exifTransposed: boolean;
-    readonly result: CompressEventResult;
-  },
-): void {
-  if (telemetry === undefined) return;
-  try {
-    telemetry.client.track('image_compress', {
-      source: telemetry.source,
-      outcome: input.outcome,
-      input_mime: input.inputMime,
-      output_mime: normalizeImageMime(input.result.mimeType),
-      original_bytes: input.result.originalByteLength,
-      final_bytes: input.result.finalByteLength,
-      original_width: input.result.originalWidth,
-      original_height: input.result.originalHeight,
-      final_width: input.result.width,
-      final_height: input.result.height,
-      exif_transposed: input.exifTransposed,
-      duration_ms: Date.now() - input.startedAt,
-    });
-  } catch {
-    // Telemetry must never affect the compression result.
-  }
-}
-
-/**
- * Emit the `image_crop` event. Reports the region as a share of the original
- * pixel area rather than raw coordinates.
- */
-function reportCropEvent(
-  telemetry: ImageCompressionTelemetry | undefined,
-  input: {
-    readonly startedAt: number;
-    readonly ok: boolean;
-    readonly errorKind?: CropErrorKind;
-    readonly result?: CropImageSuccess;
-  },
-): void {
-  if (telemetry === undefined) return;
-  try {
-    const { result } = input;
-    const originalPixels =
-      result === undefined ? 0 : result.originalWidth * result.originalHeight;
-    telemetry.client.track('image_crop', {
-      source: telemetry.source,
-      ok: input.ok,
-      error_kind: input.errorKind,
-      resized: result?.resized,
-      original_width: result?.originalWidth,
-      original_height: result?.originalHeight,
-      region_area_ratio:
-        result === undefined || originalPixels === 0
-          ? undefined
-          : (result.region.width * result.region.height) / originalPixels,
-      final_bytes: result?.finalByteLength,
-      duration_ms: Date.now() - input.startedAt,
-    });
-  } catch {
-    // Telemetry must never affect the crop outcome.
-  }
 }

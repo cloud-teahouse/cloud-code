@@ -10,14 +10,44 @@
  * `records/types.ts` for the persistence contract.
  */
 
-import { KimiChatProvider, type ChatProvider, type Message, type Tool } from '@moonshot-ai/kosong';
+import { KimiChatProvider, type ChatProvider, type Message, type Tool, type TokenUsage } from '@cloud-code/kosong';
 
-import { parseFloatEnv } from '#/config/resolve';
-import { resolveThinkingKeep } from '#/config/kimi-env-params';
+import { parseBooleanEnv, parseFloatEnv, resolveConfigValue } from '#/config/resolve';
+import { resolveThinkingKeep } from '#/config/cloud-code-env-params';
+import type { CloudCodeConfig } from '#/config/schema';
 
 import type { Agent } from '.';
 import type { LLMRequestLogFields } from '../loop';
 import { fingerprint, toolSignature } from './llm-request-logger';
+import {
+  captureShape,
+  compareShape,
+  type PrefixDriftReason,
+  type PrefixShape,
+} from './prefix-shape';
+
+/**
+ * How often a "prefix stable" summary line is logged while cache diagnostics
+ * are enabled (every Nth settled request without drift).
+ */
+const PREFIX_STABLE_LOG_INTERVAL = 10;
+
+/**
+ * `debug.cacheDiagnostics` in config, overridable by
+ * `CLOUD_CODE_DEBUG_CACHE=1` (env wins, following the `resolveConfigValue`
+ * pattern used by the other env-tunable settings). Shared with the system
+ * prompt assembly, which gates its per-section diagnostics dump on the same
+ * switch.
+ */
+export function cacheDiagnosticsEnabled(config: CloudCodeConfig | undefined): boolean {
+  return resolveConfigValue({
+    env: process.env,
+    envKey: 'CLOUD_CODE_DEBUG_CACHE',
+    configValue: config?.debug?.cacheDiagnostics,
+    defaultValue: false,
+    parseEnv: parseBooleanEnv,
+  });
+}
 
 export class LlmRequestRecorder {
   /** Hashes of tool tables already durable in this wire log. */
@@ -32,6 +62,27 @@ export class LlmRequestRecorder {
   private lastToolsHash: string | undefined;
   private lastSystemPrompt: string | undefined;
   private lastSystemPromptHash: string | undefined;
+  /**
+   * Prefix shape of the previously recorded request; the drift attribution
+   * baseline. Undefined until the first record (and after restore — a resumed
+   * session re-baselines on its first request instead of reporting a
+   * spurious drift against a shape it never captured).
+   */
+  private lastShape: PrefixShape | undefined;
+  /**
+   * Drift of the most recently recorded request, waiting to be correlated
+   * with that request's cache counters once its usage lands
+   * (`reportUsageSettled`). Overwritten if another request is recorded first
+   * (a failed retry attempt leaves no usage; the successful resend's drift is
+   * the one worth attributing).
+   */
+  private pendingDrift: {
+    readonly reasons: readonly PrefixDriftReason[];
+    readonly shape: PrefixShape;
+    readonly systemPromptChangedSections: readonly string[] | undefined;
+  } | undefined;
+  /** Settled requests since the last "prefix stable" summary log. */
+  private stableSettledRequests = 0;
 
   constructor(private readonly agent: Agent) {}
 
@@ -63,6 +114,31 @@ export class LlmRequestRecorder {
       });
     }
 
+    const systemPromptHash = this.systemPromptHashFor(systemPrompt);
+    // Prefix-drift attribution (F7): compare the per-request prefix shape
+    // against the previous request. Cheap — both hashes are already computed
+    // above; the shape only adds the comparison.
+    const shape = captureShape({
+      systemHash: systemPromptHash,
+      toolsHash,
+      projection: fields.projection,
+      graduatedVersion: this.agent.graduatedCompaction.projectionVersion,
+      historyLength: messages.length,
+    });
+    const previousShape = this.lastShape;
+    const driftReasons = compareShape(previousShape, shape);
+    this.lastShape = shape;
+    // Section-level refinement of a `system` drift: name the sections
+    // that moved. Undefined when either prompt is not a known assembly (e.g.
+    // an override prompt set directly through `config.update`) — the
+    // dimension-level attribution above still stands on its own then.
+    const systemPromptChangedSections =
+      previousShape !== undefined && driftReasons.includes('system')
+        ? this.agent.systemPromptSections.attributeDrift(previousShape.systemHash, shape.systemHash)
+        : undefined;
+    this.pendingDrift =
+      driftReasons.length > 0 ? { reasons: driftReasons, shape, systemPromptChangedSections } : undefined;
+
     const modelAlias = this.agent.config.modelAlias;
     // Mirror the ConfigState.provider pipeline for Kimi-only request params:
     // env sampling overrides and the preserved-thinking keep passthrough
@@ -70,7 +146,7 @@ export class LlmRequestRecorder {
     // helpers used at construction. thinkingEffort needs no mirroring — the
     // Kimi provider derives it from the request body's thinking payload, so
     // env effort overrides are already reflected in the read value.
-    const isKimiProvider = provider instanceof KimiChatProvider;
+    const isCloudCodeProvider = provider instanceof KimiChatProvider;
     this.agent.records.logRecord({
       type: 'llm.request',
       kind: fields.kind ?? 'loop',
@@ -78,17 +154,17 @@ export class LlmRequestRecorder {
       model: provider.modelName,
       modelAlias,
       thinkingEffort: provider.thinkingEffort ?? undefined,
-      thinkingKeep: isKimiProvider
+      thinkingKeep: isCloudCodeProvider
         ? resolveThinkingKeep(
             process.env,
             this.agent.kimiConfig?.thinking?.keep,
             provider.thinkingEffort ?? 'off',
           )
         : undefined,
-      temperature: isKimiProvider
+      temperature: isCloudCodeProvider
         ? parseFloatEnv(process.env['KIMI_MODEL_TEMPERATURE'], 'KIMI_MODEL_TEMPERATURE')
         : undefined,
-      topP: isKimiProvider
+      topP: isCloudCodeProvider
         ? parseFloatEnv(process.env['KIMI_MODEL_TOP_P'], 'KIMI_MODEL_TOP_P')
         : undefined,
       maxTokens: provider.maxCompletionTokens,
@@ -97,7 +173,7 @@ export class LlmRequestRecorder {
           ? undefined
           : this.agent.kimiConfig?.models?.[modelAlias]?.betaApi,
       toolSelect: this.agent.toolSelectEnabled,
-      systemPromptHash: this.systemPromptHashFor(systemPrompt),
+      systemPromptHash,
       systemPrompt:
         systemPrompt === this.agent.config.systemPrompt ? undefined : systemPrompt,
       toolsHash,
@@ -106,7 +182,56 @@ export class LlmRequestRecorder {
       attempt: fields.attempt,
       projection: fields.projection,
       droppedCount: fields.droppedCount,
+      prefixDriftReasons: driftReasons.length > 0 ? driftReasons : undefined,
+      systemPromptChangedSections,
     });
+  }
+
+  /**
+   * Correlate the settled request's cache counters with its prefix drift and
+   * emit the F7 cache diagnostics. Called from `UsageRecorder.record`, the
+   * single point where a request's provider-reported usage lands. No-op
+   * unless `debug.cacheDiagnostics` / `CLOUD_CODE_DEBUG_CACHE` is on — the
+   * comparison itself always runs (it is cheap and feeds the durable
+   * `llm.request.prefixDriftReasons`), only the log fan-out is
+   * gated.
+   */
+  reportUsageSettled(usage: TokenUsage): void {
+    if (this.agent.records.restoring) return;
+    const pending = this.pendingDrift;
+    this.pendingDrift = undefined;
+    if (!this.cacheDiagnosticsEnabled()) return;
+
+    if (pending !== undefined) {
+      this.agent.log.warn('llm prefix drift', {
+        reasons: pending.reasons.join(','),
+        historyLength: pending.shape.historyLength,
+        cache_read: usage.inputCacheRead,
+        cache_creation: usage.inputCacheCreation,
+        ...(pending.systemPromptChangedSections !== undefined
+          ? { system_sections: pending.systemPromptChangedSections.join(',') }
+          : {}),
+      });
+      this.stableSettledRequests = 0;
+      return;
+    }
+
+    this.stableSettledRequests += 1;
+    if (this.stableSettledRequests % PREFIX_STABLE_LOG_INTERVAL === 0) {
+      this.agent.log.info('llm prefix stable', {
+        settledRequests: this.stableSettledRequests,
+        cache_read: usage.inputCacheRead,
+        cache_creation: usage.inputCacheCreation,
+      });
+    }
+  }
+
+  /**
+   * `debug.cacheDiagnostics` in config, overridable by
+   * `CLOUD_CODE_DEBUG_CACHE=1` — see the exported {@link cacheDiagnosticsEnabled}.
+   */
+  private cacheDiagnosticsEnabled(): boolean {
+    return cacheDiagnosticsEnabled(this.agent.kimiConfig);
   }
 
   private toolsHashFor(wireTools: readonly Tool[]): string {

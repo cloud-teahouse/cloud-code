@@ -66,15 +66,37 @@ Use `recurring: false` for "remind me at X" style requests, single deadlines, "i
 
 ## Session lifetime
 
-Cron tasks live in the current kimi CLI session. When you exit, they
-are persisted under the session homedir; resuming the same session
-reloads them and the scheduler resumes from each task's `createdAt`. Fire times that fell during the offline window are
-collapsed into a single delivery via `coalescedCount` (and recurring
-tasks past their 7-day window arrive with `stale: true` as their final
-delivery).
+Session-scoped cron tasks (the default, `durable: false`) live in the
+current Cloud Code CLI session. When you exit, they are persisted under
+the session homedir; the next `cloud-code resume` of the same session
+reloads them and the scheduler resumes from each task's `createdAt`.
+Fire times that fell during the offline window are collapsed into a
+single delivery via `coalescedCount` (and recurring tasks past their
+7-day window arrive with `stale: true` as their final delivery).
 
-Tasks do **not** carry over into a brand-new session — they are scoped
-to the resumed session id, not to the working directory.
+Session-scoped tasks do **not** carry over into a brand-new session —
+they are scoped to the resumed session id, not to the working directory.
+
+## Project-durable tasks (durable: true)
+
+Pass `durable: true` only when the user explicitly wants the schedule to
+outlive the current session. Durable tasks are written to the project's
+`.cloud-code/scheduled_tasks.json` instead of the session store:
+
+- Any session opened in the same project — including a brand-new one —
+  reloads them at startup. Fires that were missed while no session was
+  running are delivered ONCE, coalesced, on the first idle tick.
+- One session at a time owns the project schedule (a cross-session lock
+  with stale-PID takeover). If the session that owns it exits, another
+  live session in the same project takes over within a few seconds.
+- A task you create from a non-owning session still lands in the shared
+  file and is fired by whichever session owns the schedule; `CronList`
+  shows it with `source: project` in every session of the project.
+- Durable tasks are just as subject to the 7-day stale auto-expire as
+  session tasks; recreate to keep a long-running schedule alive.
+
+`durable: true` requires a local project workspace; it is rejected in
+sessions where the project layer is unavailable (e.g. SSH-remote cwd).
 
 ## Limits
 
@@ -83,7 +105,7 @@ A session holds at most 50 live cron tasks; creating one beyond that is rejected
 ## Returned fields
 
 `id` (8-hex), `cron` (the normalized expression), `humanSchedule` (English summary), `recurring`,
-`nextFireAt` (local ISO timestamp with numeric offset, or null). `id` is needed by `CronDelete`.
+`durable` (plus `projectFile` when durable), `nextFireAt` (local ISO timestamp with numeric offset, or null). `id` is needed by `CronDelete`.
 
 ## Tell the user how to cancel or modify
 

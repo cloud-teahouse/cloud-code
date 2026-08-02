@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import { Readable, type Writable } from 'node:stream';
 
 function isUtf8Continuation(byte: number): boolean {
   return byte >= 0x80 && byte <= 0xbf;
@@ -293,4 +293,27 @@ export class BufferedReadable extends Readable {
   private readonly _onError = (error: Error): void => {
     this.destroy(error);
   };
+}
+
+/**
+ * Make a child process' stdin tolerant of the peer going away.
+ *
+ * `Writable.write()` never reports a broken pipe synchronously — the OS
+ * error surfaces asynchronously on the stream's `'error'` event, so a
+ * `try { proc.stdin.write(x) } catch {}` around the call catches nothing.
+ * An `'error'` event with no listener is re-thrown by Node as an uncaught
+ * exception and takes the whole process down.
+ *
+ * That is a routine, expected condition here: a child that exits before it
+ * has drained everything we piped to it (`git check-ignore --stdin` against
+ * a directory that is not a repository, a `head`-like filter closing early)
+ * leaves the write end broken. The child's exit code is the real signal, so
+ * the pipe error is swallowed — same rationale as the `wait()` rejection
+ * sink in {@link LocalProcess} and the `output` Readable in
+ * `LocalPtyProcess`.
+ */
+export function ignoreBrokenPipe(stdin: Writable): void {
+  stdin.on('error', () => {
+    /* peer closed the pipe; the exit code carries the outcome */
+  });
 }

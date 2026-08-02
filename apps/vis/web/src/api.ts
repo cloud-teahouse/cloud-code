@@ -13,7 +13,7 @@ import type {
   ApiError,
 } from './types';
 
-const TOKEN_STORAGE_KEY = 'kimi-vis-auth-token';
+const TOKEN_STORAGE_KEY = 'cloud-code-vis-auth-token';
 
 function readTokenParam(raw: string): string | null {
   const trimmed = raw.replace(/^[#?]/, '');

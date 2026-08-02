@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import type { PermissionMode } from '../../src/agent/permission';
-import { ErrorCodes, KimiError } from '../../src/errors';
+import { ErrorCodes, CloudCodeError } from '../../src/errors';
 import type { QuestionRequest, QuestionResult } from '../../src/rpc';
 import {
   AskUserQuestionInputSchema,
@@ -44,7 +44,6 @@ function makeTool(
 ): {
   readonly tool: AskUserQuestionTool;
   readonly requestQuestion: ReturnType<typeof vi.fn>;
-  readonly telemetryTrack: ReturnType<typeof vi.fn>;
 } {
   const requestQuestion = vi.fn(
     options.requestQuestion ??
@@ -52,13 +51,11 @@ function makeTool(
         Postgres: true,
       })),
   );
-  const telemetryTrack = vi.fn();
   const agent = {
     permission: { mode: options.mode ?? 'manual' },
     rpc: { requestQuestion },
-    telemetry: { track: telemetryTrack },
   } as unknown as Agent;
-  return { tool: new AskUserQuestionTool(agent), requestQuestion, telemetryTrack };
+  return { tool: new AskUserQuestionTool(agent), requestQuestion };
 }
 
 describe('AskUserQuestionTool', () => {
@@ -84,6 +81,22 @@ describe('AskUserQuestionTool', () => {
         }),
       ).success,
     ).toBe(false);
+  });
+
+  it('description leads with the decision boundary and the recommendation convention', () => {
+    const { tool } = makeTool();
+
+    // AskUserQuestion-description port: the opening is a decision boundary, not
+    // a capability list — ask only when blocked on a decision that is genuinely
+    // the user's to make.
+    expect(tool.description).toContain("genuinely the user's to make");
+    // A recommended option goes first in the list and is labeled as such.
+    expect(tool.description).toContain('list it first and append "(Recommended)" to its label');
+    // Plan-mode disambiguation: switching modes is EnterPlanMode's job; this tool
+    // clarifies requirements inside plan mode, never "should I proceed?".
+    expect(tool.description).toContain('`EnterPlanMode`');
+    expect(tool.description).toContain('`ExitPlanMode`');
+    expect(tool.description).not.toContain('Kimi Code');
   });
 
   it('rejects empty question text and empty option labels at the schema layer', () => {
@@ -166,7 +179,6 @@ describe('AskUserQuestionTool', () => {
     const requestQuestion = vi.fn();
     const agent = {
       rpc: { requestQuestion },
-      telemetry: { track: vi.fn() },
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
@@ -214,7 +226,6 @@ describe('AskUserQuestionTool', () => {
   it('always builds the background-question schema', () => {
     const agent = {
       rpc: { requestQuestion: vi.fn() },
-      telemetry: { track: vi.fn() },
       background: createBackgroundManager().manager,
     } as unknown as Agent;
 
@@ -227,7 +238,7 @@ describe('AskUserQuestionTool', () => {
   it.each(['manual', 'yolo'] as const)(
     'dispatches questions through the agent rpc in %s mode',
     async (mode) => {
-      const { tool, requestQuestion, telemetryTrack } = makeTool({ mode });
+      const { tool, requestQuestion } = makeTool({ mode });
 
       const result = await executeTool(tool, {
         turnId: '0',
@@ -256,14 +267,11 @@ describe('AskUserQuestionTool', () => {
         },
         { signal },
       );
-      expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
-        answered: 1,
-      });
     },
   );
 
-  it('tracks the structured question answer method without leaking it into output', async () => {
-    const { tool, telemetryTrack } = makeTool({
+  it('does not leak the structured question answer method into output', async () => {
+    const { tool } = makeTool({
       requestQuestion: async () => ({
         answers: { 'Which database?': 'SQLite' },
         method: 'number_key',
@@ -279,14 +287,10 @@ describe('AskUserQuestionTool', () => {
 
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toBe(JSON.stringify({ answers: { 'Which database?': 'SQLite' } }));
-    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
-      answered: 1,
-      method: 'number_key',
-    });
   });
 
   it('starts a background question task and stores the eventual answer in task output', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    vi.stubEnv('CLOUD_CODE_EXPERIMENTAL_FLAG', '1');
 
     let resolveQuestion!: (result: QuestionResult) => void;
     const questionResult = new Promise<QuestionResult>((resolve) => {
@@ -294,11 +298,8 @@ describe('AskUserQuestionTool', () => {
     });
     const { manager } = createBackgroundManager();
     const requestQuestion = vi.fn(async () => questionResult);
-    const telemetryTrack = vi.fn();
     const agent = {
       rpc: { requestQuestion },
-      telemetry: { track: telemetryTrack },
-      turn: { traceIdForTurn: () => undefined },
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
@@ -330,10 +331,6 @@ describe('AskUserQuestionTool', () => {
     expect(await manager.readOutput(taskId!)).toBe(
       JSON.stringify({ answers: { 'Which database?': 'SQLite' } }),
     );
-    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
-      answered: 1,
-      method: 'enter',
-    });
   });
 
   it('starts background questions without an experimental flag', async () => {
@@ -345,8 +342,6 @@ describe('AskUserQuestionTool', () => {
     const requestQuestion = vi.fn(async () => questionResult);
     const agent = {
       rpc: { requestQuestion },
-      telemetry: { track: vi.fn() },
-      turn: { traceIdForTurn: () => undefined },
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
@@ -371,7 +366,7 @@ describe('AskUserQuestionTool', () => {
   });
 
   it('returns a dismissed message when every question is dismissed', async () => {
-    const { tool, telemetryTrack } = makeTool({ requestQuestion: async () => null });
+    const { tool } = makeTool({ requestQuestion: async () => null });
 
     const result = await executeTool(tool, {
       turnId: '0',
@@ -385,30 +380,12 @@ describe('AskUserQuestionTool', () => {
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toContain('dismissed');
     expect(result.output).toContain('answers');
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
-  });
-
-  it('attaches the request trace id to question telemetry', async () => {
-    const { tool, telemetryTrack } = makeTool();
-
-    await executeTool(tool, {
-      turnId: '0',
-      toolCallId: 'call_question',
-      traceId: 'trace-question-1',
-      args: input(),
-      signal,
-    });
-
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'question_answered',
-      expect.objectContaining({ answered: 1, trace_id: 'trace-question-1' }),
-    );
   });
 
   it('resolves question rpc error responses as dismissed answers', async () => {
     const { tool } = makeTool({
       requestQuestion: async () => {
-        throw new KimiError(ErrorCodes.INTERNAL, 'JSON-RPC question error response');
+        throw new CloudCodeError(ErrorCodes.INTERNAL, 'JSON-RPC question error response');
       },
     });
 
@@ -463,7 +440,7 @@ describe('AskUserQuestionTool', () => {
   it('returns a distinct hard error when the client signals unsupported', async () => {
     const { tool } = makeTool({
       requestQuestion: async () => {
-        throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Client does not support questions');
+        throw new CloudCodeError(ErrorCodes.NOT_IMPLEMENTED, 'Client does not support questions');
       },
     });
 

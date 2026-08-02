@@ -2,7 +2,7 @@ import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
-} from '@moonshot-ai/kosong/providers/anthropic-profile';
+} from '@cloud-code/kosong/providers/anthropic-profile';
 
 import type { ModelAlias, ProviderType } from './schema';
 

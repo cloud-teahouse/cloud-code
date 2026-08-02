@@ -1,0 +1,456 @@
+import type { BackgroundTaskInfo, Session } from '@cloud-code/sdk';
+import type { Component, ProcessTerminal, TUI } from '@cloud-code/pi-tui';
+
+import type { EditorSlotContainer } from '../components/chrome/gutter-container';
+import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
+import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
+import { t } from '../i18n';
+import type { Theme } from '#/tui/theme';
+import type { CustomEditor } from '../components/editor/custom-editor';
+
+export interface TasksBrowserHost {
+  readonly state: {
+    readonly tasksBrowser: TasksBrowserState | undefined;
+    readonly theme: Theme;
+    readonly terminal: ProcessTerminal;
+    readonly ui: TUI;
+    readonly editor: CustomEditor;
+    readonly editorContainer: EditorSlotContainer;
+  };
+  readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
+  readonly session: Session | undefined;
+  /** True while a blocking panel (approval/question) owns the editor slot. */
+  hasBlockingEditorSlotPanel(): boolean;
+  showError(msg: string): void;
+  setTasksBrowser(value: TasksBrowserState | undefined): void;
+}
+
+export type TasksBrowserState = {
+  component: TasksBrowserApp;
+  savedChildren: readonly Component[];
+  filter: TasksFilter;
+  selectedTaskId: string | undefined;
+  tailOutput: string | undefined;
+  tailLoading: boolean;
+  tailRequestId: number;
+  flashMessage: string | undefined;
+  flashTimer: NodeJS.Timeout | undefined;
+  pollTimer: NodeJS.Timeout | undefined;
+  viewer:
+    | {
+        component: TaskOutputViewer;
+        savedChildren: readonly Component[];
+        taskId: string;
+        output: string;
+        refreshId: number;
+        pollTimer: NodeJS.Timeout;
+      }
+    | undefined;
+};
+
+export class TasksBrowserController {
+  constructor(private readonly host: TasksBrowserHost) {}
+
+  async show(): Promise<void> {
+    const { state } = this.host;
+    if (state.tasksBrowser !== undefined) return;
+    // A takeover hides the whole layout tree; it must never cover a blocking
+    // panel (its unanswered RPC would have no visible UI). Checked again after
+    // the await below: an approval can land mid-fetch. See
+    // docs/tui-modal-surfaces.md for the blocking-surface invariant.
+    if (this.host.hasBlockingEditorSlotPanel()) return;
+
+    const session = this.host.session;
+    if (session === undefined) {
+      this.host.showError(t('controllers.tasksBrowser.noSession'));
+      return;
+    }
+
+    let tasks: readonly BackgroundTaskInfo[] = [];
+    try {
+      tasks = await session.listBackgroundTasks({ activeOnly: false });
+    } catch (error) {
+      this.host.showError(
+        t('controllers.tasksBrowser.loadFailed', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return;
+    }
+    if (state.tasksBrowser !== undefined) return;
+    if (this.host.hasBlockingEditorSlotPanel()) return;
+
+    const filter: TasksFilter = 'all';
+    const selectedTaskId = this.pickInitialSelection(tasks, filter);
+    const component = new TasksBrowserApp(
+      {
+        tasks,
+        filter,
+        selectedTaskId,
+        tailOutput: undefined,
+        tailLoading: false,
+        flashMessage: undefined,
+        ...this.buildCallbacks(),
+      },
+      state.terminal,
+    );
+
+    const savedChildren = [...state.ui.children];
+    state.ui.clear();
+    state.ui.addChild(component);
+    state.ui.setFocus(component);
+    state.ui.requestRender(true);
+
+    const pollTimer = setInterval(() => {
+      void this.refresh({ silent: true });
+    }, 1000);
+
+    this.host.setTasksBrowser({
+      component,
+      savedChildren,
+      filter,
+      selectedTaskId,
+      tailOutput: undefined,
+      tailLoading: false,
+      tailRequestId: 0,
+      flashMessage: undefined,
+      flashTimer: undefined,
+      pollTimer,
+      viewer: undefined,
+    });
+
+    if (selectedTaskId !== undefined) {
+      this.loadTail(selectedTaskId);
+    }
+  }
+
+  close(): void {
+    const { state } = this.host;
+    const browser = state.tasksBrowser;
+    if (browser === undefined) return;
+    if (browser.viewer !== undefined) this.closeOutputViewer();
+    if (browser.pollTimer !== undefined) clearInterval(browser.pollTimer);
+    if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
+
+    state.ui.clear();
+    for (const child of browser.savedChildren) {
+      state.ui.addChild(child);
+    }
+    this.host.setTasksBrowser(undefined);
+    // Focus returns to the surface beneath the takeover: the slot's current
+    // content (a mounted panel, or the editor) — not blindly the editor, which
+    // may have been swapped out for a panel while the takeover was open.
+    state.ui.setFocus(state.editorContainer.children[0] ?? state.editor);
+    // Takeover close: repaint the viewport in place so the session's native
+    // scrollback survives (a destructive full clear would wipe it).
+    state.ui.requestCollapseRender();
+  }
+
+  repaint(): void {
+    const browser = this.host.state.tasksBrowser;
+    if (browser === undefined) return;
+    const tasks = [...this.host.backgroundTasks.values()];
+    this.pushProps(tasks);
+  }
+
+  async refreshOutputViewer(opts: { silent?: boolean } = {}): Promise<void> {
+    const { state } = this.host;
+    const browser = state.tasksBrowser;
+    const viewer = browser?.viewer;
+    if (browser === undefined || viewer === undefined) return;
+
+    const session = this.host.session;
+    if (session === undefined) return;
+
+    const myRefreshId = ++viewer.refreshId;
+    let output: string;
+    try {
+      output = await session.getBackgroundTaskOutput(viewer.taskId);
+    } catch (error) {
+      if (!opts.silent) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.flash(t('controllers.tasksBrowser.outputRefreshFailed', { message }));
+      }
+      return;
+    }
+    const current = state.tasksBrowser?.viewer;
+    if (current === undefined || current !== viewer || current.refreshId !== myRefreshId) {
+      return;
+    }
+    if (output === viewer.output) return;
+    viewer.output = output;
+    const info = this.host.backgroundTasks.get(viewer.taskId);
+    viewer.component.setProps({
+      taskId: viewer.taskId,
+      info,
+      output,
+      onClose: () => {
+        this.closeOutputViewer();
+      },
+    });
+    state.ui.requestRender();
+  }
+
+  // ---------------------------------------------------------------------------
+
+  private pickInitialSelection(
+    tasks: readonly BackgroundTaskInfo[],
+    filter: TasksFilter,
+  ): string | undefined {
+    const candidates =
+      filter === 'all'
+        ? tasks
+        : tasks.filter(
+            (t) =>
+              t.status !== 'completed' &&
+              t.status !== 'failed' &&
+              t.status !== 'timed_out' &&
+              t.status !== 'killed' &&
+              t.status !== 'lost',
+          );
+    if (candidates.length === 0) return undefined;
+    return candidates.find((t) => t.status === 'running')?.taskId ?? candidates[0]!.taskId;
+  }
+
+  private async refresh(opts: { silent?: boolean } = {}): Promise<void> {
+    const { state } = this.host;
+    const browser = state.tasksBrowser;
+    if (browser === undefined) return;
+
+    const session = this.host.session;
+    if (session === undefined) return;
+
+    let tasks: readonly BackgroundTaskInfo[];
+    try {
+      tasks = await session.listBackgroundTasks({ activeOnly: false });
+    } catch (error) {
+      if (!opts.silent) {
+        this.flash(
+          t('controllers.tasksBrowser.refreshFailed', {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+      return;
+    }
+    if (state.tasksBrowser !== browser) return;
+    this.pushProps(tasks);
+  }
+
+  private pushProps(tasks: readonly BackgroundTaskInfo[]): void {
+    const browser = this.host.state.tasksBrowser;
+    if (browser === undefined) return;
+    browser.component.setProps({
+      tasks,
+      filter: browser.filter,
+      selectedTaskId: browser.selectedTaskId,
+      tailOutput: browser.tailOutput,
+      tailLoading: browser.tailLoading,
+      flashMessage: browser.flashMessage,
+      ...this.buildCallbacks(),
+    });
+    this.host.state.ui.requestRender();
+  }
+
+  private buildCallbacks(): {
+    onSelect: (taskId: string) => void;
+    onToggleFilter: () => void;
+    onRefresh: () => void;
+    onCancel: () => void;
+    onStopConfirmed: (taskId: string) => void;
+    onOpenOutput: (taskId: string) => void;
+    onStopIgnored: (taskId: string, reason: 'terminal') => void;
+  } {
+    return {
+      onSelect: (taskId) => {
+        this.handleSelect(taskId);
+      },
+      onToggleFilter: () => {
+        this.handleToggleFilter();
+      },
+      onRefresh: () => {
+        this.handleRefresh();
+      },
+      onCancel: () => {
+        this.close();
+      },
+      onStopConfirmed: (taskId) => {
+        void this.handleStop(taskId);
+      },
+      onOpenOutput: (taskId) => {
+        void this.handleOpenOutput(taskId);
+      },
+      onStopIgnored: (taskId, reason) => {
+        if (reason === 'terminal') {
+          this.flash(t('controllers.tasksBrowser.alreadyTerminal', { taskId }));
+        }
+      },
+    };
+  }
+
+  private handleSelect(taskId: string): void {
+    const browser = this.host.state.tasksBrowser;
+    if (browser === undefined) return;
+    if (browser.selectedTaskId === taskId) return;
+    browser.selectedTaskId = taskId;
+    browser.tailOutput = undefined;
+    browser.tailLoading = true;
+    this.repaint();
+    this.loadTail(taskId);
+  }
+
+  private handleToggleFilter(): void {
+    const browser = this.host.state.tasksBrowser;
+    if (browser === undefined) return;
+    browser.filter = browser.filter === 'all' ? 'active' : 'all';
+    this.repaint();
+  }
+
+  private handleRefresh(): void {
+    this.flash(t('controllers.tasksBrowser.refreshing'), 600);
+    void this.refresh();
+  }
+
+  private async handleStop(taskId: string): Promise<void> {
+    const browser = this.host.state.tasksBrowser;
+    if (browser === undefined) return;
+
+    const session = this.host.session;
+    if (session === undefined) {
+      this.flash(t('controllers.tasksBrowser.noSession'));
+      return;
+    }
+
+    this.flash(t('controllers.tasksBrowser.stopping', { taskId }), 1500);
+    try {
+      await session.stopBackgroundTask(taskId, {
+        reason: t('controllers.tasksBrowser.userInitiatedStop'),
+      });
+      await this.refresh({ silent: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.flash(t('controllers.tasksBrowser.stopFailed', { message }));
+    }
+  }
+
+  private async handleOpenOutput(taskId: string): Promise<void> {
+    const { state } = this.host;
+    const browser = state.tasksBrowser;
+    if (browser === undefined) return;
+    if (browser.viewer !== undefined) return;
+
+    const session = this.host.session;
+    if (session === undefined) {
+      this.flash(t('controllers.tasksBrowser.noSession'));
+      return;
+    }
+
+    let output: string;
+    try {
+      output = await session.getBackgroundTaskOutput(taskId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.flash(t('controllers.tasksBrowser.cannotOpenOutput', { message }));
+      return;
+    }
+    const current = state.tasksBrowser;
+    if (current === undefined || current !== browser) return;
+
+    const info = this.host.backgroundTasks.get(taskId);
+    const viewer = new TaskOutputViewer(
+      {
+        taskId,
+        info,
+        output,
+        onClose: () => {
+          this.closeOutputViewer();
+        },
+      },
+      state.terminal,
+    );
+
+    const savedBrowserChildren = [...state.ui.children];
+    state.ui.clear();
+    state.ui.addChild(viewer);
+    state.ui.setFocus(viewer);
+    state.ui.requestRender(true);
+
+    const pollTimer = setInterval(() => {
+      void this.refreshOutputViewer({ silent: true });
+    }, 1000);
+
+    browser.viewer = {
+      component: viewer,
+      savedChildren: savedBrowserChildren,
+      taskId,
+      output,
+      refreshId: 0,
+      pollTimer,
+    };
+  }
+
+  private loadTail(taskId: string): void {
+    const { state } = this.host;
+    const browser = state.tasksBrowser;
+    if (browser === undefined) return;
+
+    const session = this.host.session;
+    if (session === undefined) {
+      browser.tailLoading = false;
+      this.repaint();
+      return;
+    }
+
+    const requestId = ++browser.tailRequestId;
+    void session
+      .getBackgroundTaskOutput(taskId, { tail: 4000 })
+      .then((output) => {
+        const current = state.tasksBrowser;
+        if (current === undefined) return;
+        if (current !== browser || current.tailRequestId !== requestId) return;
+        if (current.selectedTaskId !== taskId) return;
+        current.tailOutput = output;
+        current.tailLoading = false;
+        this.repaint();
+      })
+      .catch(() => {
+        const current = state.tasksBrowser;
+        if (current === undefined) return;
+        if (current !== browser || current.tailRequestId !== requestId) return;
+        if (current.selectedTaskId !== taskId) return;
+        current.tailOutput = '';
+        current.tailLoading = false;
+        this.repaint();
+      });
+  }
+
+  private flash(message: string, durationMs = 2500): void {
+    const browser = this.host.state.tasksBrowser;
+    if (browser === undefined) return;
+    if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
+    browser.flashMessage = message;
+    browser.flashTimer = setTimeout(() => {
+      const current = this.host.state.tasksBrowser;
+      if (current !== browser) return;
+      current.flashMessage = undefined;
+      current.flashTimer = undefined;
+      this.repaint();
+    }, durationMs);
+    this.repaint();
+  }
+
+  private closeOutputViewer(): void {
+    const browser = this.host.state.tasksBrowser;
+    if (browser === undefined || browser.viewer === undefined) return;
+    const viewer = browser.viewer;
+    clearInterval(viewer.pollTimer);
+    browser.viewer = undefined;
+    this.host.state.ui.clear();
+    for (const child of viewer.savedChildren) {
+      this.host.state.ui.addChild(child);
+    }
+    this.host.state.ui.setFocus(browser.component);
+    // Viewer close: scrollback-preserving repaint, same as the takeover close.
+    this.host.state.ui.requestCollapseRender();
+  }
+}

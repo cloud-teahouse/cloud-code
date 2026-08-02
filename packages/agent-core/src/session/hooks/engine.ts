@@ -1,9 +1,11 @@
+import { matchPermissionRule } from '../../agent/permission/matches-rule';
 import { runHook } from './runner';
 import type {
   HookBlockDecision,
   HookDef,
   HookEngineOptions,
   HookEngineTriggerArgs,
+  HookIfConditionContext,
   HookMatcherValue,
   HookResult,
 } from './types';
@@ -31,6 +33,12 @@ export class HookEngine {
       result[event] = hooks.length;
     }
     return result;
+  }
+
+  /** Cheap registration check so hot paths (e.g. PostToolUse per tool result)
+   * can skip the trigger machinery entirely when no hook exists for the event. */
+  hasHooksForEvent(event: string): boolean {
+    return (this.byEvent.get(event)?.length ?? 0) > 0;
   }
 
   trigger(event: string, args: HookEngineTriggerArgs = {}): Promise<HookResult[]> {
@@ -76,7 +84,7 @@ export class HookEngine {
       cwd: this.options.cwd ?? '',
       ...args.inputData,
     });
-    const matched = this.matchingHooks(event, matcherValue);
+    const matched = this.matchingHooks(event, matcherValue, args.ifContext);
     if (matched.length === 0) return [];
 
     this.emitTriggered(event, matcherValue, matched.length);
@@ -96,12 +104,20 @@ export class HookEngine {
     return results;
   }
 
-  private matchingHooks(event: string, matcherValue: string): HookDef[] {
+  private matchingHooks(
+    event: string,
+    matcherValue: string,
+    ifContext: HookIfConditionContext | undefined,
+  ): HookDef[] {
     const seen = new Set<string>();
     const matched: HookDef[] = [];
 
     for (const hook of this.byEvent.get(event) ?? []) {
       if (!matches(hook.matcher ?? '', matcherValue)) continue;
+      // `if` conditions reuse the permission-rule DSL and are evaluated BEFORE
+      // the hook process is spawned — a non-matching condition saves the spawn
+      // on this twice-per-tool-call hot path (Claude-Code parity).
+      if (!ifConditionMatches(hook.if, ifContext)) continue;
       const key = (hook.cwd ?? '') + '\0' + hook.command;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -137,6 +153,29 @@ function matches(pattern: string, value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Evaluate a hook `if` condition (permission-rule DSL, e.g. `Bash(git *)`)
+ * against the current tool call. Returns false — skipping the hook, never
+ * spawning — when there is no condition context (non-tool events) or when the
+ * condition carries an argument pattern but no rule matcher was supplied. The
+ * synthetic `deny` decision gives per-segment tools existential semantics: the
+ * hook fires when ANY segment subject matches the pattern.
+ */
+function ifConditionMatches(
+  condition: string | undefined,
+  ifContext: HookIfConditionContext | undefined,
+): boolean {
+  if (condition === undefined) return true;
+  if (ifContext === undefined) return false;
+  return (
+    matchPermissionRule({
+      rule: { pattern: condition, decision: 'deny', scope: 'turn-override' },
+      toolName: ifContext.toolName,
+      execution: ifContext.execution ?? {},
+    }) !== undefined
+  );
 }
 
 function matcherValueText(value: HookMatcherValue | undefined): string {

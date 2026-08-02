@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import type { ContentPart, Message, TextPart } from '@moonshot-ai/kosong';
+import type { ContentPart, Message, TextPart } from '@cloud-code/kosong';
 
-import { ErrorCodes, KimiError } from '../../errors';
+import { ErrorCodes, CloudCodeError } from '../../errors';
 import { renderToolResultForModel } from './tool-result-render';
 import type { ContextMessage } from './types';
 
@@ -108,8 +108,108 @@ export type ProjectionAnomaly =
    */
   | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
 
-export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
-  let result = mergeAdjacentUserMessages(history, options?.onAnomaly);
+/**
+ * Per-message memo for the projection's per-message work, owned by
+ * `ContextMemory` and passed to {@link project} for histories whose message
+ * objects are canonical (append-mostly, never mutated in place — with ONE
+ * exception, below). Without it, every step re-renders every tool result
+ * (`renderToolResultForModel` string building) and re-clones every content
+ * part and tool call (`stripContextMetadata`), O(history) allocations per
+ * step; with it, a step pays only for messages that are new since the
+ * previous projection.
+ *
+ * Entries are keyed by message OBJECT IDENTITY, valid forever for immutable
+ * messages because `prepareMessageForProjection` / `stripContextMetadata` /
+ * `mergeTwoUserMessages` are pure. The one in-place mutation in the system —
+ * the open-step assistant message growing via `content.part` / `tool.call`
+ * loop events — is handled by `ContextMemory` calling {@link invalidate}
+ * before each such mutation. Restore-time `recoverLateToolResult` swaps the
+ * message object at its history index instead of mutating, so identity
+ * keying self-heals there. Open steps are always `assistant` messages and
+ * therefore never merge candidates, so no `merged` entry can ever reference
+ * a message that later mutates.
+ *
+ * Sharing note: cache hits return the SAME projected `Message` objects
+ * across projection calls. Every consumer of a projection (kosong generate
+ * and all provider request builders, the turn loop, compaction summarizer,
+ * media degrade/strip passes) is read-only on the projected messages —
+ * verified by audit — so sharing is unobservable.
+ */
+export class ProjectionCache {
+  private readonly preparedCache = new WeakMap<ContextMessage, PreparedProjection>();
+  private readonly strippedCache = new WeakMap<ContextMessage, Message>();
+  private readonly mergedCache = new WeakMap<
+    ContextMessage,
+    WeakMap<ContextMessage, ContextMessage>
+  >();
+
+  /**
+   * Drop every derivative cached for `message`. MUST be called before any
+   * in-place mutation of a message that may already be cached (today: the
+   * open-step assistant message only). Entries where `message` is the RIGHT
+   * side of a merge pair cannot be reached (WeakMaps do not iterate), which
+   * is sound only because merge candidates (`user`/`user`-origin messages)
+   * are never mutated in place.
+   */
+  invalidate(message: ContextMessage): void {
+    const prepared = this.preparedCache.get(message);
+    if (prepared !== undefined && prepared.message !== null) {
+      this.strippedCache.delete(prepared.message);
+    }
+    this.preparedCache.delete(message);
+    // Covers the common `prepared === source` shape even when the prepared
+    // entry is absent, and any stripped entry keyed directly by this object.
+    this.strippedCache.delete(message);
+    this.mergedCache.delete(message);
+  }
+
+  getPrepared(source: ContextMessage): PreparedProjection | undefined {
+    return this.preparedCache.get(source);
+  }
+
+  setPrepared(source: ContextMessage, entry: PreparedProjection): void {
+    this.preparedCache.set(source, entry);
+  }
+
+  getStripped(prepared: ContextMessage): Message | undefined {
+    return this.strippedCache.get(prepared);
+  }
+
+  setStripped(prepared: ContextMessage, stripped: Message): void {
+    this.strippedCache.set(prepared, stripped);
+  }
+
+  getMerged(left: ContextMessage, right: ContextMessage): ContextMessage | undefined {
+    return this.mergedCache.get(left)?.get(right);
+  }
+
+  setMerged(left: ContextMessage, right: ContextMessage, merged: ContextMessage): void {
+    let byRight = this.mergedCache.get(left);
+    if (byRight === undefined) {
+      byRight = new WeakMap();
+      this.mergedCache.set(left, byRight);
+    }
+    byRight.set(right, merged);
+  }
+}
+
+/** The memoized result of `prepareMessageForProjection` for one source message. */
+export interface PreparedProjection {
+  readonly message: ContextMessage | null;
+  /**
+   * Anomalies the prepare pass emitted for this message, replayed to the
+   * caller's sink on every cache hit so the per-call anomaly sequence is
+   * identical to an uncached projection.
+   */
+  readonly anomalies: readonly ProjectionAnomaly[];
+}
+
+export function project(
+  history: readonly ContextMessage[],
+  options?: ProjectOptions,
+  cache?: ProjectionCache,
+): Message[] {
+  let result = mergeAdjacentUserMessages(history, options?.onAnomaly, cache);
   if (options?.dedupeDuplicateToolCalls === true) {
     result = dedupeDuplicateToolCalls(result, options.onAnomaly);
   }
@@ -355,10 +455,11 @@ function makeSyntheticToolResult(toolCallId: string): Message {
 function mergeAdjacentUserMessages(
   history: readonly ContextMessage[],
   onAnomaly?: (anomaly: ProjectionAnomaly) => void,
+  cache?: ProjectionCache,
 ): Message[] {
   const out: ContextMessage[] = [];
   for (const source of history) {
-    const message = prepareMessageForProjection(source, onAnomaly);
+    const message = prepareMessageCached(source, onAnomaly, cache);
     if (message === null) continue;
 
     const previous = out.at(-1);
@@ -367,12 +468,68 @@ function mergeAdjacentUserMessages(
       previous !== undefined &&
       canMergeUserMessage(previous)
     ) {
-      out[out.length - 1] = mergeTwoUserMessages(previous, message);
+      out[out.length - 1] = mergeTwoUserMessagesCached(previous, message, cache);
       continue;
     }
     out.push(message);
   }
-  return out.map(stripContextMetadata);
+  return out.map((message) => stripContextMetadataCached(message, cache));
+}
+
+// The prepare/render pass is a pure function of the source message, so with a
+// cache each message pays for it once per lifetime instead of once per step.
+// Anomalies are forwarded LIVE while computing (so the throw path below
+// behaves exactly like the uncached one) and replayed from the entry on
+// cache hits — the per-call sequence is identical either way.
+function prepareMessageCached(
+  source: ContextMessage,
+  onAnomaly: ((anomaly: ProjectionAnomaly) => void) | undefined,
+  cache: ProjectionCache | undefined,
+): ContextMessage | null {
+  if (cache === undefined) return prepareMessageForProjection(source, onAnomaly);
+  const hit = cache.getPrepared(source);
+  if (hit !== undefined) {
+    for (const anomaly of hit.anomalies) onAnomaly?.(anomaly);
+    return hit.message;
+  }
+  const anomalies: ProjectionAnomaly[] = [];
+  // Throws (a tool message emptied by whitespace cleanup) propagate before
+  // setPrepared runs, so the throwing message is never cached and every
+  // projection recomputes — and re-throws — identically.
+  const message = prepareMessageForProjection(source, (anomaly) => {
+    anomalies.push(anomaly);
+    onAnomaly?.(anomaly);
+  });
+  cache.setPrepared(source, { message, anomalies });
+  return message;
+}
+
+// A merged pair is a pure function of its (immutable) inputs. Caching it also
+// stabilizes the merged object's identity, so a three-way chain hits the
+// cache at every level on the next projection.
+function mergeTwoUserMessagesCached(
+  a: ContextMessage,
+  b: ContextMessage,
+  cache: ProjectionCache | undefined,
+): ContextMessage {
+  if (cache === undefined) return mergeTwoUserMessages(a, b);
+  const hit = cache.getMerged(a, b);
+  if (hit !== undefined) return hit;
+  const merged = mergeTwoUserMessages(a, b);
+  cache.setMerged(a, b, merged);
+  return merged;
+}
+
+function stripContextMetadataCached(
+  message: ContextMessage,
+  cache: ProjectionCache | undefined,
+): Message {
+  if (cache === undefined) return stripContextMetadata(message);
+  const hit = cache.getStripped(message);
+  if (hit !== undefined) return hit;
+  const stripped = stripContextMetadata(message);
+  cache.setStripped(message, stripped);
+  return stripped;
 }
 
 function prepareMessageForProjection(
@@ -410,7 +567,7 @@ function prepareMessageForProjection(
 
   const next = content === undefined ? source : { ...source, content };
   if (next.role === 'tool' && next.content.length === 0) {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.REQUEST_INVALID,
       'Tool result message content cannot be empty after removing empty text blocks.',
       {

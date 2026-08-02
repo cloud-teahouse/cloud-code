@@ -1,16 +1,16 @@
 import { Readable, type Writable } from 'node:stream';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
-import type { Message } from '@moonshot-ai/kosong';
+import type { KaosProcess } from '@cloud-code/kaos';
+import type { Message } from '@cloud-code/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
+import { ErrorCodes } from '../../src/errors';
 import { buildImageCompressionCaption } from '../../src/tools/support/image-compress';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
-import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { testAgent } from './harness/agent';
 
 describe('Agent context', () => {
@@ -182,19 +182,38 @@ describe('Agent context', () => {
     });
   });
 
-  it('tracks conversation_undo when undoHistory reverts a user message', async () => {
-    const records: TelemetryRecord[] = [];
-    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+  it('rejects undoHistory / clearContext while a turn is active', async () => {
+    // Same busy guard as importContext: undoing or clearing mid-turn would
+    // record a context mutation whose trailing step events then poison the
+    // wire log (orphan content.part / tool.call records resume can't place).
+    const ctx = testAgent();
     ctx.configure();
-
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'hello' }]);
+    vi.spyOn(ctx.agent.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
 
-    await ctx.agent.rpcMethods.undoHistory({ count: 1 });
-
-    expect(records).toContainEqual({
-      event: 'conversation_undo',
-      properties: { count: 1 },
+    await expect(ctx.rpc.undoHistory({ count: 1 })).rejects.toMatchObject({
+      code: ErrorCodes.TURN_AGENT_BUSY,
     });
+    await expect(ctx.rpc.clearContext({})).rejects.toMatchObject({
+      code: ErrorCodes.TURN_AGENT_BUSY,
+    });
+    // The rejected calls left history untouched.
+    expect(ctx.agent.context.history).toHaveLength(1);
+  });
+
+  it('rejects undoHistory / clearContext while compaction is running', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'hello' }]);
+    vi.spyOn(ctx.agent.fullCompaction, 'isCompacting', 'get').mockReturnValue(true);
+
+    await expect(ctx.rpc.undoHistory({ count: 1 })).rejects.toMatchObject({
+      code: ErrorCodes.TURN_AGENT_BUSY,
+    });
+    await expect(ctx.rpc.clearContext({})).rejects.toMatchObject({
+      code: ErrorCodes.TURN_AGENT_BUSY,
+    });
+    expect(ctx.agent.context.history).toHaveLength(1);
   });
 
   it('records bash input/output as shell_command origin with tagged content', () => {
@@ -1191,7 +1210,7 @@ describe('Agent context', () => {
     ctx.appendAssistantText(1, 'first response');
     ctx.appendAssistantText(2, 'second response');
 
-    // Append a background task notification (role: 'user' but not a real prompt)
+    // role: 'user' but not a real prompt
     ctx.agent.context.appendMessage({
       role: 'user',
       content: [{ type: 'text', text: 'background task completed' }],
@@ -1332,6 +1351,153 @@ describe('Agent context', () => {
           origin: { kind: 'injection', variant: 'plan_mode' },
         }),
       }),
+    ]);
+  });
+
+  it('withdrawUnansweredTailInput removes an unanswered tail prompt and logs the record', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('first prompt', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'first answer' }],
+        toolCalls: [],
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('interrupted prompt', { kind: 'user' }),
+    });
+    ctx.newEvents();
+
+    expect(ctx.agent.context.withdrawUnansweredTailInput()).toBe(true);
+
+    expect(ctx.agent.context.history.map((m) => textOf(m))).toEqual([
+      'first prompt',
+      'first answer',
+    ]);
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.withdraw_tail_input',
+      }),
+    );
+    // The replay view drops the withdrawn message too.
+    expect(
+      ctx.agent.replayBuilder
+        .buildResult()
+        .filter((event) => event.type === 'message')
+        .map((event) => textOf(event.message)),
+    ).toEqual(['first prompt', 'first answer']);
+  });
+
+  it('withdrawUnansweredTailInput is a no-op when output sits after the prompt', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('answered prompt', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial answer' }],
+        toolCalls: [],
+      },
+    });
+    ctx.newEvents();
+
+    expect(ctx.agent.context.withdrawUnansweredTailInput()).toBe(false);
+
+    expect(ctx.agent.context.history.map((m) => textOf(m))).toEqual([
+      'answered prompt',
+      'partial answer',
+    ]);
+    // A no-op withdrawal logs nothing, so the wire never carries removals
+    // that did not happen.
+    expect(ctx.newEvents()).not.toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.withdraw_tail_input',
+      }),
+    );
+  });
+
+  it('withdrawUnansweredTailInput skips trailing injections to reach the prompt', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('interrupted prompt', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('Plan mode is active', {
+        kind: 'injection',
+        variant: 'plan_mode',
+      }),
+    });
+
+    expect(ctx.agent.context.withdrawUnansweredTailInput()).toBe(true);
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        origin: { kind: 'injection', variant: 'plan_mode' },
+      }),
+    ]);
+  });
+
+  it('withdrawUnansweredTailInput does not cross a compaction summary', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+    });
+
+    expect(ctx.agent.context.withdrawUnansweredTailInput()).toBe(false);
+    expect(ctx.agent.context.history).toHaveLength(2);
+  });
+
+  it('withdrawUnansweredTailInput replays the removal on restore', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('answered prompt', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'answer' }],
+        toolCalls: [],
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('interrupted prompt', { kind: 'user' }),
+    });
+
+    expect(() => {
+      ctx.agent.records.restore({ type: 'context.withdraw_tail_input' });
+    }).not.toThrow();
+    expect(ctx.agent.context.history.map((m) => textOf(m))).toEqual([
+      'answered prompt',
+      'answer',
     ]);
   });
 

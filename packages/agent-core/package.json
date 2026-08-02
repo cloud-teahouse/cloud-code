@@ -1,18 +1,18 @@
 {
-  "name": "@moonshot-ai/agent-core",
-  "version": "0.15.7",
+  "name": "@cloud-code/agent-core",
+  "version": "0.2.1",
   "private": true,
-  "description": "The unified agent engine for Kimi",
+  "description": "The unified agent engine for Cloud Code CLI",
   "license": "MIT",
   "author": "Moonshot AI",
-  "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/agent-core#readme",
+  "homepage": "https://github.com/yspbwx2010/cloud-code/tree/dev/packages/agent-core#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
     "directory": "packages/agent-core"
   },
   "bugs": {
-    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+    "url": "https://github.com/yspbwx2010/cloud-code/issues"
   },
   "keywords": [
     "kimi",
@@ -36,6 +36,7 @@
     "#/agent/goal": "./src/agent/goal/index.ts",
     "#/agent/permission": "./src/agent/permission/index.ts",
     "#/agent/plan": "./src/agent/plan/index.ts",
+    "#/agent/records": "./src/agent/records/index.ts",
     "#/agent/swarm": "./src/agent/swarm/index.ts",
     "#/agent/tool": "./src/agent/tool/index.ts",
     "#/config": "./src/config/index.ts",
@@ -72,12 +73,12 @@
   },
   "dependencies": {
     "@antfu/utils": "^9.3.0",
+    "@cloud-code/kaos": "workspace:^",
+    "@cloud-code/kosong": "workspace:^",
+    "@cloud-code/oauth": "workspace:^",
+    "@cloud-code/protocol": "workspace:^",
     "@jsquash/webp": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@moonshot-ai/kaos": "workspace:^",
-    "@moonshot-ai/kimi-code-oauth": "workspace:^",
-    "@moonshot-ai/kosong": "workspace:^",
-    "@moonshot-ai/protocol": "workspace:^",
     "@mozilla/readability": "^0.6.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
@@ -97,8 +98,10 @@
     "smol-toml": "^1.6.1",
     "socks": "^2.8.9",
     "tar": "^7.5.13",
+    "tree-sitter-bash": "~0.25.1",
     "ulid": "^3.0.1",
     "undici": "^7.27.1",
+    "web-tree-sitter": "~0.25.10",
     "yauzl": "^3.3.0",
     "zod": "^4.3.6"
   },

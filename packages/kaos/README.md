@@ -1,8 +1,8 @@
-# @moonshot-ai/kaos
+# @cloud-code/kaos
 
-Execution environment abstraction used by Kimi Code.
+Execution environment abstraction used by Cloud Code CLI.
 
-Part of the [Kimi Code](https://github.com/MoonshotAI/kimi-code) monorepo.
+Part of the Cloud Code CLI monorepo.
 
 See the main repository for documentation, issues, and contribution guidelines.
 

@@ -9,7 +9,7 @@ import {
   isBackgroundTaskTerminal,
   type BackgroundManager,
 } from '../../agent/background';
-import type { ToolExecution } from '../../loop/types';
+import type { ExecutableToolResult, ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
@@ -41,10 +41,14 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
       description: `Stopping task ${args.task_id}`,
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
-      execute: async () => {
+      execute: async (): Promise<ExecutableToolResult> => {
         const info = this.manager.getTask(args.task_id);
         if (!info) {
-          return { isError: true, output: `Task not found: ${args.task_id}` };
+          return {
+            isError: true,
+            output: `Task not found: ${args.task_id}`,
+            display: { key: 'toolResult.taskStop.notFound', params: { taskId: args.task_id } },
+          };
         }
 
         // A blank or whitespace-only reason falls back to the default. `?? default`
@@ -58,29 +62,45 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
         if (isBackgroundTaskTerminal(info.status)) {
           // Already-terminal tasks report their current state using the same
           // structured multi-line format as the normal stop path below.
+          const terminalReason = terminalStopReason(info.stopReason);
           return {
             output:
               `task_id: ${info.taskId}\n` +
               `status: ${info.status}\n` +
               // A task persisted by an older build may carry a blank stopReason;
               // `??` would not coalesce `''`, so trim-and-`||` to the placeholder.
-              `reason: ${terminalStopReason(info.stopReason)}`,
+              `reason: ${terminalReason}`,
             isError: false,
+            structured: { taskId: info.taskId, status: info.status },
+            display: {
+              key: 'toolResult.taskStop.stopped',
+              params: { taskId: info.taskId, status: info.status, reason: terminalReason },
+            },
           };
         }
 
         await this.manager.suppressTerminalNotification(args.task_id);
         const result = await this.manager.stop(args.task_id, reason);
         if (!result) {
-          return { isError: true, output: `Failed to stop task: ${args.task_id}` };
+          return {
+            isError: true,
+            output: `Failed to stop task: ${args.task_id}`,
+            display: { key: 'toolResult.taskStop.stopFailed', params: { taskId: args.task_id } },
+          };
         }
 
+        const stopReason = result.stopReason ?? reason;
         return {
           output:
             `task_id: ${result.taskId}\n` +
             `status: ${result.status}\n` +
-            `reason: ${result.stopReason ?? reason}`,
+            `reason: ${stopReason}`,
           isError: false,
+          structured: { taskId: result.taskId, status: result.status },
+          display: {
+            key: 'toolResult.taskStop.stopped',
+            params: { taskId: result.taskId, status: result.status, reason: stopReason },
+          },
         };
       },
     };

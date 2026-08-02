@@ -10,17 +10,41 @@ import type {
   FinishReason,
   Message,
   ModelCapability,
+  RateLimitSnapshot,
   TextPart,
   ThinkPart,
   TokenUsage,
   Tool,
   ToolCall,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 
 export interface ToolCallDelta {
   readonly toolCallId: string;
   readonly name?: string | undefined;
   readonly argumentsPart?: string | undefined;
+}
+
+/**
+ * LLM request source classification (C1 P2, the querySource counterpart).
+ *
+ * FOREGROUND sources (`loop`, `compaction`) retry through `chatWithRetry`:
+ * the user is waiting on them, and rate-limit waits are bounded by the
+ * foreground gates before the turn parks into an auto-resume pause.
+ * BACKGROUND sources (`guardian`, `title`) must NOT retry: during a capacity
+ * crunch every background retry is gateway amplification for a failure the
+ * user never sees — they fail fast and fail open instead.
+ */
+export type LLMRequestKind = 'loop' | 'compaction' | 'guardian' | 'title';
+
+/**
+ * Whether a request source is foreground (retry-eligible). An absent kind is
+ * a regular loop step — foreground. Any kind not explicitly listed here —
+ * including kinds added in the future — defaults to BACKGROUND, so a new
+ * background call site can never accidentally wire into `chatWithRetry`;
+ * making it retry requires a deliberate opt-in here.
+ */
+export function isForegroundRequestKind(kind: LLMRequestKind | undefined): boolean {
+  return kind === undefined || kind === 'loop' || kind === 'compaction';
 }
 
 /**
@@ -31,8 +55,17 @@ export interface ToolCallDelta {
 export interface LLMRequestLogFields {
   readonly turnStep?: string;
   readonly attempt?: string;
-  /** Request purpose; absent means a regular loop step. */
-  readonly kind?: 'loop' | 'compaction';
+  /**
+   * Request purpose; absent means a regular loop step.
+   *
+   * Source classification contract (C1 P2, querySource): `loop`/`compaction`
+   * are FOREGROUND sources — their failures surface to the user, so they ride
+   * `chatWithRetry` with the foreground wait gates. `guardian`/`title` are
+   * BACKGROUND sources — the user never sees them, so they must fail fast and
+   * fail open WITHOUT `chatWithRetry` (title catches to null, guardian fails
+   * open; see `isForegroundRequestKind`).
+   */
+  readonly kind?: LLMRequestKind;
   /** Set when the messages are a fallback resend projection: the strict
    * wire-compliant rebuild, the media-degraded rebuild after a
    * request-too-large rejection, or the media-stripped rebuild after an
@@ -93,6 +126,15 @@ export interface LLMChatParams {
   onThinkDelta?: ((delta: string) => void) | undefined;
   onToolCallDelta?: ((delta: ToolCallDelta) => void) | undefined;
   /**
+   * Fires once per tool call whose arguments are provably complete while the
+   * stream is still running (a later stream part closed it). The final call
+   * of a stream never fires here — it is only known complete once the stream
+   * ends — so it always flows through the post-stream batch path. Used by
+   * streaming tool execution; started calls are still recorded in provider
+   * order after the response completes.
+   */
+  onToolCallReady?: ((toolCall: ToolCall) => void | Promise<void>) | undefined;
+  /**
    * Fires once per completed text block. Additive relative to
    * `onTextDelta` — deltas still fire chunk-by-chunk for UI streaming.
    * Returned promises are awaited by the adapter to preserve transcript append
@@ -107,6 +149,15 @@ export interface LLMChatParams {
    */
   onThinkPart?: ((part: ThinkPart) => Promise<void> | void) | undefined;
   trace?: LLMRequestTraceState;
+  /**
+   * Fires when a FAILED attempt's error carried an account rate-limit
+   * snapshot (ChatGPT Codex `x-codex-*` headers, attached to the kosong
+   * `APIStatusError` by the provider error converter). The retry loop fires
+   * it per failed attempt, so the host's quota view refreshes while riding
+   * out a 429 backoff — not only after the next successful response (the
+   * success path reports via `LLMChatResponse.rateLimit`).
+   */
+  onRateLimit?: ((snapshot: RateLimitSnapshot) => void) | undefined;
 }
 
 export interface LLMChatResponse {
@@ -118,6 +169,11 @@ export interface LLMChatResponse {
   streamTiming?: LLMStreamTiming;
   /** Provider trace identifier from the `x-trace-id` response header (Kimi/KFC only). */
   traceId?: string;
+  /**
+   * Account rate-limit snapshot from the provider's response headers
+   * (ChatGPT Codex `x-codex-*` family only), captured with this response.
+   */
+  rateLimit?: RateLimitSnapshot;
 }
 
 export interface LLM {

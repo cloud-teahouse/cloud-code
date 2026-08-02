@@ -27,7 +27,7 @@ describe('PluginManager → SkillRegistry integration', () => {
       '---\nname: demo-skill\ndescription: demo\n---\nbody',
       'utf8',
     );
-    const manager = new PluginManager({ kimiHomeDir: home });
+    const manager = new PluginManager({ cloudCodeHomeDir: home });
     await manager.load();
     await manager.install(pluginRoot);
     const managedRoot = await realpath(path.join(home, 'plugins', 'managed', 'demo'));
@@ -49,7 +49,7 @@ describe('plugin system-prompt integration', () => {
       JSON.stringify({ name: 'demo', systemPrompt: 'Always cite sources.' }),
       'utf8',
     );
-    const manager = new PluginManager({ kimiHomeDir: home });
+    const manager = new PluginManager({ cloudCodeHomeDir: home });
     await manager.load();
     await manager.install(pluginRoot);
 

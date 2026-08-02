@@ -1,4 +1,4 @@
-import { LocalKaos } from '@moonshot-ai/kaos';
+import { LocalKaos } from '@cloud-code/kaos';
 
 import type { AgentReplayRecord } from '../../rpc/resumed';
 import { Agent } from '../index';

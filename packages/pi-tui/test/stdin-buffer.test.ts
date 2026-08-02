@@ -16,19 +16,16 @@ describe("StdinBuffer", () => {
 	beforeEach(() => {
 		buffer = new StdinBuffer({ timeout: 10 });
 
-		// Collect emitted sequences
 		emittedSequences = [];
 		buffer.on("data", (sequence) => {
 			emittedSequences.push(sequence);
 		});
 	});
 
-	// Helper to process data through the buffer
 	function processInput(data: string | Buffer): void {
 		buffer.process(data);
 	}
 
-	// Helper to wait for async operations
 	async function wait(ms: number): Promise<void> {
 		return new Promise((resolve) => setTimeout(resolve, ms));
 	}
@@ -128,7 +125,6 @@ describe("StdinBuffer", () => {
 			processInput("\x1b[<35");
 			assert.deepStrictEqual(emittedSequences, []);
 
-			// Wait for timeout
 			await wait(15);
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
@@ -163,13 +159,11 @@ describe("StdinBuffer", () => {
 
 	describe("Kitty Keyboard Protocol", () => {
 		it("should handle Kitty CSI u press events", () => {
-			// Press 'a' in Kitty protocol
 			processInput("\x1b[97u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[97u"]);
 		});
 
 		it("should handle Kitty CSI u release events", () => {
-			// Release 'a' in Kitty protocol
 			processInput("\x1b[97;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[97;1:3u"]);
 		});
@@ -181,19 +175,16 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should handle multiple batched Kitty events", () => {
-			// Press 'a', release 'a', press 'b', release 'b'
 			processInput("\x1b[97u\x1b[97;1:3u\x1b[98u\x1b[98;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[97u", "\x1b[97;1:3u", "\x1b[98u", "\x1b[98;1:3u"]);
 		});
 
 		it("should handle Kitty arrow keys with event type", () => {
-			// Up arrow press with event type
 			processInput("\x1b[1;1:1A");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[1;1:1A"]);
 		});
 
 		it("should handle Kitty functional keys with event type", () => {
-			// Delete key release
 			processInput("\x1b[3;1:3~");
 			assert.deepStrictEqual(emittedSequences, ["\x1b[3;1:3~"]);
 		});
@@ -219,7 +210,6 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should handle plain characters mixed with Kitty sequences", () => {
-			// Plain 'a' followed by Kitty release
 			processInput("a\x1b[97;1:3u");
 			assert.deepStrictEqual(emittedSequences, ["a", "\x1b[97;1:3u"]);
 		});
@@ -301,7 +291,6 @@ describe("StdinBuffer", () => {
 	describe("Edge Cases", () => {
 		it("should handle empty input", () => {
 			processInput("");
-			// Empty string emits an empty data event
 			assert.deepStrictEqual(emittedSequences, [""]);
 		});
 
@@ -309,7 +298,6 @@ describe("StdinBuffer", () => {
 			processInput("\x1b");
 			assert.deepStrictEqual(emittedSequences, []);
 
-			// After timeout, should emit
 			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b"]);
 		});
@@ -351,7 +339,6 @@ describe("StdinBuffer", () => {
 			processInput("\x1b[<35");
 			assert.deepStrictEqual(emittedSequences, []);
 
-			// Wait for timeout to flush
 			await wait(15);
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
@@ -375,13 +362,11 @@ describe("StdinBuffer", () => {
 		beforeEach(() => {
 			buffer = new StdinBuffer({ timeout: 10 });
 
-			// Collect emitted sequences
 			emittedSequences = [];
 			buffer.on("data", (sequence) => {
 				emittedSequences.push(sequence);
 			});
 
-			// Collect paste events
 			emittedPaste = [];
 			buffer.on("paste", (data) => {
 				emittedPaste.push(data);
@@ -435,6 +420,169 @@ describe("StdinBuffer", () => {
 		});
 	});
 
+	describe("Adversarial split feeds (resume cursor)", () => {
+		// Every case feeds the same bytes twice: once in a single process()
+		// call and once split into pieces. The emitted sequence stream must be
+		// identical — the resume cursor must not change segmentation semantics.
+		function feedInPieces(input: string, pieces: number): string[] {
+			const chunked = new StdinBuffer({ timeout: 10_000 });
+			const out: string[] = [];
+			chunked.on("data", (s) => out.push(s));
+			const step = Math.max(1, Math.ceil(input.length / pieces));
+			for (let i = 0; i < input.length; i += step) {
+				chunked.process(input.slice(i, i + step));
+			}
+			return out;
+		}
+
+		function feedOneShot(input: string): string[] {
+			const oneShot = new StdinBuffer({ timeout: 10_000 });
+			const out: string[] = [];
+			oneShot.on("data", (s) => out.push(s));
+			oneShot.process(input);
+			return out;
+		}
+
+		const cases: Record<string, string> = {
+			"plain text": "hello world",
+			"unicode text": "hi 世界!",
+			"CSI arrow": "\x1b[A",
+			"CSI long params": "\x1b[1;2;3;4;5H",
+			"CSI with garbage params": "\x1b[???~~~",
+			"SGR mouse press": "\x1b[<0;10;5M",
+			"SGR mouse move": "\x1b[<35;20;5m",
+			"old-style mouse": "\x1b[M ab",
+			"SS3": "\x1bOA",
+			"OSC BEL": "\x1b]0;window title\x07",
+			"OSC ST": "\x1b]8;;https://example.com\x1b\\",
+			"DCS XTVersion": "\x1bP>|xtversion 1.0\x1b\\",
+			"APC kitty": "\x1b_Ga=T,f=32,s=1,v=1;\x1b\\",
+			"meta key": "\x1ba",
+			"ESC ESC alone": "\x1b\x1b",
+			"kitty batched": "\x1b[97u\x1b[97;1:3u",
+			"mixed stream": "ab\x1b[A\x1b[<1;2;3m cd\x1b]0;t\x07ef\x1bOBgh",
+		};
+
+		for (const [name, input] of Object.entries(cases)) {
+			it(`byte-by-byte equals one-shot: ${name}`, () => {
+				assert.deepStrictEqual(feedInPieces(input, input.length), feedOneShot(input));
+			});
+
+			it(`three chunks equals one-shot: ${name}`, () => {
+				assert.deepStrictEqual(feedInPieces(input, 3), feedOneShot(input));
+			});
+		}
+
+		it("pins the chunk-dependent WezTerm ESC+ESC split (matches the previous scanner)", () => {
+			// When '\x1b\x1b' is the whole buffer it completes as a meta sequence
+			// (no next char exists to prove a CSI follows); the later CSI bytes
+			// then arrive as plain input. The one-shot split only happens when
+			// the CSI start is present in the same chunk — that timing
+			// dependence existed in the slice-based scanner as well.
+			processInput("\x1b");
+			processInput("\x1b");
+			assert.deepStrictEqual(emittedSequences, ["\x1b\x1b"]);
+			processInput("[27;129:3u");
+			assert.deepStrictEqual(emittedSequences, [
+				"\x1b\x1b",
+				"[",
+				"2",
+				"7",
+				";",
+				"1",
+				"2",
+				"9",
+				":",
+				"3",
+				"u",
+			]);
+		});
+
+		it("completes an OSC ST terminator straddling the resume cursor", () => {
+			processInput("\x1b]0;title\x1b");
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput("\\");
+			assert.deepStrictEqual(emittedSequences, ["\x1b]0;title\x1b\\"]);
+		});
+
+		it("completes a DCS ST terminator straddling the resume cursor", () => {
+			processInput("\x1bP1;r\x1b");
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput("\\");
+			assert.deepStrictEqual(emittedSequences, ["\x1bP1;r\x1b\\"]);
+		});
+
+		it("keeps an invalid SGR mouse payload incomplete even as it grows", () => {
+			processInput("\x1b[<1;2;3x");
+			assert.deepStrictEqual(emittedSequences, []);
+			// A terminator-looking char after a corrupted payload still does not
+			// complete: the whole payload must match the SGR pattern.
+			processInput("m");
+			assert.deepStrictEqual(emittedSequences, []);
+			assert.strictEqual(buffer.getBuffer(), "\x1b[<1;2;3xm");
+			assert.deepStrictEqual(buffer.flush(), ["\x1b[<1;2;3xm"]);
+		});
+
+		it("keeps an over-long SGR mouse payload incomplete", () => {
+			processInput("\x1b[<1;2;3");
+			processInput(";4;5m");
+			assert.deepStrictEqual(emittedSequences, []);
+			assert.strictEqual(buffer.getBuffer(), "\x1b[<1;2;3;4;5m");
+			assert.deepStrictEqual(buffer.flush(), ["\x1b[<1;2;3;4;5m"]);
+		});
+
+		it("keeps an SGR payload with an embedded early M incomplete (matches previous scanner)", () => {
+			// The 'M' after '<1;2' is not a valid terminator (needs 3 digit
+			// groups), and appending ';3M' does not make '<1;2M;3M' valid
+			// either — the payload must be exactly <digits;digits;digits[Mm].
+			processInput("\x1b[<1;2M");
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput(";3M");
+			assert.deepStrictEqual(emittedSequences, []);
+			assert.deepStrictEqual(buffer.flush(), ["\x1b[<1;2M;3M"]);
+		});
+
+		it("splits WezTerm ESC+ESC+CSI fed across chunks", () => {
+			processInput("\x1b");
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput("\x1b[27;129:3u");
+			assert.deepStrictEqual(emittedSequences, ["\x1b", "\x1b[27;129:3u"]);
+		});
+
+		it("handles a long OSC drip-fed in small chunks", () => {
+			const payload = "A".repeat(4096);
+			const seq = `\x1b]52;c;${payload}\x07`;
+			assert.deepStrictEqual(feedInPieces(seq, 64), [seq]);
+		});
+
+		it("resets the resume cursor on flush and keeps parsing fresh input", () => {
+			processInput("\x1b[<35");
+			assert.deepStrictEqual(buffer.flush(), ["\x1b[<35"]);
+			processInput("m");
+			assert.deepStrictEqual(emittedSequences, ["m"]);
+			processInput("\x1b[A");
+			assert.deepStrictEqual(emittedSequences, ["m", "\x1b[A"]);
+		});
+
+		it("resets the resume cursor on clear and keeps parsing fresh input", () => {
+			processInput("\x1b]0;unterminated");
+			buffer.clear();
+			processInput("\x1b[B");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[B"]);
+		});
+
+		it("drops a partial escape right before a paste start (existing lossy behavior)", () => {
+			const emittedPaste: string[] = [];
+			buffer.on("paste", (data) => emittedPaste.push(data));
+			processInput("\x1b[");
+			processInput("\x1b[200~hello\x1b[201~");
+			assert.deepStrictEqual(emittedPaste, ["hello"]);
+			assert.deepStrictEqual(emittedSequences, []);
+			processInput("a");
+			assert.deepStrictEqual(emittedSequences, ["a"]);
+		});
+	});
+
 	describe("Destroy", () => {
 		it("should clear buffer on destroy", () => {
 			processInput("\x1b[<35");
@@ -448,10 +596,8 @@ describe("StdinBuffer", () => {
 			processInput("\x1b[<35");
 			buffer.destroy();
 
-			// Wait longer than timeout
 			await wait(15);
 
-			// Should not have emitted anything
 			assert.deepStrictEqual(emittedSequences, []);
 		});
 	});

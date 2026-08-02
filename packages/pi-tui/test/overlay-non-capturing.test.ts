@@ -290,7 +290,7 @@ describe("TUI overlay non-capturing", () => {
 
 				// Simulate Esc: cleanup + close (from inside handleInput)
 				doneFn();
-				// Now await the promise (simulating showExtensionCustom resolving)
+				// Simulates showExtensionCustom resolving.
 				await overlayPromise;
 				await renderAndFlush(tui, terminal);
 

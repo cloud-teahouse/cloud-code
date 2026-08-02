@@ -1,10 +1,12 @@
 export * from './envelope';
 export * from './error-codes';
+export * from './jsonrpc';
 export * from './pagination';
 export * from './time';
 export * from './request-id';
 export * from './events';
 export * from './display';
+export * from './structured';
 export * from './ws-control';
 export * from './asyncapi';
 

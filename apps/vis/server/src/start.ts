@@ -1,11 +1,11 @@
 import { serve } from '@hono/node-server';
 
 import { createApp } from './app';
-import { hostForUrl, resolveHost, resolveKimiCodeHome, resolvePort, resolveVisAuthToken } from './config';
+import { hostForUrl, resolveHost, resolveCloudCodeHome, resolvePort, resolveVisAuthToken } from './config';
 import type { WebAsset } from './lib/web-asset';
 
 export interface StartVisServerOptions {
-  /** Sessions home. Defaults to env KIMI_CODE_HOME, else ~/.kimi-code. */
+  /** Sessions home. Defaults to env CLOUD_CODE_HOME, else ~/.cloud-code. */
   readonly homeDir?: string;
   /** Port; 0 = auto-pick a free port. Defaults to env PORT, else 3001. */
   readonly port?: number;
@@ -26,7 +26,7 @@ export async function startVisServer(
 ): Promise<StartedVisServer> {
   const host = opts.host ?? resolveHost();
   const authToken = opts.authToken ?? resolveVisAuthToken(host);
-  const homeDir = opts.homeDir ?? resolveKimiCodeHome();
+  const homeDir = opts.homeDir ?? resolveCloudCodeHome();
   const app = await createApp({ authToken, homeDir, webAsset: opts.webAsset });
   const port = opts.port ?? resolvePort();
 

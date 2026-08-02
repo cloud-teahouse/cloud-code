@@ -1,4 +1,4 @@
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@cloud-code/kaos';
 import type { Readable } from 'node:stream';
 
 import { errorMessage } from '../../loop/errors';

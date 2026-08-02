@@ -1,17 +1,18 @@
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import { MAX_MCP_TIMEOUT_MS, type McpServerConfig } from '#/config/schema';
 import { log as defaultLog } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
-import type { Tool } from '@moonshot-ai/kosong';
+import type { Tool } from '@cloud-code/kosong';
 
 import { abortable } from '../utils/abort';
+import type { McpAuthCache } from './auth-cache';
 import { HttpMcpClient } from './client-http';
 import { isRemoteMcpConfig } from './client-remote';
 import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from './oauth';
-import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
+import { assertMcpInputSchema, truncateMcpDescription, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
 
@@ -23,6 +24,15 @@ export interface McpServerEntry {
   readonly error?: string;
 }
 
+/**
+ * The instructions a connected server advertised in its `initialize`
+ * response, paired with the server name for prompt rendering.
+ */
+export interface McpServerInstructions {
+  readonly name: string;
+  readonly instructions: string;
+}
+
 interface InternalEntry {
   readonly name: string;
   readonly config: McpServerConfig;
@@ -32,6 +42,8 @@ interface InternalEntry {
   /** Verbatim `tools/list` result the converted {@link tools} came from. */
   rawTools?: readonly MCPToolDefinition[];
   enabledNames?: ReadonlySet<string>;
+  /** Server instructions from the `initialize` handshake, when advertised. */
+  instructions?: string;
   error?: string;
   client?: RuntimeMcpClient;
 }
@@ -40,8 +52,8 @@ export type McpStatusListener = (entry: McpServerEntry) => void;
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 
-export const MCP_STARTUP_TIMEOUT_ENV = 'KIMI_MCP_STARTUP_TIMEOUT_MS';
-export const MCP_TOOL_TIMEOUT_ENV = 'KIMI_MCP_TOOL_TIMEOUT_MS';
+export const MCP_STARTUP_TIMEOUT_ENV = 'CLOUD_CODE_MCP_STARTUP_TIMEOUT_MS';
+export const MCP_TOOL_TIMEOUT_ENV = 'CLOUD_CODE_MCP_TOOL_TIMEOUT_MS';
 
 /** Parse an env override; anything but an integer from 1 to MAX_MCP_TIMEOUT_MS is ignored. */
 function parseTimeoutMsEnv(raw: string): number | undefined {
@@ -53,7 +65,7 @@ function parseTimeoutMsEnv(raw: string): number | undefined {
 
 /**
  * Resolve the global default MCP server startup (connect + tool discovery)
- * timeout. Precedence: `KIMI_MCP_STARTUP_TIMEOUT_MS` (integer ms) →
+ * timeout. Precedence: `CLOUD_CODE_MCP_STARTUP_TIMEOUT_MS` (integer ms) →
  * `configMs` (`[mcp] startup_timeout_ms`) → `undefined` (the manager's
  * built-in default applies). A per-server `startupTimeoutMs` in `mcp.json`
  * always wins over the resolved value.
@@ -69,7 +81,7 @@ export function resolveMcpStartupTimeoutMs(configMs?: number): number | undefine
 
 /**
  * Resolve the global default single MCP tool-call timeout. Precedence:
- * `KIMI_MCP_TOOL_TIMEOUT_MS` (integer ms) → `configMs`
+ * `CLOUD_CODE_MCP_TOOL_TIMEOUT_MS` (integer ms) → `configMs`
  * (`[mcp] tool_timeout_ms`) → `undefined` (the client built-in default
  * applies). A per-server `toolTimeoutMs` in `mcp.json` always wins over the
  * resolved value.
@@ -115,6 +127,17 @@ export interface McpConnectionManagerOptions {
    * unset.
    */
   readonly defaultToolTimeoutMs?: number;
+  /**
+   * Needs-auth TTL cache. When present, automatic connection
+   * attempts (`connectAll` / `connect`) to an OAuth-candidate server whose
+   * last auth failure is younger than the TTL short-circuit to `needs-auth`
+   * without touching the network — an expired token must not turn every
+   * session start / config reload into a refresh storm. Explicit
+   * `reconnect()` (the `/mcp-config login` flow) bypasses the cache; a
+   * successful connect clears the entry. Absent → no caching (one-shot
+   * connectivity-test managers must always hit the network).
+   */
+  readonly authCache?: McpAuthCache;
 }
 
 /**
@@ -130,9 +153,6 @@ export class McpConnectionManager {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
   private initialLoad: Promise<void> = Promise.resolve();
-  private initialLoadAttemptId = 0;
-  private initialLoadStartedAt: number | undefined;
-  private initialLoadFinishedAt: number | undefined;
 
   /**
    * OAuth orchestrator injected at construction time. Consumed by the
@@ -217,15 +237,25 @@ export class McpConnectionManager {
     };
   }
 
+  /**
+   * Instructions advertised by every currently connected server, in
+   * configuration order. Used to render the system prompt's
+   * `# MCP Server Instructions` section; changes to this set are what make
+   * a system-prompt refresh worthwhile after a (re)connect.
+   */
+  serverInstructions(): readonly McpServerInstructions[] {
+    const result: McpServerInstructions[] = [];
+    for (const entry of this.entries.values()) {
+      if (entry.status !== 'connected') continue;
+      const instructions = entry.instructions;
+      if (instructions === undefined || instructions.trim().length === 0) continue;
+      result.push({ name: entry.name, instructions });
+    }
+    return result;
+  }
+
   connectAll(configs: Record<string, McpServerConfig>): Promise<void> {
-    const attemptId = ++this.initialLoadAttemptId;
-    this.initialLoadStartedAt = Date.now();
-    this.initialLoadFinishedAt = undefined;
-    const initialLoad = this.connectAllNow(configs).finally(() => {
-      if (this.initialLoadAttemptId === attemptId) {
-        this.initialLoadFinishedAt = Date.now();
-      }
-    });
+    const initialLoad = this.connectAllNow(configs);
     this.initialLoad = initialLoad;
     return initialLoad;
   }
@@ -245,6 +275,7 @@ export class McpConnectionManager {
     this.entries.set(name, entry);
     this.emit(entry);
     if (!disabled) {
+      if (await this.shortCircuitNeedsAuth(entry)) return;
       await this.connectOne(entry, this.beginConnectAttempt(entry));
     }
   }
@@ -257,6 +288,7 @@ export class McpConnectionManager {
     entry.tools = undefined;
     entry.rawTools = undefined;
     entry.enabledNames = undefined;
+    entry.instructions = undefined;
     entry.error = undefined;
     this.emit(entry);
     this.entries.delete(name);
@@ -267,12 +299,6 @@ export class McpConnectionManager {
     signal?.throwIfAborted();
     if (signal === undefined) return this.initialLoad;
     return abortable(this.initialLoad, signal);
-  }
-
-  initialLoadDurationMs(): number {
-    if (this.initialLoadStartedAt === undefined) return 0;
-    const endedAt = this.initialLoadFinishedAt ?? Date.now();
-    return Math.max(0, endedAt - this.initialLoadStartedAt);
   }
 
   private async connectAllNow(configs: Record<string, McpServerConfig>): Promise<void> {
@@ -288,7 +314,12 @@ export class McpConnectionManager {
       this.entries.set(name, entry);
       this.emit(entry);
       if (!disabled) {
-        tasks.push(this.connectOne(entry, this.beginConnectAttempt(entry)));
+        tasks.push(
+          (async () => {
+            if (await this.shortCircuitNeedsAuth(entry)) return;
+            await this.connectOne(entry, this.beginConnectAttempt(entry));
+          })(),
+        );
       }
     }
     await Promise.allSettled(tasks);
@@ -297,10 +328,10 @@ export class McpConnectionManager {
   async reconnect(name: string): Promise<void> {
     const entry = this.entries.get(name);
     if (entry === undefined) {
-      throw new KimiError(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
+      throw new CloudCodeError(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
     }
     if (entry.config.enabled === false) {
-      throw new KimiError(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`);
+      throw new CloudCodeError(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`);
     }
     const attemptId = this.beginConnectAttempt(entry);
     await this.closeClient(entry);
@@ -309,6 +340,7 @@ export class McpConnectionManager {
     entry.tools = undefined;
     entry.rawTools = undefined;
     entry.enabledNames = undefined;
+    entry.instructions = undefined;
     entry.error = undefined;
     this.emit(entry);
     await this.connectOne(entry, attemptId);
@@ -347,7 +379,11 @@ export class McpConnectionManager {
       entry.tools = discovered.tools;
       entry.rawTools = discovered.rawTools;
       entry.enabledNames = computeEnabledNames(entry.config, discovered.tools);
+      entry.instructions = discovered.instructions;
       entry.status = 'connected';
+      // A successful connect proves the tokens are good again — drop any
+      // cached auth failure so a later expiry re-evaluates fresh.
+      void this.options.authCache?.clear(entry.name);
       this.watchForUnexpectedClose(entry, startupClient, attemptId);
     } catch (error) {
       if (!this.isCurrent(entry, attemptId)) {
@@ -358,7 +394,10 @@ export class McpConnectionManager {
       }
       if (this.shouldMarkNeedsAuth(entry, error)) {
         entry.status = 'needs-auth';
-        entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+        entry.error = needsAuthMessage(entry.name);
+        // Cache the failure: for the TTL, automatic connection attempts
+        // short-circuit instead of stampeding the token endpoint.
+        void this.options.authCache?.mark(entry.name);
       } else {
         entry.status = 'failed';
         entry.error = formatStartupError(error, client);
@@ -366,6 +405,7 @@ export class McpConnectionManager {
       entry.tools = undefined;
       entry.rawTools = undefined;
       entry.enabledNames = undefined;
+      entry.instructions = undefined;
       // Drop the client reference so a later reconnect builds a fresh one.
       await this.closeClient(entry);
     }
@@ -388,6 +428,7 @@ export class McpConnectionManager {
       entry.tools = undefined;
       entry.rawTools = undefined;
       entry.enabledNames = undefined;
+      entry.instructions = undefined;
       entry.client = undefined;
       // Best-effort close; the transport is already gone, but this lets the
       // SDK release timers and pending request handlers.
@@ -447,29 +488,63 @@ export class McpConnectionManager {
   }
 
   private shouldMarkNeedsAuth(entry: InternalEntry, error: unknown): boolean {
+    return this.isOAuthCandidate(entry.config) && isUnauthorizedLikeError(error);
+  }
+
+  /**
+   * Whether the server participates in the OAuth-via-synthetic-tool flow at
+   * all: an OAuth-capable remote config without static credentials. Static
+   * tokens and pinned headers keep their (more actionable) raw errors.
+   */
+  private isOAuthCandidate(config: McpServerConfig): boolean {
     if (this.oauthService === undefined) return false;
-    if (!isRemoteMcpConfig(entry.config)) return false;
-    if (entry.config.bearerTokenEnvVar !== undefined) return false;
+    if (!isRemoteMcpConfig(config)) return false;
+    if (config.bearerTokenEnvVar !== undefined) return false;
     // If the user pinned a static `headers` block, treat 401s as a bad header
     // rather than hijacking them into the OAuth flow — the real error is more
     // actionable than "run /mcp-config login" for a server that doesn't speak
     // OAuth.
-    if (entry.config.headers !== undefined && entry.config.auth !== 'oauth') return false;
-    return isUnauthorizedLikeError(error);
+    if (config.headers !== undefined && config.auth !== 'oauth') return false;
+    return true;
+  }
+
+  /**
+   * Anti-avalanche short-circuit: an OAuth-candidate server
+   * whose last auth failure is still inside the cache TTL flips straight to
+   * `needs-auth` without a network attempt. Returns true when the entry was
+   * short-circuited. Only automatic paths (`connectAll` / `connect`) consult
+   * the cache — explicit `reconnect()` always retries for real.
+   */
+  private async shortCircuitNeedsAuth(entry: InternalEntry): Promise<boolean> {
+    const cache = this.options.authCache;
+    if (cache === undefined) return false;
+    if (!this.isOAuthCandidate(entry.config)) return false;
+    if (!(await cache.isFresh(entry.name))) return false;
+    entry.status = 'needs-auth';
+    entry.error = needsAuthMessage(entry.name);
+    this.emit(entry);
+    return true;
   }
 
   private async connectAndDiscoverTools(
     client: RuntimeMcpClient,
-  ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[] }> {
+  ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[]; instructions?: string }> {
     await client.connect();
     const mcpTools = await client.listTools();
     return {
       rawTools: mcpTools,
       tools: mcpTools.map((mcpTool) => ({
         name: mcpTool.name,
-        description: mcpTool.description,
+        // Cap at registration (rawTools stay verbatim for the discovery
+        // record): OpenAPI-derived servers dump 15-60KB of docs into a single
+        // description, which would otherwise flood the context window.
+        description: truncateMcpDescription(mcpTool.description),
         parameters: assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema),
       })),
+      // Captured once at handshake time; immutable for this connection.
+      // Instructions go into the system prompt verbatim, so they get the
+      // same context-protection cap as tool descriptions.
+      instructions: mapUndefined(client.getInstructions(), truncateMcpDescription),
     };
   }
 
@@ -553,6 +628,10 @@ function isUnauthorizedLikeError(error: unknown): boolean {
   return /\b401\b/.test(error.message) || /unauthorized/i.test(error.message);
 }
 
+function needsAuthMessage(serverName: string): string {
+  return `${serverName} requires OAuth — run /mcp-config login ${serverName}`;
+}
+
 function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined): string {
   const base = error instanceof Error ? error.message : String(error);
   const tail = stderrTail(client);
@@ -596,4 +675,8 @@ async function withTimeout<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+function mapUndefined<T, U>(value: T | undefined, fn: (value: T) => U): U | undefined {
+  return value === undefined ? undefined : fn(value);
 }

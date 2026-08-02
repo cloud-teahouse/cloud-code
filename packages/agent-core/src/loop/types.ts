@@ -10,9 +10,10 @@
  * `exactOptionalPropertyTypes: true`.
  */
 
-import type { ContentPart, Message, TokenUsage, Tool, ToolCall } from '@moonshot-ai/kosong';
+import type { ContentPart, Message, RateLimitSnapshot, TokenUsage, Tool, ToolCall } from '@cloud-code/kosong';
 
-import type { ToolInputDisplay } from '../tools/display';
+import type { ToolInputDisplay, ToolResultDisplayRef, ToolResultStructured } from '../tools/display';
+import type { GitSegmentClass } from '../tools/support/shell-ast/git-classify';
 import type { ToolAccesses } from './tool-access';
 import type { LLM } from './llm';
 
@@ -92,6 +93,23 @@ export interface ExecutableToolSuccessResult {
    * budgeting must not treat the visible output as complete source text.
    */
   readonly truncated?: boolean | undefined;
+  /**
+   * Localization pointer for the user-facing rendering of this result
+   * (i18n key + interpolation params). The `output` text itself stays
+   * English — the model reads it and parts of the UI parse it — while UIs
+   * that know the key render the localized form instead. Persisted with
+   * the transcript record so replay renders the same localized text.
+   */
+  readonly display?: ToolResultDisplayRef | undefined;
+  /**
+   * Structured outcome facts for clients that would otherwise parse the
+   * `output` text (plan-approval markers, background `task_id:` prefixes,
+   * agent envelopes, goal status). The output stays byte-identical for the
+   * model and for old-session replay; consumers read these fields when
+   * present and fall back to parsing the output when absent. UI-only —
+   * never projected to the provider.
+   */
+  readonly structured?: ToolResultStructured | undefined;
 }
 
 export interface ExecutableToolErrorResult {
@@ -105,6 +123,10 @@ export interface ExecutableToolErrorResult {
   readonly stopTurn?: boolean | undefined;
   /** See {@link ExecutableToolSuccessResult.truncated}. */
   readonly truncated?: boolean | undefined;
+  /** See {@link ExecutableToolSuccessResult.display}. */
+  readonly display?: ToolResultDisplayRef | undefined;
+  /** See {@link ExecutableToolSuccessResult.structured}. */
+  readonly structured?: ToolResultStructured | undefined;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;
@@ -148,8 +170,66 @@ export interface RunnableToolExecution {
    */
   readonly stopBatchAfterThis?: boolean | undefined;
   readonly approvalRule: string;
+  /**
+   * Session-approval rules written when the user approves for the session.
+   * Tools that decompose a call into independently-permissioned segments
+   * (e.g. Bash splitting a compound command) provide one rule per segment;
+   * absent → `[approvalRule]`.
+   */
+  readonly approvalRules?: readonly string[] | undefined;
   readonly matchesRule?: ((ruleArgs: string) => boolean) | undefined;
+  /**
+   * Permission-rule namespace for this call when it differs from the tool's
+   * own name. ExecSession sets this to `'Bash'` so the `Bash(...)` approval
+   * rules it writes match session creation exactly as they match one-shot
+   * Bash calls — an approved `Bash(python *)` covers both (RFC
+   * unified-exec-pty §3.4). Absent → rules are matched against the tool
+   * call's own name.
+   */
+  readonly ruleToolName?: string | undefined;
+  /**
+   * Per-segment rule matching for decomposable tools. When present, the
+   * permission chain matches rules against {@link subjects} instead of the
+   * whole-call subject: deny/ask rules fire when ANY subject matches (∃),
+   * allow rules fire only when ALL subjects are covered (∀, unioned across
+   * rules). `matches` applies a rule's argument pattern to one subject and
+   * must implement the same `!`-negation semantics as `matchesRule`.
+   */
+  readonly ruleMatch?: ToolRuleMatch | undefined;
+  /**
+   * Shell-AST degradation marker (F2): `true` when a compound command could
+   * not be parsed and segment analysis fell back to the whole command string.
+   * Surfaced for the guardian review action JSON (F3) so the reviewer judges
+   * opaque commands accordingly. Absent for tools without AST decomposition.
+   */
+  readonly astDegraded?: boolean | undefined;
+  /**
+   * Per-segment git risk classes (C3 P3), aligned 1:1 with
+   * {@link ToolRuleMatch.subjects}; entries are `undefined` for non-git
+   * segments. Classification runs on the wrapper-stripped token view when
+   * the producing tool has wrapper stripping enabled, so `sudo git push`
+   * shows up as `shared-remote`. Surfaced for the git mutation gate
+   * permission policy (and later the guardian `git_classes` evidence).
+   * Absent for tools without AST decomposition.
+   */
+  readonly gitClasses?: readonly GitSegmentClass[] | undefined;
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
+}
+
+export interface ToolRuleMatch {
+  /** Segment subjects in their original order (e.g. `git add .`, `git push`). */
+  readonly subjects: readonly string[];
+  /**
+   * `decision` (additive, C3 P2 wrapper stripping): the decision of the
+   * rule being evaluated — `'allow' | 'ask' | 'deny'`, inlined here to
+   * avoid a loop → permission import cycle. Implementations that strip
+   * safe wrappers (sudo/timeout/env/…) MUST try the original subject
+   * first, then strip asymmetrically: `'allow'` strips only safe-listed
+   * env assignments (BINARY_HIJACK_VARS never), `'ask'`/`'deny'` strip
+   * every leading assignment. Absent → original-subject matching only
+   * (pre-P2 behavior).
+   */
+  matches(ruleArgs: string, subject: string, decision?: 'allow' | 'ask' | 'deny'): boolean;
 }
 
 export type ToolExecution = RunnableToolExecution | ExecutableToolErrorResult;
@@ -187,11 +267,22 @@ export interface AuthorizeToolExecutionResult {
   readonly reason?: string | undefined;
   readonly syntheticResult?: ExecutableToolResult | undefined;
   readonly executionMetadata?: unknown;
-}
-
-export interface PrepareToolExecutionResult extends AuthorizeToolExecutionResult {
+  /**
+   * Replacement args for this call. At the prepare phase the loop validates
+   * them before resolving the execution; at the authorize phase the loop
+   * re-validates and re-resolves the execution so the rewrite (e.g. a
+   * PreToolUse hook's `updatedInput`) takes effect before anything runs.
+   */
   readonly updatedArgs?: unknown;
 }
+
+/**
+ * The prepare phase accepts the same decisions as authorize; historically it
+ * was the only phase honoring `updatedArgs`, which now lives on the shared
+ * parent since authorize-time rewrites (PreToolUse `updatedInput`) are
+ * supported too.
+ */
+export type PrepareToolExecutionResult = AuthorizeToolExecutionResult;
 
 export interface FinalizeToolResultContext extends ToolExecutionHookContext {
   readonly result: ExecutableToolResult;
@@ -200,6 +291,11 @@ export interface FinalizeToolResultContext extends ToolExecutionHookContext {
 export interface LoopAfterStepContext extends LoopStepHookContext {
   readonly usage: TokenUsage;
   readonly stopReason: LoopStepStopReason;
+  /**
+   * Rate-limit snapshot captured with this step's response (ChatGPT Codex
+   * backend only); undefined for providers without quota headers.
+   */
+  readonly rateLimit?: RateLimitSnapshot | undefined;
 }
 
 export interface LoopStoppedStepContext extends LoopStepHookContext {

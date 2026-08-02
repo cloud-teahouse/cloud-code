@@ -24,163 +24,100 @@ const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 
 /**
- * Check if a string is a complete escape sequence or needs more data
+ * Find the end (exclusive index) of the sequence starting at `start` in
+ * `data`, or -1 when the sequence is still incomplete.
+ *
+ * `from` is a resume cursor: chars in [start, from) were already scanned by a
+ * previous pass and found not to complete the sequence, so only [from, len)
+ * needs examining. The per-type rules are exactly those of the original
+ * candidate-by-candidate completeness loop, but each rule is checked in a
+ * single forward pass with no per-candidate string copies:
+ * - ESC alone                       -> incomplete
+ * - ESC [ M ...                     -> old-style mouse: exactly 6 chars
+ * - ESC [ < ...                     -> SGR mouse: completes only once the whole
+ *                                      payload matches ^<\d+;\d+;\d+[Mm]$
+ * - ESC [ ...                       -> CSI: first byte in 0x40-0x7E terminates
+ * - ESC ] ...                       -> OSC: terminates at BEL or ESC \
+ * - ESC P ... / ESC _ ...           -> DCS / APC: terminate at ESC \
+ * - ESC O x                         -> SS3: exactly 3 chars
+ * - ESC <other>                     -> meta / unknown: exactly 2 chars
  */
-function isCompleteSequence(data: string): "complete" | "incomplete" | "not-escape" {
-	if (!data.startsWith(ESC)) {
-		return "not-escape";
-	}
+function scanSequenceEnd(data: string, start: number, from: number): number {
+	const len = data.length;
+	if (len - start < 2) return -1;
 
-	if (data.length === 1) {
-		return "incomplete";
-	}
+	const c1 = data[start + 1];
 
-	const afterEsc = data.slice(1);
-
-	// CSI sequences: ESC [
-	if (afterEsc.startsWith("[")) {
-		// Check for old-style mouse sequence: ESC[M + 3 bytes
-		if (afterEsc.startsWith("[M")) {
+	if (c1 === "[") {
+		const c2 = data[start + 2];
+		if (c2 === "M") {
 			// Old-style mouse needs ESC[M + 3 bytes = 6 total
-			return data.length >= 6 ? "complete" : "incomplete";
+			return len - start >= 6 ? start + 6 : -1;
 		}
-		return isCompleteCsiSequence(data);
-	}
-
-	// OSC sequences: ESC ]
-	if (afterEsc.startsWith("]")) {
-		return isCompleteOscSequence(data);
-	}
-
-	// DCS sequences: ESC P ... ESC \ (includes XTVersion responses)
-	if (afterEsc.startsWith("P")) {
-		return isCompleteDcsSequence(data);
-	}
-
-	// APC sequences: ESC _ ... ESC \ (includes Kitty graphics responses)
-	if (afterEsc.startsWith("_")) {
-		return isCompleteApcSequence(data);
-	}
-
-	// SS3 sequences: ESC O
-	if (afterEsc.startsWith("O")) {
-		// ESC O followed by a single character
-		return afterEsc.length >= 2 ? "complete" : "incomplete";
-	}
-
-	// Meta key sequences: ESC followed by a single character
-	if (afterEsc.length === 1) {
-		return "complete";
-	}
-
-	// Unknown escape sequence - treat as complete
-	return "complete";
-}
-
-/**
- * Check if CSI sequence is complete
- * CSI sequences: ESC [ ... followed by a final byte (0x40-0x7E)
- */
-function isCompleteCsiSequence(data: string): "complete" | "incomplete" {
-	if (!data.startsWith(`${ESC}[`)) {
-		return "complete";
-	}
-
-	// Need at least ESC [ and one more character
-	if (data.length < 3) {
-		return "incomplete";
-	}
-
-	const payload = data.slice(2);
-
-	// CSI sequences end with a byte in the range 0x40-0x7E (@-~)
-	// This includes all letters and several special characters
-	const lastChar = payload[payload.length - 1]!;
-	const lastCharCode = lastChar.charCodeAt(0);
-
-	if (lastCharCode >= 0x40 && lastCharCode <= 0x7e) {
-		// Special handling for SGR mouse sequences
-		// Format: ESC[<B;X;Ym or ESC[<B;X;YM
-		if (payload.startsWith("<")) {
-			// Must have format: <digits;digits;digits[Mm]
-			const mouseMatch = /^<\d+;\d+;\d+[Mm]$/.test(payload);
-			if (mouseMatch) {
-				return "complete";
-			}
-			// If it ends with M or m but doesn't match the pattern, still incomplete
-			if (lastChar === "M" || lastChar === "m") {
-				// Check if we have the right structure
-				const parts = payload.slice(1, -1).split(";");
-				if (parts.length === 3 && parts.every((p) => /^\d+$/.test(p))) {
-					return "complete";
+		if (c2 === "<") {
+			// SGR mouse: ESC[<B;X;Ym / ESC[<B;X;YM. A terminator candidate is
+			// only ever an M/m; the whole payload must match the pattern, so
+			// an M/m at a wrong position keeps the sequence incomplete.
+			for (let i = Math.max(start + 3, from); i < len; i++) {
+				const ch = data[i];
+				if ((ch === "M" || ch === "m") && /^<\d+;\d+;\d+[Mm]$/.test(data.slice(start + 2, i + 1))) {
+					return i + 1;
 				}
 			}
-
-			return "incomplete";
+			return -1;
 		}
-
-		return "complete";
+		// CSI sequences end with a byte in the range 0x40-0x7E (@-~)
+		for (let i = Math.max(start + 2, from); i < len; i++) {
+			const code = data.charCodeAt(i);
+			if (code >= 0x40 && code <= 0x7e) return i + 1;
+		}
+		return -1;
 	}
 
-	return "incomplete";
+	if (c1 === "]") {
+		// OSC sequences end with ST (ESC \) or BEL (\x07). The one-char
+		// lookback catches an ESC \ pair straddling the resume cursor.
+		for (let i = Math.max(start + 2, from); i < len; i++) {
+			const ch = data[i];
+			if (ch === "\x07") return i + 1;
+			if (ch === "\\" && data[i - 1] === ESC) return i + 1;
+		}
+		return -1;
+	}
+
+	if (c1 === "P" || c1 === "_") {
+		// DCS (XTVersion responses) and APC (Kitty graphics responses)
+		// sequences end with ST (ESC \)
+		for (let i = Math.max(start + 2, from); i < len; i++) {
+			if (data[i] === "\\" && data[i - 1] === ESC) return i + 1;
+		}
+		return -1;
+	}
+
+	if (c1 === "O") {
+		// SS3 sequences: ESC O followed by a single character
+		return len - start >= 3 ? start + 3 : -1;
+	}
+
+	// Meta key / unknown escape sequences: ESC followed by a single character.
+	if (c1 === ESC) {
+		// WezTerm with enable_kitty_keyboard sends the Escape key press as a
+		// raw '\x1b' byte (simple text path in encode_kitty, ignoring
+		// DISAMBIGUATE_ESCAPE_CODES) and the release as a full Kitty CSI-u
+		// sequence. These arrive concatenated as '\x1b\x1b[27;...u'.
+		// The buffer would normally treat '\x1b\x1b' as a complete meta-key
+		// sequence (ESC + single char), leaving '[27;...u' to be typed as
+		// plain text. If the character immediately following '\x1b\x1b'
+		// would begin a new escape sequence, emit only the first ESC and
+		// restart from the second.
+		const next = data[start + 2];
+		if (next === "[" || next === "]" || next === "O" || next === "P" || next === "_") {
+			return start + 1;
+		}
+	}
+	return start + 2;
 }
 
-/**
- * Check if OSC sequence is complete
- * OSC sequences: ESC ] ... ST (where ST is ESC \ or BEL)
- */
-function isCompleteOscSequence(data: string): "complete" | "incomplete" {
-	if (!data.startsWith(`${ESC}]`)) {
-		return "complete";
-	}
-
-	// OSC sequences end with ST (ESC \) or BEL (\x07)
-	if (data.endsWith(`${ESC}\\`) || data.endsWith("\x07")) {
-		return "complete";
-	}
-
-	return "incomplete";
-}
-
-/**
- * Check if DCS (Device Control String) sequence is complete
- * DCS sequences: ESC P ... ST (where ST is ESC \)
- * Used for XTVersion responses like ESC P >| ... ESC \
- */
-function isCompleteDcsSequence(data: string): "complete" | "incomplete" {
-	if (!data.startsWith(`${ESC}P`)) {
-		return "complete";
-	}
-
-	// DCS sequences end with ST (ESC \)
-	if (data.endsWith(`${ESC}\\`)) {
-		return "complete";
-	}
-
-	return "incomplete";
-}
-
-/**
- * Check if APC (Application Program Command) sequence is complete
- * APC sequences: ESC _ ... ST (where ST is ESC \)
- * Used for Kitty graphics responses like ESC _ G ... ESC \
- */
-function isCompleteApcSequence(data: string): "complete" | "incomplete" {
-	if (!data.startsWith(`${ESC}_`)) {
-		return "complete";
-	}
-
-	// APC sequences end with ST (ESC \)
-	if (data.endsWith(`${ESC}\\`)) {
-		return "complete";
-	}
-
-	return "incomplete";
-}
-
-/**
- * Split accumulated buffer into complete sequences
- */
 function parseUnmodifiedKittyPrintableCodepoint(sequence: string): number | undefined {
 	const match = sequence.match(/^\x1b\[(\d+)(?::\d*)?(?::\d+)?u$/);
 	if (!match) return undefined;
@@ -189,64 +126,29 @@ function parseUnmodifiedKittyPrintableCodepoint(sequence: string): number | unde
 	return codepoint >= 32 ? codepoint : undefined;
 }
 
-function extractCompleteSequences(buffer: string): { sequences: string[]; remainder: string } {
+/**
+ * Split accumulated buffer into complete sequences. `from` is a resume cursor
+ * for the first (pending) sequence in the buffer; pass 0 for a one-shot scan.
+ */
+function extractCompleteSequences(
+	buffer: string,
+	from = 0,
+): { sequences: string[]; remainder: string } {
 	const sequences: string[] = [];
 	let pos = 0;
 
 	while (pos < buffer.length) {
-		const remaining = buffer.slice(pos);
-
-		// Try to extract a sequence starting at this position
-		if (remaining.startsWith(ESC)) {
-			// Find the end of this escape sequence
-			let seqEnd = 1;
-			while (seqEnd <= remaining.length) {
-				const candidate = remaining.slice(0, seqEnd);
-				const status = isCompleteSequence(candidate);
-
-				if (status === "complete") {
-					// WezTerm with enable_kitty_keyboard sends the Escape key press as a
-					// raw '\x1b' byte (simple text path in encode_kitty, ignoring
-					// DISAMBIGUATE_ESCAPE_CODES) and the release as a full Kitty CSI-u
-					// sequence. These arrive concatenated as '\x1b\x1b[27;...u'.
-					// The buffer would normally treat '\x1b\x1b' as a complete meta-key
-					// sequence (ESC + single char), leaving '[27;...u' to be typed as
-					// plain text. If the character immediately following '\x1b\x1b'
-					// would begin a new escape sequence, emit only the first ESC and
-					// restart from the second.
-					if (candidate === "\x1b\x1b") {
-						const nextChar = remaining[seqEnd];
-						if (
-							nextChar === "[" || // CSI
-							nextChar === "]" || // OSC
-							nextChar === "O" || // SS3
-							nextChar === "P" || // DCS
-							nextChar === "_" // APC
-						) {
-							sequences.push(ESC);
-							pos += 1;
-							break;
-						}
-					}
-					sequences.push(candidate);
-					pos += seqEnd;
-					break;
-				} else if (status === "incomplete") {
-					seqEnd++;
-				} else {
-					// Should not happen when starting with ESC
-					sequences.push(candidate);
-					pos += seqEnd;
-					break;
-				}
+		if (buffer[pos] === ESC) {
+			const end = scanSequenceEnd(buffer, pos, Math.max(pos + 2, from));
+			if (end === -1) {
+				return { sequences, remainder: buffer.slice(pos) };
 			}
-
-			if (seqEnd > remaining.length) {
-				return { sequences, remainder: remaining };
-			}
+			sequences.push(buffer.slice(pos, end));
+			pos = end;
 		} else {
-			// Not an escape sequence - take a single character
-			sequences.push(remaining[0]!);
+			// Not an escape sequence - take a single UTF-16 code unit
+			// (char-by-char, exactly like the previous slice-based scan).
+			sequences.push(buffer[pos]!);
 			pos++;
 		}
 	}
@@ -273,6 +175,14 @@ export type StdinBufferEventMap = {
  */
 export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private buffer: string = "";
+	/**
+	 * Resume cursor into `buffer`: how many leading chars of the pending
+	 * (incomplete) escape sequence were already scanned without completing.
+	 * Extraction emits every complete sequence, so the buffer only ever holds
+	 * a single incomplete tail and one cursor suffices — rescanning it from
+	 * index 0 on every chunk made trickle-fed long sequences quadratic.
+	 */
+	private scannedCount: number = 0;
 	private timeout: ReturnType<typeof setTimeout> | null = null;
 	private readonly timeoutMs: number;
 	private pasteMode: boolean = false;
@@ -285,7 +195,6 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	}
 
 	public process(data: string | Buffer): void {
-		// Clear any pending timeout
 		if (this.timeout) {
 			clearTimeout(this.timeout);
 			this.timeout = null;
@@ -315,6 +224,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		if (this.pasteMode) {
 			this.pasteBuffer += this.buffer;
 			this.buffer = "";
+			this.scannedCount = 0;
 
 			const endIndex = this.pasteBuffer.indexOf(BRACKETED_PASTE_END);
 			if (endIndex !== -1) {
@@ -349,6 +259,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.pasteMode = true;
 			this.pasteBuffer = this.buffer;
 			this.buffer = "";
+			this.scannedCount = 0;
 
 			const endIndex = this.pasteBuffer.indexOf(BRACKETED_PASTE_END);
 			if (endIndex !== -1) {
@@ -368,8 +279,11 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return;
 		}
 
-		const result = extractCompleteSequences(this.buffer);
+		const result = extractCompleteSequences(this.buffer, this.scannedCount);
 		this.buffer = result.remainder;
+		// The remainder is the pending incomplete sequence; all of it has been
+		// scanned already, so the next chunk resumes at its end.
+		this.scannedCount = this.buffer.length;
 
 		for (const sequence of result.sequences) {
 			this.emitDataSequence(sequence);
@@ -409,6 +323,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 		const sequences = [this.buffer];
 		this.buffer = "";
+		this.scannedCount = 0;
 		this.pendingKittyPrintableCodepoint = undefined;
 		return sequences;
 	}
@@ -419,6 +334,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.timeout = null;
 		}
 		this.buffer = "";
+		this.scannedCount = 0;
 		this.pasteMode = false;
 		this.pasteBuffer = "";
 		this.pendingKittyPrintableCodepoint = undefined;

@@ -22,6 +22,8 @@ import {
   isFunctionToolCall,
   normalizeOpenAIFinishReason,
   type OpenAIContentPart,
+  type ReasoningRoundTrip,
+  shouldRoundTripReasoning,
   TOOL_RESULT_MEDIA_PLACEHOLDER,
   TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
@@ -81,6 +83,16 @@ export interface OpenAILegacyOptions {
   stream?: boolean | undefined;
   maxTokens?: number | undefined;
   reasoningKey?: string | undefined;
+  /**
+   * Per-provider policy for sending reasoning (`think` parts) back to the
+   * server. Defaults to `'always'` (every message with think parts — the
+   * historical behavior). Use `'tool-calls-only'` for DeepSeek-style
+   * endpoints (the reasoning key is always present on assistant tool-call
+   * turns, empty string included, and dropped on every other turn) and
+   * `'never'` for OpenAI-compatible endpoints that do not consume reasoning
+   * at all. See {@link ReasoningRoundTrip}.
+   */
+  reasoningRoundTrip?: ReasoningRoundTrip | undefined;
   /**
    * The effort value that encodes "thinking off" on this wire (e.g. `'none'`
    * for xai grok). When set, `withThinking('off')` sends it as
@@ -159,6 +171,7 @@ function convertMessage(
   message: Message,
   reasoningKey: string,
   toolMessageConversion: ToolMessageConversion,
+  reasoningRoundTrip: ReasoningRoundTrip,
 ): OpenAIMessage {
   let reasoningContent = '';
   let hasReasoningPart = false;
@@ -236,8 +249,17 @@ function convertMessage(
   // de facto `reasoning_content` so OpenAI-compatible reasoners — DeepSeek,
   // Qwen, One API gateways — work out of the box). Servers that don't
   // understand the field ignore it; an explicit `reasoningKey` config pins
-  // the dialect instead of detecting it.
-  if (hasReasoningPart) {
+  // the dialect instead of detecting it. The `reasoningRoundTrip` policy
+  // gates whether the field is emitted at all ('always' keeps the historical
+  // every-think-part echo; 'tool-calls-only' sends it — empty string
+  // included — only on assistant tool-call turns; 'never' drops it).
+  if (
+    shouldRoundTripReasoning(reasoningRoundTrip, {
+      role: message.role,
+      hasToolCalls: message.toolCalls.length > 0,
+      hasReasoningPart,
+    })
+  ) {
     result[reasoningKey] = reasoningContent;
   }
 
@@ -299,6 +321,7 @@ function convertHistoryMessages(
   history: readonly Message[],
   reasoningKey: string,
   toolMessageConversion: ToolMessageConversion,
+  reasoningRoundTrip: ReasoningRoundTrip,
 ): OpenAIMessage[] {
   const messages: OpenAIMessage[] = [];
   const pendingToolResultMedia: OpenAIContentPart[] = [];
@@ -311,7 +334,7 @@ function convertHistoryMessages(
     if (msg.role !== 'tool') {
       appendToolResultMediaMessage(messages, pendingToolResultMedia);
     }
-    messages.push(convertMessage(msg, reasoningKey, toolMessageConversion));
+    messages.push(convertMessage(msg, reasoningKey, toolMessageConversion, reasoningRoundTrip));
     if (msg.role === 'tool') {
       pendingToolResultMedia.push(...toolResultImageParts(msg));
     }
@@ -487,6 +510,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _offEffort: string | undefined;
   private _generationKwargs: OpenAILegacyGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
+  private _reasoningRoundTrip: ReasoningRoundTrip;
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
@@ -517,6 +541,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         : {}),
     };
     this._toolMessageConversion = options.toolMessageConversion ?? null;
+    this._reasoningRoundTrip = options.reasoningRoundTrip ?? 'always';
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
 
@@ -558,6 +583,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         normalizedHistory,
         this._reasoningKeyDialect.outboundKey(),
         this._toolMessageConversion,
+        this._reasoningRoundTrip,
       ),
     );
 
@@ -587,11 +613,15 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     // their value would otherwise be silently overwritten below. An explicit 'off'
     // from withThinking is honored as well: with thinking turned off the
     // auto-enable must not silently switch reasoning back on (or leak the field
-    // to models that reject it).
+    // to models that reject it). `reasoningRoundTrip: 'never'` also skips it:
+    // no reasoning_content ever reaches the wire under that policy, so the
+    // validation premise never holds and the endpoint marked as not consuming
+    // reasoning is not handed a reasoning switch it may reject.
     // See: https://github.com/MoonshotAI/kimi-code/issues/1616
     if (
       reasoningEffort === undefined &&
       effort !== 'off' &&
+      this._reasoningRoundTrip !== 'never' &&
       kwargs['reasoning_effort'] === undefined
     ) {
       const hasThinkPart = history.some((message) =>

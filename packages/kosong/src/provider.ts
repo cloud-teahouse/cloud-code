@@ -1,4 +1,6 @@
 import type { Message, StreamedMessagePart, VideoURLPart } from './message';
+import type { NormalizeRepairKind } from './normalize';
+import type { RateLimitSnapshot } from './rate-limit';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
@@ -118,6 +120,14 @@ export interface StreamedMessage {
    * does not report one.
    */
   readonly traceId?: string | null;
+  /**
+   * Account rate-limit snapshot parsed from the `x-codex-*` response headers
+   * (ChatGPT Codex backend only). Available as soon as the response headers
+   * arrive — before the stream body is drained. Absent (`undefined`) for
+   * providers that never report quota headers; `null` when the provider
+   * looked for them but the backend sent none (non-Codex OpenAI backends).
+   */
+  readonly rateLimit?: RateLimitSnapshot | null;
 }
 
 /**
@@ -179,6 +189,14 @@ export interface GenerateOptions {
    * least one part was streamed, or `undefined` for an empty stream.
    */
   onStreamEnd?: (stats?: StreamDecodeStats) => void;
+  /**
+   * Fires once per repair applied by the defensive wire layer
+   * (`normalizeMessagesForWire`) on the outbound history — e.g. truncated
+   * tool-call arguments closed, empty tool names backfilled, orphan results
+   * dropped. Not fired at all on the healthy fast path. Repaired payloads go
+   * to the wire only; the caller's history is never mutated.
+   */
+  onNormalizeRepair?: (kind: NormalizeRepairKind, toolCallId: string) => void;
 }
 
 /**

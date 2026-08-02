@@ -29,10 +29,10 @@ import { McpOAuthClientProvider } from './provider';
 import { JsonFileStore, mcpCredentialsDir, mcpOAuthStoreKey } from './store';
 
 export interface McpOAuthServiceOptions {
-  /** Storage backend; overrides `kimiHomeDir` when supplied. */
+  /** Storage backend; overrides `cloudCodeHomeDir` when supplied. */
   readonly store?: JsonFileStore;
-  /** Resolved Kimi home; credentials default to `<kimiHomeDir>/credentials/mcp/`. */
-  readonly kimiHomeDir?: string;
+  /** Resolved Kimi home; credentials default to `<cloudCodeHomeDir>/credentials/mcp/`. */
+  readonly cloudCodeHomeDir?: string;
   /** Override for the label embedded in DCR `client_name`. */
   readonly clientLabel?: string;
 }
@@ -67,7 +67,7 @@ export class McpOAuthService {
     this.store =
       options.store ??
       new JsonFileStore(
-        options.kimiHomeDir === undefined ? undefined : mcpCredentialsDir(options.kimiHomeDir),
+        options.cloudCodeHomeDir === undefined ? undefined : mcpCredentialsDir(options.cloudCodeHomeDir),
       );
     this.clientLabel = options.clientLabel;
   }

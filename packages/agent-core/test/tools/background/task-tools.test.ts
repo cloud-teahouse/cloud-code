@@ -8,11 +8,12 @@ import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@cloud-code/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   BackgroundTaskPersistence,
+  ShellSessionTask,
   type BackgroundManager,
   type BackgroundTaskInfo,
 } from '../../../src/agent/background';
@@ -25,6 +26,7 @@ import {
   registerProcess,
   waitForOutput,
 } from '../../agent/background/helpers';
+import { fakePtyProcess } from '../../agent/shell-session/helpers';
 import { executeTool } from '../fixtures/execute-tool';
 import { toolContentString } from '../fixtures/fake-kaos';
 
@@ -32,6 +34,28 @@ const signal = new AbortController().signal;
 
 function context<Input>(toolCallId: string, args: Input) {
   return { turnId: '0', toolCallId, args, signal };
+}
+
+/**
+ * Managers built over a temporary session directory, so {@link removeSessionDir}
+ * can settle their persistence queues before deleting it.
+ *
+ * `BackgroundManager` persists task state and `output.log` fire-and-forget —
+ * production never waits on those writes. A test that deletes its session
+ * directory does: `rm -rf` racing a queued `mkdir`/`appendFile` fails with
+ * ENOTEMPTY when an entry reappears between the readdir and the rmdir.
+ */
+const sessionManagers: BackgroundManager[] = [];
+
+function sessionFixture(sessionDir: string): ReturnType<typeof createBackgroundManager> {
+  const fixture = createBackgroundManager({ sessionDir });
+  sessionManagers.push(fixture.manager);
+  return fixture;
+}
+
+async function removeSessionDir(sessionDir: string): Promise<void> {
+  await Promise.all(sessionManagers.splice(0).map((manager) => manager._drainPersistenceForTests()));
+  await rm(sessionDir, { recursive: true, force: true });
 }
 
 function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
@@ -246,7 +270,7 @@ describe('TaskOutputTool', () => {
   it('returns persisted output path and guidance when a log is available', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-output-tool-'));
     try {
-      const { manager } = createBackgroundManager({ sessionDir });
+      const { manager } = sessionFixture(sessionDir);
       const taskId = registerProcess(
         manager,
         immediateProcess(0, 'STDOUT-PAYLOAD-LINE\n'),
@@ -265,7 +289,33 @@ describe('TaskOutputTool', () => {
       expect(content).toContain('full_output_hint:');
       expect(content).toContain('[output]\nSTDOUT-PAYLOAD-LINE');
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await removeSessionDir(sessionDir);
+    }
+  });
+
+  it('words the paging hint for shell sessions (raw PTY stream, WriteStdin for increments)', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-pty-output-tool-'));
+    try {
+      const { manager } = sessionFixture(sessionDir);
+      const fake = fakePtyProcess();
+      const taskId = manager.registerTask(
+        new ShellSessionTask(fake.proc, 'bash', 'Session: bash', () => {}, () => {}),
+      );
+
+      fake.emit('session-output-line\n');
+      await waitForOutput(manager, taskId, 'session-output-line');
+      const content = await taskOutput(manager, taskId);
+
+      expect(content).toContain('kind: pty-session');
+      expect(content).toContain('full_output_tool: Read');
+      // Session-specific paging guidance: Read paging parameters plus the
+      // WriteStdin poll path for output produced after this snapshot.
+      expect(content).toContain('shell session log');
+      expect(content).toContain('line_offset');
+      expect(content).toContain('WriteStdin');
+      fake.exit(0);
+    } finally {
+      await removeSessionDir(sessionDir);
     }
   });
 
@@ -294,7 +344,7 @@ describe('TaskOutputTool', () => {
   it('reads persisted output for a task loaded after restart', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-output-'));
     try {
-      const writer = createBackgroundManager({ sessionDir }).manager;
+      const writer = sessionFixture(sessionDir).manager;
       const taskId = registerProcess(
         writer,
         immediateProcess(0, 'persisted output\n'),
@@ -304,7 +354,7 @@ describe('TaskOutputTool', () => {
       await writer.wait(taskId);
       await waitForOutput(writer, taskId, 'persisted output');
 
-      const reader = createBackgroundManager({ sessionDir }).manager;
+      const reader = sessionFixture(sessionDir).manager;
       await reader.loadFromDisk();
       await reader.reconcile();
       const content = await taskOutput(reader, taskId);
@@ -313,7 +363,7 @@ describe('TaskOutputTool', () => {
       expect(content).toContain('output_path:');
       expect(content).toContain('persisted output');
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await removeSessionDir(sessionDir);
     }
   });
 
@@ -361,7 +411,7 @@ describe('TaskOutputTool', () => {
   it('does not advertise output_path when the persisted log file does not exist', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-empty-'));
     try {
-      const { manager } = createBackgroundManager({ sessionDir });
+      const { manager } = sessionFixture(sessionDir);
       const taskId = registerProcess(manager, immediateProcess(0), 'sleep 1', 'silent task');
 
       await manager.wait(taskId);
@@ -371,14 +421,14 @@ describe('TaskOutputTool', () => {
       expect(content).toContain('output_size_bytes: 0');
       expect(content).toContain('full_output_available: false');
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await removeSessionDir(sessionDir);
     }
   });
 
   it('truncates output > 32 KiB to a tail preview and reports paging metadata', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-trunc-'));
     try {
-      const { manager } = createBackgroundManager({ sessionDir });
+      const { manager } = sessionFixture(sessionDir);
       const head = 'HEAD-MARKER\n';
       const tail = 'TAIL-MARKER\n';
       const big = head + 'x'.repeat(200 * 1024) + tail;
@@ -395,14 +445,14 @@ describe('TaskOutputTool', () => {
       expect(content).toContain('TAIL-MARKER');
       expect(content).not.toContain('HEAD-MARKER');
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await removeSessionDir(sessionDir);
     }
   });
 
   it('lookup of a non-existent task does not create persisted state', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-missing-'));
     try {
-      const { manager } = createBackgroundManager({ sessionDir });
+      const { manager } = sessionFixture(sessionDir);
 
       const result = await executeTool(
         new TaskOutputTool(manager),
@@ -412,7 +462,7 @@ describe('TaskOutputTool', () => {
       expect(result.isError).toBe(true);
       expect(await new BackgroundTaskPersistence(sessionDir).listTasks()).toEqual([]);
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await removeSessionDir(sessionDir);
     }
   });
 });
@@ -430,6 +480,10 @@ describe('TaskStopTool', () => {
 
     expect(result.isError).toBe(true);
     expect(toolContentString(result)).toContain('Task not found');
+    expect(result.display).toEqual({
+      key: 'toolResult.taskStop.notFound',
+      params: { taskId: 'bash-unknown0' },
+    });
   });
 
   it('stops a running task and records the reason', async () => {
@@ -445,6 +499,11 @@ describe('TaskStopTool', () => {
     expect(toolContentString(result)).toContain('status: killed');
     expect(toolContentString(result)).toContain('custom stop reason');
     expect(manager.getTask(taskId)?.stopReason).toBe('custom stop reason');
+    expect(result.structured).toEqual({ taskId, status: 'killed' });
+    expect(result.display).toEqual({
+      key: 'toolResult.taskStop.stopped',
+      params: { taskId, status: 'killed', reason: 'custom stop reason' },
+    });
   });
 
   it('does not steer a terminal notification for model-requested stops', async () => {
@@ -469,7 +528,7 @@ describe('TaskStopTool', () => {
   it('persists stop reason when the manager has persistence', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-stop-reason-'));
     try {
-      const writer = createBackgroundManager({ sessionDir }).manager;
+      const writer = sessionFixture(sessionDir).manager;
       const taskId = registerProcess(writer, pendingProcess(), 'sleep 60', 'persist stop');
 
       const result = await executeTool(
@@ -478,7 +537,7 @@ describe('TaskStopTool', () => {
       );
       expect(result.isError).toBe(false);
 
-      const { agent, manager: reader } = createBackgroundManager({ sessionDir });
+      const { agent, manager: reader } = sessionFixture(sessionDir);
       await reader.loadFromDisk();
       expect(reader.getTask(taskId)).toMatchObject({
         stopReason: 'operator cancelled',
@@ -487,7 +546,7 @@ describe('TaskStopTool', () => {
       await reader.reconcile();
       expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await removeSessionDir(sessionDir);
     }
   });
 
@@ -533,7 +592,7 @@ describe('TaskStopTool', () => {
     try {
       const persistence = new BackgroundTaskPersistence(sessionDir);
       await persistence.writeTask(persistedProcess({ stopReason: '' }));
-      const reader = createBackgroundManager({ sessionDir }).manager;
+      const reader = sessionFixture(sessionDir).manager;
       await reader.loadFromDisk();
 
       const result = await executeTool(
@@ -546,7 +605,7 @@ describe('TaskStopTool', () => {
         'reason: Task already in terminal state',
       );
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await removeSessionDir(sessionDir);
     }
   });
 });

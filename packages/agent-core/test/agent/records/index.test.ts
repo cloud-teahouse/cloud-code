@@ -402,6 +402,31 @@ describe('AgentRecords persistence metadata', () => {
     expect(agent.goal.getGoal().goal).toBeNull();
     expect(agent.context.history).toHaveLength(0);
   });
+
+  it('replays shell_session records as observability no-ops', async () => {
+    // RFC unified-exec-pty §3.5 v2: the records are the durable lifecycle
+    // trail only — replay must rebuild nothing (sessions never survive a
+    // restart; the lost reconcile rides background task persistence).
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'shell_session.start', sessionId: 'pty-dead0000', command: 'bash', pid: 4242, time: 2 },
+      { type: 'shell_session.exit', sessionId: 'pty-dead0000', command: 'bash', exitCode: 0, time: 3 },
+      { type: 'shell_session.start', sessionId: 'pty-dead0001', command: 'python3', pid: 4243, time: 4 },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+
+    expect(agent.shellSessions.size).toBe(0);
+    expect(agent.context.history).toHaveLength(0);
+    // The records themselves stay in the log untouched.
+    expect(persistence.records.map((record) => record.type)).toEqual([
+      'metadata',
+      'shell_session.start',
+      'shell_session.exit',
+      'shell_session.start',
+    ]);
+  });
 });
 
 describe('agent replay range build', () => {

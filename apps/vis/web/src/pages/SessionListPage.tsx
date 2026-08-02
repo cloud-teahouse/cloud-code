@@ -8,7 +8,7 @@ export function SessionListPage() {
     <div className="flex h-full items-center justify-center">
       <div className="max-w-md px-8 text-center">
         <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-fg-3">
-          kimi vis
+          cloud-code vis
         </div>
         <div className="mt-3 font-mono text-[13px] text-fg-1">
           select a session from the left rail to begin inspecting

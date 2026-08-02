@@ -19,6 +19,11 @@ Each record carries:
   `…(truncated)` if longer. Use this to recall what a task is for
   after a context compaction, and as the source for the
   `CronCreate` refresh ritual.
+- `source` — `session` for tasks scoped to this session (restored only
+  by `cloud-code resume` of this session), `project` for durable tasks
+  shared through the project's `.cloud-code/scheduled_tasks.json`.
+  Project tasks are listed in every session of the project but are
+  fired only by the session that currently owns the project schedule.
 - `nextFireAt` — local ISO timestamp with an explicit numeric offset
   for the next fire **after jitter has been applied**. The actual fire
   may land slightly before or after a round `:00` / `:30` minute mark
@@ -44,9 +49,10 @@ Guidelines:
 - Users cannot directly manage cron tasks themselves; if they want to
   cancel or modify a schedule, route the request through the model
   (i.e. call `CronDelete` or `CronCreate` on their behalf).
-- The empty case returns `cron_jobs: 0\nNo cron jobs scheduled.`. Cron
-  tasks survive a resume of the same session but do not bleed into new
-  sessions.
+- The empty case returns `cron_jobs: 0\nNo cron jobs scheduled.`.
+  Session-scoped tasks survive a `cloud-code resume` of the same session
+  but do not bleed into new sessions; `source: project` tasks are shared
+  by every session in the project (see CronCreate's `durable` flag).
 - After a context compaction, or whenever you are unsure which cron
   jobs are live, call this tool to re-enumerate them rather than
   guessing ids from earlier in the conversation.

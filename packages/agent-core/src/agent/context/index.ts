@@ -1,8 +1,8 @@
-import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/kosong';
+import { createToolMessage, type ContentPart, type Message } from '@cloud-code/kosong';
 
 import type { Agent } from '..';
-import { ErrorCodes, KimiError } from '../../errors';
-import type { LoopRecordedEvent } from '../../loop';
+import { ErrorCodes, CloudCodeError } from '../../errors';
+import type { LoopRecordedEvent, LoopToolResultEvent } from '../../loop';
 import { extractImageCompressionCaptions } from '../../tools/support/image-compress';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
 import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
@@ -12,16 +12,19 @@ import {
   buildCompactionElisionText,
   collectCompactableUserMessages,
   isRealUserInput,
+  pinnedDigestPrefixLength,
   selectCompactionUserMessages,
   selectRecentUserMessages,
   type CompactionInput,
   type CompactionResult,
 } from '../compaction';
+import { RESUME_CONTINUATION_VARIANT } from '../injection/resume-continuation';
 import {
   captureMediaStripSnapshot,
   degradeOlderMediaParts,
   MEDIA_DEGRADE_KEEP_RECENT,
   project,
+  ProjectionCache,
   stripMediaPartsBySnapshot,
   type ProjectionAnomaly,
   type ProjectOptions,
@@ -40,6 +43,61 @@ export * from './dynamic-tools';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+
+export interface ContextFinishResumeResult {
+  /**
+   * Tool call ids closed by the end-of-resume interrupted-exchange repair.
+   * Non-empty means the wire log ended mid tool exchange with no turn-end
+   * teardown — a genuine crash/interruption signal (a live turn that ended
+   * normally, was cancelled, or failed closes its abandoned calls at turn
+   * end, so replay finds nothing left to close).
+   */
+  readonly closedToolCallIds: readonly string[];
+}
+
+/**
+ * One structural drift finding from `auditAfterResume` (04i
+ * `checkResumeConsistency` analog): the post-repair history still carries a
+ * tool call with no result, a result with no call, or messages stranded in
+ * the deferral queue.
+ */
+export interface ResumeAuditFinding {
+  readonly kind:
+    | 'tool_call_without_result'
+    | 'tool_result_without_call'
+    | 'stranded_deferred_messages';
+  readonly toolCallId?: string;
+  readonly count?: number;
+}
+
+/**
+ * One structural repair the replay layer performed while rebuilding the
+ * history (04i `checkResumeConsistency` analog — the "repaired" half of the
+ * write→load round-trip drift report; `ResumeAuditFinding` is the
+ * "unrepairable" half). Recorded only during restore: the live paths that
+ * share these routines (turn-end teardown) are routine, not drift.
+ */
+export type ResumeRepairEntry =
+  /** Open tool calls closed in place when the next replayed step began. */
+  | { readonly kind: 'tool_calls_closed_at_step_boundary'; readonly toolCallIds: readonly string[] }
+  /** Open tool calls closed at end of resume — the trailing interruption. */
+  | { readonly kind: 'tool_calls_closed_at_resume_end'; readonly toolCallIds: readonly string[] }
+  /** A step event referencing a step with no open begin (e.g. an undo that raced a live step) was skipped. */
+  | {
+      readonly kind: 'orphan_step_event_skipped';
+      readonly eventType: 'content.part' | 'tool.call';
+      readonly stepUuid: string;
+    }
+  /** A tool result whose call was never recorded (or was already settled) — dropped, output unrecoverable. */
+  | { readonly kind: 'orphan_tool_result_dropped'; readonly toolCallId: string }
+  /**
+   * A late-arriving real result re-attached over the synthetic interrupted
+   * placeholder the in-place close had left for its call (04i
+   * `recoverOrphanedParallelToolResults` analog adapted to the event log:
+   * the parallel batch's result was split off its exchange; the survivor is
+   * re-hung in position instead of dropped).
+   */
+  | { readonly kind: 'late_tool_result_reattached'; readonly toolCallId: string };
 
 const IMPORT_CONTEXT_GUIDANCE =
   'This is a prior conversation history that may be relevant to the current session. ' +
@@ -60,8 +118,22 @@ export class ContextMemory {
   // Signature of the last logged set of projection repairs, so a repair that
   // recurs identically on every send is logged once rather than per step.
   private lastProjectionRepairSignature: string | null = null;
+  // Restore-time structural repair ledger (see ResumeRepairEntry). Live closes
+  // (turn-end teardown) do not record — they are routine, not drift.
+  private readonly resumeRepairLog: ResumeRepairEntry[] = [];
+  // Per-message projection memo (see ProjectionCache). Used only when
+  // projecting the canonical `_history` — the identity-keyed entries rely on
+  // history messages being immutable except the open-step assistant message,
+  // whose growth points invalidate below. Foreign message arrays (e.g. the
+  // compaction summarizer's slice) take the uncached pure path.
+  private readonly projectionCache = new ProjectionCache();
 
   constructor(protected readonly agent: Agent) {}
+
+  /** Structural repairs the last resume performed, in replay order. */
+  get resumeRepairs(): readonly ResumeRepairEntry[] {
+    return this.resumeRepairLog;
+  }
 
   get lastAssistantAt(): number | null {
     return this._lastAssistantAt;
@@ -178,7 +250,7 @@ export class ContextMemory {
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
     this._lastAssistantAt = null;
-    this.agent.microCompaction.reset();
+    this.agent.graduatedCompaction.reset();
     this.agent.injection.onContextClear();
     this.agent.tools.onContextCleared();
     this.agent.emitStatusUpdated();
@@ -186,13 +258,13 @@ export class ContextMemory {
 
   importContext(content: string, source: string): void {
     if (content.trim().length === 0) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Imported context cannot be empty', {
+      throw new CloudCodeError(ErrorCodes.REQUEST_INVALID, 'Imported context cannot be empty', {
         details: { reason: 'import_content_empty' },
       });
     }
     const normalizedSource = source.trim();
     if (normalizedSource.length === 0) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Imported context source cannot be empty', {
+      throw new CloudCodeError(ErrorCodes.REQUEST_INVALID, 'Imported context source cannot be empty', {
         details: { reason: 'import_source_empty' },
       });
     }
@@ -222,7 +294,7 @@ export class ContextMemory {
     const capability = this.agent.config.modelCapabilities;
     const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     if (maxContextTokens > 0 && totalTokenCount > maxContextTokens) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONTEXT_OVERFLOW,
         'Imported content is too large for the current model context ' +
           `(~${String(importTokenCount)} import tokens + ${String(currentTokenCount)} existing ` +
@@ -289,14 +361,14 @@ export class ContextMemory {
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
-    this.agent.microCompaction.reset(this._history.length);
+    this.agent.graduatedCompaction.reset(this._history.length);
     this.agent.emitStatusUpdated();
 
     if (
       !this.agent.records.restoring &&
       (stoppedAtBoundary || removedUserCount < count)
     ) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.REQUEST_INVALID,
         formatUndoUnavailableMessage(count, removedUserCount, stoppedAtBoundary),
         {
@@ -311,6 +383,43 @@ export class ContextMemory {
     }
   }
 
+  /**
+   * Withdraw an unanswered tail user input — the interrupt-recall removal
+   * (Esc cancels a turn before it produced any output, so the input that
+   * started it is pulled back out of the context instead of lingering
+   * unanswered next to its edited replacement).
+   *
+   * Deliberately narrower than `undo(1)`: the message is removed only when it
+   * is the LAST non-injection message in the history — i.e. the turn recorded
+   * no assistant/tool output after it. When anything else sits at the tail
+   * (output did land, or the turn's own prompt never made it in because the
+   * abort raced the pre-append media resolution) the call is a no-op and no
+   * record is logged, so the wire only ever carries withdrawals that actually
+   * happened and replay re-derives the exact same removal.
+   */
+  withdrawUnansweredTailInput(): boolean {
+    for (let i = this._history.length - 1; i >= 0; i--) {
+      const message = this._history[i];
+      if (message === undefined) continue;
+      if (message.origin?.kind === 'injection') continue;
+      if (!isRealUserInput(message)) return false;
+
+      this.agent.records.logRecord({ type: 'context.withdraw_tail_input' });
+
+      this._history.splice(i, 1);
+      this.agent.injection.onContextMessageRemoved(i);
+      if (i < this.tokenCountCoveredMessageCount) {
+        this.tokenCountCoveredMessageCount--;
+        this._tokenCount -= estimateTokensForMessages([message]);
+      }
+      this.agent.replayBuilder.removeLastMessages(new Set([message]));
+      this.agent.graduatedCompaction.reset(this._history.length);
+      this.agent.emitStatusUpdated();
+      return true;
+    }
+    return false;
+  }
+
   applyCompaction(input: CompactionInput): CompactionResult {
     // Single derivation point for the post-compaction shape: the kept user
     // messages (verbatim, within the token budget — the oldest head plus the
@@ -321,15 +430,33 @@ export class ContextMemory {
     // re-deriving them elsewhere (e.g. from the full transcript, which still
     // holds the untruncated originals of messages the live context truncated)
     // would diverge.
-    const compactableUserMessages = collectCompactableUserMessages(this._history);
+    //
+    // KeepPolicy pinned digests: when the history already holds a compaction
+    // summary, everything up to and including the most recent one is carried
+    // over byte-for-byte (earlier summaries accumulate; they are never
+    // re-summarized), and the user-message selection runs over the NEW range
+    // past it only. The prefix a repeated compaction produces is therefore
+    // stable across compactions instead of being re-truncated each time.
+    //
     // Records written before the head/tail split carry `keptUserMessageCount`
     // but no `keptHeadUserMessageCount`; they were produced by the tail-only
     // selection, so restore must reproduce that exact selection or the rebuilt
     // history would diverge from the persisted counts the transcript reducer
     // relies on. (A new-code record without elision restores identically under
-    // either selection, so gating on the head field alone is sufficient.)
+    // either selection, so gating on the head field alone is sufficient.
+    // Records WITH digest pinning always carry `pinnedPrefixCount` and take
+    // the new path even without elision: their pool is the post-summary range,
+    // not the whole history.) Legacy records predate pinning too — their
+    // rebuild dropped earlier summaries — so their pinned prefix is 0.
     const restoreTailOnly =
-      this.agent.records.restoring !== null && input.keptHeadUserMessageCount === undefined;
+      this.agent.records.restoring !== null &&
+      input.keptHeadUserMessageCount === undefined &&
+      input.pinnedPrefixCount === undefined;
+    const pinnedPrefixLength = restoreTailOnly
+      ? 0
+      : (input.pinnedPrefixCount ?? pinnedDigestPrefixLength(this._history));
+    const selectionPool = this._history.slice(pinnedPrefixLength);
+    const compactableUserMessages = collectCompactableUserMessages(selectionPool);
     const selection = restoreTailOnly
       ? {
           head: [],
@@ -346,10 +473,11 @@ export class ContextMemory {
           origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
         }
       : null;
+    const pinnedPrefix = this._history.slice(0, pinnedPrefixLength);
     const keptMessages: ContextMessage[] =
       elisionMessage === null
-        ? [...selection.head, ...selection.tail]
-        : [...selection.head, elisionMessage, ...selection.tail];
+        ? [...pinnedPrefix, ...selection.head, ...selection.tail]
+        : [...pinnedPrefix, ...selection.head, elisionMessage, ...selection.tail];
     // Live compaction omits these so they are derived from the actual
     // `_history`; restore passes the persisted record so its historical values
     // are preserved verbatim. Older wire records did not have `contextSummary`,
@@ -370,6 +498,11 @@ export class ContextMemory {
       tokensAfter,
       keptUserMessageCount,
       keptHeadUserMessageCount,
+      // Live records always carry the pinned count (0 included) so restore can
+      // tell pinning-era records from pre-pinning ones; legacy restores keep
+      // their original shape with the field absent.
+      pinnedPrefixCount:
+        input.pinnedPrefixCount ?? (restoreTailOnly ? undefined : pinnedPrefixLength),
       droppedCount: input.droppedCount,
     };
     this.agent.records.logRecord({
@@ -385,6 +518,7 @@ export class ContextMemory {
         tokensAfter: result.tokensAfter,
         keptUserMessageCount: result.keptUserMessageCount,
         keptHeadUserMessageCount: result.keptHeadUserMessageCount,
+        pinnedPrefixCount: result.pinnedPrefixCount,
         droppedCount: result.droppedCount,
       },
     });
@@ -422,7 +556,7 @@ export class ContextMemory {
     this.deferredMessages = [];
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
-    this.agent.microCompaction.reset();
+    this.agent.graduatedCompaction.reset();
     this.agent.injection.onContextCompacted();
     this.agent.tools.onContextCompacted();
     this.agent.emitStatusUpdated();
@@ -460,16 +594,45 @@ export class ContextMemory {
     const shaped = this.agent.toolSelectEnabled
       ? this.agent.tools.shapeDynamicToolHistory(messages)
       : stripDynamicToolContext(messages);
+    const drained = this.applyPtlDrain(messages, shaped);
     const anomalies: ProjectionAnomaly[] = [];
-    const result = project(this.agent.microCompaction.compact(shaped), {
-      ...options,
-      onAnomaly: (anomaly) => {
-        anomalies.push(anomaly);
-        options?.onAnomaly?.(anomaly);
+    const result = project(
+      this.agent.graduatedCompaction.applyToProjection(drained),
+      {
+        ...options,
+        onAnomaly: (anomaly) => {
+          anomalies.push(anomaly);
+          options?.onAnomaly?.(anomaly);
+        },
       },
-    });
+      messages === this._history ? this.projectionCache : undefined,
+    );
     this.reportProjectionRepairs(anomalies);
     return result;
+  }
+
+  // PTL drain (reactive overflow layer): slice away the armed head of the
+  // canonical-history projection — after dynamic-tool shaping, before the
+  // graduated tool-result rewrites, so `applyToProjection`'s never-drops
+  // promise stays intact (the drop happens upstream of it). The cutoff
+  // indexes the canonical history and shaping may drop protocol messages
+  // (dynamic-tool schemas, loadable announcements) ahead of it, so the first
+  // surviving message is located by reference rather than by raw index. Cuts
+  // land on API-round boundaries; the projector's usual wire repairs
+  // (dropOrphanResults / dropLeadingNonUser) cover anything downstream.
+  private applyPtlDrain(
+    messages: readonly ContextMessage[],
+    shaped: readonly ContextMessage[],
+  ): readonly ContextMessage[] {
+    const cutoff = this.agent.graduatedCompaction.armedDrainCutoff;
+    if (cutoff === 0 || messages !== this._history) return shaped;
+    for (let i = Math.min(cutoff, messages.length); i < messages.length; i++) {
+      const index = shaped.indexOf(messages[i]!);
+      if (index !== -1) return shaped.slice(index);
+    }
+    // Everything at/past the cutoff was protocol context stripped by shaping;
+    // fail open (no drain) and let the overflow chain escalate.
+    return shaped;
   }
 
   // Surface the projector's wire-repairs so a silently-mangled history leaves a
@@ -530,17 +693,6 @@ export class ContextMemory {
       vacuousDropped,
       toolCallIds,
     });
-    this.agent.telemetry.track('context_projection_repaired', {
-      reordered,
-      synthesized,
-      dropped_orphan: droppedOrphan,
-      duplicate_calls_dropped: duplicateCallsDropped,
-      duplicate_results_dropped: duplicateResultsDropped,
-      leading_dropped: leadingDropped,
-      assistants_merged: assistantsMerged,
-      whitespace_dropped: whitespaceDropped,
-      vacuous_dropped: vacuousDropped,
-    });
   }
 
   get messages(): Message[] {
@@ -596,10 +748,11 @@ export class ContextMemory {
     this.pushHistory(...trimTrailingOpenToolExchange(source.project(source.history)));
   }
 
-  finishResume(): void {
+  finishResume(): ContextFinishResumeResult {
     this.openSteps.clear();
     const closed = this.closePendingToolResults();
     if (closed.length > 0) {
+      this.resumeRepairLog.push({ kind: 'tool_calls_closed_at_resume_end', toolCallIds: closed });
       // Routine end-of-resume close of a genuinely interrupted trailing call
       // (e.g. the process died mid-tool), logged for traceability.
       this.agent.log.info('closed interrupted tool calls at end of resume', {
@@ -607,6 +760,90 @@ export class ContextMemory {
         toolCallIds: closed.slice(0, 5),
       });
     }
+    return { closedToolCallIds: closed };
+  }
+
+  /**
+   * Whether the restored history ends on genuine user input the assistant
+   * never answered (the process died before or during the turn's first step).
+   *
+   * Two origin classes are transparent to the scan — it continues down to the
+   * real verdict message instead of letting bookkeeping settle it:
+   * - `injection` messages (except an earlier resume-continuation reminder,
+   *   which settles the scan: already announced, injecting again would stack
+   *   duplicates);
+   * - non-answer bookkeeping that resume itself appends before this scan runs
+   *   (`background_task` notifications restored by `background.reconcile()`,
+   *   plus `cron_job`/`cron_missed`/`system_trigger` by class: scheduler and
+   *   goal re-drives are owned by their own subsystems, not by this reminder).
+   * A trailing compaction summary means the turn completed (compaction only
+   *   runs at a turn boundary), so it settles the scan as "not interrupted".
+   * `hook_result` stays a verdict: a UserPromptSubmit-blocked prompt is a
+   * deliberate stop, not an interruption.
+   *
+   * Accepted misfire class (same tradeoff as Claude's heuristic): a turn that
+   * FAILED cleanly before its first step produced any record — e.g. a
+   * provider/auth error raised before `step.begin` — leaves the same bare
+   * unanswered-prompt tail as a crash, and the append-only wire has no
+   * turn-end marker to tell them apart. Both get the reminder; it is a
+   * one-shot standard-tier nudge, so the cost of the false positive is one
+   * reminder line. Pinned by the "first-step failure" test in resume.test.ts.
+   */
+  hasUnansweredTailPrompt(): boolean {
+    for (let i = this._history.length - 1; i >= 0; i--) {
+      const message = this._history[i]!;
+      const origin = message.origin;
+      const kind = origin?.kind;
+      if (kind === 'injection') {
+        if (origin.variant === RESUME_CONTINUATION_VARIANT) return false;
+        continue;
+      }
+      if (
+        kind === 'background_task' ||
+        kind === 'cron_job' ||
+        kind === 'cron_missed' ||
+        kind === 'mailbox' ||
+        kind === 'system_trigger'
+      ) {
+        continue;
+      }
+      if (kind === 'compaction_summary') return false;
+      return isRealUserInput(message);
+    }
+    return false;
+  }
+
+  /**
+   * Post-resume consistency audit (04i `checkResumeConsistency` analog).
+   * Runs after the replay repairs (step-boundary closes, `finishResume`) so
+   * anything it finds is drift the repair layer could NOT fix — e.g. an
+   * assistant message written by `context.append_message` whose tool calls
+   * never produced results, or messages stranded in the deferral queue by a
+   * poisoned log. Read-only: findings are reported by the caller
+   * (`Agent.resume`) as a warning, never repaired in place.
+   */
+  auditAfterResume(): readonly ResumeAuditFinding[] {
+    const findings: ResumeAuditFinding[] = [];
+    const openCalls = new Set<string>();
+    for (const message of this._history) {
+      if (message.role === 'assistant') {
+        for (const call of message.toolCalls) openCalls.add(call.id);
+        continue;
+      }
+      if (message.role !== 'tool') continue;
+      const toolCallId = message.toolCallId;
+      if (toolCallId === undefined) continue;
+      if (!openCalls.delete(toolCallId)) {
+        findings.push({ kind: 'tool_result_without_call', toolCallId });
+      }
+    }
+    for (const toolCallId of openCalls) {
+      findings.push({ kind: 'tool_call_without_result', toolCallId });
+    }
+    if (this.deferredMessages.length > 0) {
+      findings.push({ kind: 'stranded_deferred_messages', count: this.deferredMessages.length });
+    }
+    return findings;
   }
 
   // Synthesize interrupted tool results for any still-open tool calls, closing
@@ -648,6 +885,63 @@ export class ContextMemory {
     return this.closePendingToolResults(output).length;
   }
 
+  /**
+   * Restore-side recovery for a `tool.result` with no open call (04i
+   * `recoverOrphanedParallelToolResults` analog, adapted to the event log).
+   * Two shapes arrive here:
+   *
+   * - Late real result: the call was closed in place at an earlier step
+   *   boundary (a parallel batch whose result was recorded after the next
+   *   step began — crash/race during streaming execution). The in-place close
+   *   left a synthetic interrupted placeholder claiming the result was never
+   *   observed, but the real output is sitting right here in the log. Re-hang
+   *   it: replace the placeholder in position with the recorded output.
+   * - True orphan / stale duplicate: no placeholder to re-hang over (the call
+   *   was never recorded anywhere), or the arriving result IS the placeholder
+   *   text an older resume persisted — a content-identical duplicate. Drop it
+   *   and ledger the loss: tool output silently vanishing must leave a trace.
+   *
+   * In-memory only (replay logging is suppressed): every resume re-derives
+   * the re-attachment from the same records, so it cannot diverge the wire.
+   */
+  private recoverLateToolResult(event: LoopToolResultEvent): void {
+    const placeholderIndex = this._history.findIndex(
+      (message) =>
+        message.role === 'tool' &&
+        message.toolCallId === event.toolCallId &&
+        message.isError === true &&
+        message.content.length === 1 &&
+        message.content[0]?.type === 'text' &&
+        message.content[0].text === TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
+    );
+    if (
+      placeholderIndex === -1 ||
+      event.result.output === TOOL_INTERRUPTED_ON_RESUME_OUTPUT
+    ) {
+      this.resumeRepairLog.push({
+        kind: 'orphan_tool_result_dropped',
+        toolCallId: event.toolCallId,
+      });
+      return;
+    }
+    const placeholder = this._history[placeholderIndex]!;
+    const settled: ContextMessage = {
+      ...createToolMessage(event.toolCallId, event.result.output),
+      role: 'tool',
+      isError: event.result.isError,
+      note: event.result.note,
+    };
+    this._history[placeholderIndex] = settled;
+    // Keep the replay consistent with history — otherwise the resumed
+    // transcript view shows the interrupted placeholder while the model
+    // context carries the recovered output.
+    this.agent.replayBuilder.replaceMessage(placeholder, settled);
+    this.resumeRepairLog.push({
+      kind: 'late_tool_result_reattached',
+      toolCallId: event.toolCallId,
+    });
+  }
+
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.agent.records.logRecord({
       type: 'context.append_loop_event',
@@ -661,6 +955,12 @@ export class ContextMemory {
         // before opening the new step so mid-history gaps stay aligned.
         const closed = this.closePendingToolResults();
         if (closed.length > 0) {
+          if (this.agent.records.restoring !== null) {
+            this.resumeRepairLog.push({
+              kind: 'tool_calls_closed_at_step_boundary',
+              toolCallIds: closed,
+            });
+          }
           // A mid-history gap means results were lost before this boundary —
           // a genuine defect worth investigating, unlike the expected trailing
           // interruption `finishResume` closes.
@@ -692,6 +992,10 @@ export class ContextMemory {
             event.usage.output;
           if (totalUsage > 0) {
             this._tokenCount = totalUsage;
+            // The provider's count is net of the graduated rewrites the
+            // request carried; those savings must not be subtracted twice
+            // when the compaction gate computes the effective count.
+            this.agent.graduatedCompaction.onProviderUsageRealized();
           } else {
             // The provider reported zero usage (e.g. content filter). Do not
             // overwrite the accumulated context token count with 0; add an
@@ -710,20 +1014,54 @@ export class ContextMemory {
       case 'content.part': {
         const openStep = this.openSteps.get(event.stepUuid);
         if (openStep === undefined) {
+          if (this.agent.records.restoring !== null) {
+            // A poisoned wire log (e.g. an undo raced a live step's events)
+            // must not make the session unresumable: skip the orphan part
+            // instead of failing the whole replay. The live path keeps
+            // throwing — an unknown step there is a real invariant break.
+            this.resumeRepairLog.push({
+              kind: 'orphan_step_event_skipped',
+              eventType: 'content.part',
+              stepUuid: event.stepUuid,
+            });
+            this.agent.log.warn(
+              'skipping content_part for unknown step_uuid during restore',
+              { stepUuid: event.stepUuid },
+            );
+            return;
+          }
           throw new Error(
             `Received content_part for unknown step_uuid '${event.stepUuid}' (no open step_begin)`,
           );
         }
+        // The open-step assistant message is the one in-place-mutated history
+        // object; drop its projection-cache derivatives before growing it.
+        this.projectionCache.invalidate(openStep);
         openStep.content.push(event.part);
         return;
       }
       case 'tool.call': {
         const openStep = this.openSteps.get(event.stepUuid);
         if (openStep === undefined) {
+          if (this.agent.records.restoring !== null) {
+            // Same restore tolerance as content.part above.
+            this.resumeRepairLog.push({
+              kind: 'orphan_step_event_skipped',
+              eventType: 'tool.call',
+              stepUuid: event.stepUuid,
+            });
+            this.agent.log.warn('skipping tool_call for unknown step_uuid during restore', {
+              stepUuid: event.stepUuid,
+              toolCallId: event.toolCallId,
+            });
+            return;
+          }
           throw new Error(
             `Received tool_call for unknown step_uuid '${event.stepUuid}' (no open step_begin)`,
           );
         }
+        // Same in-place-mutation invalidation as content.part above.
+        this.projectionCache.invalidate(openStep);
         openStep.toolCalls.push({
           type: 'function',
           id: event.toolCallId,
@@ -739,20 +1077,30 @@ export class ContextMemory {
         return;
       }
       case 'tool.result': {
-        // Drop a result for an id that is not awaiting one: it was already
-        // closed in place at a step boundary (a stale duplicate from an older
-        // tail-only finishResume), or its call is gone.
-        if (!this.pendingToolResultIds.has(event.toolCallId)) return;
+        // A result for an id that is not awaiting one: its exchange is already
+        // settled or its call is gone. During restore, run the orphan recovery
+        // before dropping (04i `recoverOrphanedParallelToolResults` analog —
+        // see `recoverLateToolResult`); the live path keeps the plain drop (a
+        // stale duplicate from an older tail-only finishResume).
+        if (!this.pendingToolResultIds.has(event.toolCallId)) {
+          if (this.agent.records.restoring !== null) {
+            this.recoverLateToolResult(event);
+          }
+          return;
+        }
         // History stores the fact verbatim: the tool's own output plus the
-        // structured isError/note fields. Model-facing status text (error
-        // prefix, empty placeholder) and the note are rendered only at LLM
-        // projection time (see tool-result-render.ts).
+        // structured isError/note/display/structured fields. Model-facing
+        // status text (error prefix, empty placeholder) and the note are
+        // rendered only at LLM projection time (see tool-result-render.ts);
+        // display and structured are UI-only and never projected.
         const message = createToolMessage(event.toolCallId, event.result.output);
         this.pushHistory({
           ...message,
           role: 'tool',
           isError: event.result.isError,
           note: event.result.note,
+          display: event.result.display,
+          structured: event.result.structured,
         });
         this.pendingToolResultIds.delete(event.toolCallId);
         this.flushDeferredMessagesIfToolExchangeClosed();

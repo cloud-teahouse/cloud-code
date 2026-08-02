@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { testKaos } from '../fixtures/test-kaos';
-import type { ProviderConfig, ToolCall } from '@moonshot-ai/kosong';
-import type { Kaos, StatResult } from '@moonshot-ai/kaos';
+import type { ProviderConfig, ToolCall } from '@cloud-code/kosong';
+import type { Kaos, StatResult } from '@cloud-code/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
-import type { KimiConfig } from '../../src/config';
+import type { CloudCodeConfig } from '../../src/config';
 import { FlagResolver } from '../../src/flags';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
@@ -18,7 +18,6 @@ import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createScriptedGenerate } from '../agent/harness/scripted-generate';
-import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { createFakeKaos, toolContentString } from '../tools/fixtures/fake-kaos';
 
@@ -301,10 +300,9 @@ describe('Session.init', () => {
     }
   });
 
-  it('tracks connected and failed MCP server totals after initial load', async () => {
+  it('settles connected, failed, and disabled MCP server statuses after initial load', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
     const session = new Session({
       kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
@@ -329,29 +327,15 @@ describe('Session.init', () => {
           },
         },
       },
-      telemetry: recordingTelemetry(records),
     });
 
     try {
       await session.mcp.waitForInitialLoad();
-      await expect(new SessionAPIImpl(session).getMcpStartupMetrics({})).resolves.toEqual({
-        durationMs: expect.any(Number),
-      });
 
-      expect(records).toContainEqual({
-        event: 'mcp_connected',
-        properties: {
-          server_count: 1,
-          total_count: 2,
-        },
-      });
-      expect(records).toContainEqual({
-        event: 'mcp_failed',
-        properties: {
-          failed_count: 1,
-          total_count: 2,
-        },
-      });
+      const statuses = new Map(session.mcp.list().map((entry) => [entry.name, entry.status]));
+      expect(statuses.get('connected')).toBe('connected');
+      expect(statuses.get('failed')).toBe('failed');
+      expect(statuses.get('disabled')).toBe('disabled');
     } finally {
       await session.close();
     }
@@ -700,7 +684,7 @@ describe('AgentAPI.startBtw', () => {
 });
 
 describe('Session secondary-model live config', () => {
-  const SECONDARY_BASE_CONFIG: KimiConfig = {
+  const SECONDARY_BASE_CONFIG: CloudCodeConfig = {
     providers: {
       test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey },
     },
@@ -712,11 +696,11 @@ describe('Session secondary-model live config', () => {
       },
     },
   };
-  const SECONDARY_POINTER_CONFIG: KimiConfig = {
+  const SECONDARY_POINTER_CONFIG: CloudCodeConfig = {
     ...SECONDARY_BASE_CONFIG,
     secondaryModel: { model: MOCK_PROVIDER.model },
   };
-  const SECONDARY_PATCHED_CONFIG: KimiConfig = {
+  const SECONDARY_PATCHED_CONFIG: CloudCodeConfig = {
     ...SECONDARY_BASE_CONFIG,
     models: {
       ...SECONDARY_BASE_CONFIG.models,
@@ -728,7 +712,7 @@ describe('Session secondary-model live config', () => {
     secondaryModel: { model: MOCK_PROVIDER.model, defaultEffort: 'low' },
   };
 
-  async function makeSession(config?: KimiConfig): Promise<Session> {
+  async function makeSession(config?: CloudCodeConfig): Promise<Session> {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
     return new Session({
@@ -739,7 +723,7 @@ describe('Session secondary-model live config', () => {
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       providerManager: testProviderManager(),
       experimentalFlags: new FlagResolver({
-        KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1',
+        CLOUD_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1',
       }),
       config,
     });

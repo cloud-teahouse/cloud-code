@@ -61,7 +61,7 @@ export interface CustomRegistryProviderEntry {
 /**
  * Tuned slightly below typical real values so the local compactor kicks in
  * before the upstream rejects with a context-overflow 4xx. Users can override
- * by editing `~/.kimi-code/config.toml`.
+ * by editing `~/.cloud-code/config.toml`.
  */
 export const CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT = 131072;
 export const CUSTOM_REGISTRY_DEFAULT_CAPABILITIES = ['tool_use'] as const;
@@ -196,7 +196,7 @@ function toProviderEntry(value: unknown): CustomRegistryProviderEntry | undefine
  * the top-level provider key in the document (which may differ from
  * `entry.id`); callers should iterate `Object.values` to apply each entry.
  *
- * `userAgent` identifies the host product (e.g. `kimi-code-cli/1.2.3`); when
+ * `userAgent` identifies the host product (e.g. `cloud-code-cli/1.2.3`); when
  * omitted the request falls back to the runtime default (`User-Agent: node`).
  */
 export async function fetchCustomRegistry(

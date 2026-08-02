@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   CoreRPC,
-  GetKimiConfigPayload,
-  KimiConfig,
-  KimiConfigPatch,
-  SetKimiConfigPayload,
+  GetCloudCodeConfigPayload,
+  CloudCodeConfig,
+  CloudCodeConfigPatch,
+  SetCloudCodeConfigPayload,
 } from '../../src';
-import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
+import { CLOUD_CODE_PROVIDER_NAME } from '@cloud-code/oauth';
 
 import {
   type ICoreProcessService,
@@ -20,7 +20,7 @@ import {
 } from '../../src/services';
 import type { ServicesAuthFacade } from '../../src/services/auth/managedAuth';
 import type { IEventService } from '../../src/services/event/event';
-import type { Event as ProtocolEvent } from '@moonshot-ai/protocol';
+import type { Event as ProtocolEvent } from '@cloud-code/protocol';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -35,41 +35,41 @@ function makeEnv(): IEnvironmentService {
   };
 }
 
-function makeCore(configRef: { current: KimiConfig }): {
+function makeCore(configRef: { current: CloudCodeConfig }): {
   core: ICoreProcessService;
-  getCalls: GetKimiConfigPayload[];
-  setCalls: KimiConfigPatch[];
+  getCalls: GetCloudCodeConfigPayload[];
+  setCalls: CloudCodeConfigPatch[];
   removeCalls: string[];
 } {
-  const getCalls: GetKimiConfigPayload[] = [];
-  const setCalls: KimiConfigPatch[] = [];
+  const getCalls: GetCloudCodeConfigPayload[] = [];
+  const setCalls: CloudCodeConfigPatch[] = [];
   const removeCalls: string[] = [];
   const rpc: Partial<CoreRPC> = {
-    getKimiConfig: vi.fn(async (payload: GetKimiConfigPayload) => {
+    getCloudCodeConfig: vi.fn(async (payload: GetCloudCodeConfigPayload) => {
       getCalls.push(payload);
       return configRef.current;
     }),
-    setKimiConfig: vi.fn(async (payload: SetKimiConfigPayload) => {
+    setCloudCodeConfig: vi.fn(async (payload: SetCloudCodeConfigPayload) => {
       setCalls.push(payload);
-      const next: KimiConfig = { ...configRef.current };
+      const next: CloudCodeConfig = { ...configRef.current };
       if (payload.providers !== undefined) {
-        next.providers = payload.providers as KimiConfig['providers'];
+        next.providers = payload.providers as CloudCodeConfig['providers'];
       }
       if (payload.models !== undefined) {
-        next.models = payload.models as KimiConfig['models'];
+        next.models = payload.models as CloudCodeConfig['models'];
       }
       if (payload.defaultModel !== undefined) next.defaultModel = payload.defaultModel;
       if (payload.thinking !== undefined) next.thinking = payload.thinking;
       configRef.current = next;
       return configRef.current;
     }),
-    removeKimiProvider: vi.fn(async ({ providerId }) => {
+    removeCloudCodeProvider: vi.fn(async ({ providerId }) => {
       removeCalls.push(providerId);
       const providers = { ...configRef.current.providers };
       delete providers[providerId];
       const models = Object.fromEntries(
         Object.entries(configRef.current.models ?? {}).filter(([, model]) => model.provider !== providerId),
-      ) as KimiConfig['models'];
+      ) as CloudCodeConfig['models'];
       configRef.current = {
         ...configRef.current,
         providers,
@@ -115,7 +115,7 @@ function makeEventService(): { svc: IEventService; published: ProtocolEvent[] } 
   return { svc, published };
 }
 
-function catalogConfig(): KimiConfig {
+function catalogConfig(): CloudCodeConfig {
   return {
     providers: {
       kimi: {
@@ -305,10 +305,10 @@ describe('ModelCatalogService', () => {
   });
 
   it('refreshes managed OAuth models and preserves always-thinking defaults', async () => {
-    const configRef: { current: KimiConfig } = {
+    const configRef: { current: CloudCodeConfig } = {
       current: {
         providers: {
-          [KIMI_CODE_PROVIDER_NAME]: {
+          [CLOUD_CODE_PROVIDER_NAME]: {
             type: 'kimi',
             apiKey: '',
             baseUrl: 'https://api.example.test/coding/v1',
@@ -319,7 +319,7 @@ describe('ModelCatalogService', () => {
         thinking: { enabled: false },
         models: {
           'kimi-code/kimi-for-coding': {
-            provider: KIMI_CODE_PROVIDER_NAME,
+            provider: CLOUD_CODE_PROVIDER_NAME,
             model: 'kimi-for-coding',
             maxContextSize: 131_072,
             capabilities: ['thinking'],
@@ -344,11 +344,11 @@ describe('ModelCatalogService', () => {
     const svc = ModelCatalogService._createForTest(makeEnv(), core, authFacade());
 
     await expect(svc.refreshOAuthProviderModels()).resolves.toMatchObject({
-      changed: [{ provider_id: KIMI_CODE_PROVIDER_NAME, added: 0, removed: 0 }],
+      changed: [{ provider_id: CLOUD_CODE_PROVIDER_NAME, added: 0, removed: 0 }],
       failed: [],
     });
 
-    expect(removeCalls).toEqual([KIMI_CODE_PROVIDER_NAME]);
+    expect(removeCalls).toEqual([CLOUD_CODE_PROVIDER_NAME]);
     expect(setCalls.at(-1)).toMatchObject({
       defaultModel: 'kimi-code/kimi-for-coding',
       thinking: { enabled: true },
@@ -362,10 +362,10 @@ describe('ModelCatalogService', () => {
   });
 
   it('keeps the kimi-code provider on the REST base and records the model protocol when anthropic', async () => {
-    const configRef: { current: KimiConfig } = {
+    const configRef: { current: CloudCodeConfig } = {
       current: {
         providers: {
-          [KIMI_CODE_PROVIDER_NAME]: {
+          [CLOUD_CODE_PROVIDER_NAME]: {
             type: 'kimi',
             apiKey: '',
             baseUrl: 'https://api.example.test/coding/v1',
@@ -375,7 +375,7 @@ describe('ModelCatalogService', () => {
         defaultModel: 'kimi-code/kimi-for-coding',
         models: {
           'kimi-code/kimi-for-coding': {
-            provider: KIMI_CODE_PROVIDER_NAME,
+            provider: CLOUD_CODE_PROVIDER_NAME,
             model: 'kimi-for-coding',
             maxContextSize: 200_000,
           },
@@ -408,17 +408,17 @@ describe('ModelCatalogService', () => {
     const models = last['models'] as Record<string, { provider: string; protocol?: string }>;
     // Provider type/baseUrl stay on the kimi wire + REST base; the anthropic
     // transport is carried on the model alias for per-model resolution.
-    expect(providers[KIMI_CODE_PROVIDER_NAME]?.type).toBe('kimi');
-    expect(providers[KIMI_CODE_PROVIDER_NAME]?.baseUrl).toBe('https://api.example.test/coding/v1');
-    expect(models['kimi-code/kimi-for-coding']?.provider).toBe(KIMI_CODE_PROVIDER_NAME);
+    expect(providers[CLOUD_CODE_PROVIDER_NAME]?.type).toBe('kimi');
+    expect(providers[CLOUD_CODE_PROVIDER_NAME]?.baseUrl).toBe('https://api.example.test/coding/v1');
+    expect(models['kimi-code/kimi-for-coding']?.provider).toBe(CLOUD_CODE_PROVIDER_NAME);
     expect(models['kimi-code/kimi-for-coding']?.protocol).toBe('anthropic');
   });
 
   it('publishes event.model_catalog.changed when a broad refresh changes the catalog', async () => {
-    const configRef: { current: KimiConfig } = {
+    const configRef: { current: CloudCodeConfig } = {
       current: {
         providers: {
-          [KIMI_CODE_PROVIDER_NAME]: {
+          [CLOUD_CODE_PROVIDER_NAME]: {
             type: 'kimi',
             apiKey: '',
             baseUrl: 'https://api.example.test/coding/v1',
@@ -428,7 +428,7 @@ describe('ModelCatalogService', () => {
         defaultModel: 'kimi-code/kimi-for-coding',
         models: {
           'kimi-code/kimi-for-coding': {
-            provider: KIMI_CODE_PROVIDER_NAME,
+            provider: CLOUD_CODE_PROVIDER_NAME,
             model: 'kimi-for-coding',
             maxContextSize: 131_072,
             capabilities: ['thinking'],
@@ -454,7 +454,7 @@ describe('ModelCatalogService', () => {
     const result = await svc.refreshProviderModels();
 
     expect(result.changed).toEqual([
-      { provider_id: KIMI_CODE_PROVIDER_NAME, provider_name: 'Kimi Code', added: 0, removed: 0 },
+      { provider_id: CLOUD_CODE_PROVIDER_NAME, provider_name: 'Cloud Code', added: 0, removed: 0 },
     ]);
     expect(published).toEqual([
       {
@@ -469,10 +469,10 @@ describe('ModelCatalogService', () => {
   });
 
   it('does not publish an event when the refresh is a no-op', async () => {
-    const configRef: { current: KimiConfig } = {
+    const configRef: { current: CloudCodeConfig } = {
       current: {
         providers: {
-          [KIMI_CODE_PROVIDER_NAME]: {
+          [CLOUD_CODE_PROVIDER_NAME]: {
             type: 'kimi',
             apiKey: '',
             baseUrl: 'https://api.example.test/coding/v1',
@@ -481,7 +481,7 @@ describe('ModelCatalogService', () => {
         },
         models: {
           'kimi-code/kimi-for-coding': {
-            provider: KIMI_CODE_PROVIDER_NAME,
+            provider: CLOUD_CODE_PROVIDER_NAME,
             model: 'kimi-for-coding',
             maxContextSize: 262_144,
             capabilities: ['thinking', 'tool_use'],
@@ -507,12 +507,12 @@ describe('ModelCatalogService', () => {
     const result = await svc.refreshProviderModels();
 
     expect(result.changed).toEqual([]);
-    expect(result.unchanged).toEqual([KIMI_CODE_PROVIDER_NAME]);
+    expect(result.unchanged).toEqual([CLOUD_CODE_PROVIDER_NAME]);
     expect(published).toEqual([]);
   });
 
   it('sends the host User-Agent on custom-registry fetches', async () => {
-    const configRef: { current: KimiConfig } = {
+    const configRef: { current: CloudCodeConfig } = {
       current: {
         providers: {
           acme: {
@@ -530,7 +530,7 @@ describe('ModelCatalogService', () => {
     };
     const { core } = makeCore(configRef);
     (core as { kimiRequestHeaders?: Record<string, string> }).kimiRequestHeaders = {
-      'User-Agent': 'kimi-code-cli/test',
+      'User-Agent': 'cloud-code-cli/test',
     };
     const fetchMock = vi.fn(
       async () =>
@@ -554,7 +554,7 @@ describe('ModelCatalogService', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'https://registry.example.test/api.json',
       expect.objectContaining({
-        headers: expect.objectContaining({ 'User-Agent': 'kimi-code-cli/test' }),
+        headers: expect.objectContaining({ 'User-Agent': 'cloud-code-cli/test' }),
       }),
     );
   });

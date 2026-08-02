@@ -21,8 +21,8 @@
  *   - `context.append_loop_event`   → step.begin/content.part/tool.call mutate the
  *                                     open assistant message; tool.result appends a
  *                                     tool message with the raw output plus the
- *                                     structured isError/note fields, exactly like
- *                                     `ContextMemory` history
+ *                                     structured isError/note/display/structured
+ *                                     fields, exactly like `ContextMemory` history
  *   - `context.apply_compaction`    → keep the full history, append the
  *                                     user-role summary marker (origin
  *                                     `compaction_summary`), and recover
@@ -31,6 +31,8 @@
  *   - `context.undo`                → remove tail messages exactly like
  *                                     `ContextMemory.undo` (skip injections, stop at
  *                                     compaction summaries / `context.clear` floors)
+ *   - `context.withdraw_tail_input` → drop the tail user input when no output
+ *                                     follows it (`ContextMemory.withdrawUnansweredTailInput`)
  *   - `context.clear`               → keep prior messages in the transcript (the TUI
  *                                     replay keeps them too) but reset the folded view
  *
@@ -90,6 +92,8 @@ interface MutableMessage {
   toolCallId?: string;
   isError?: boolean | undefined;
   note?: string | undefined;
+  display?: ContextMessage['display'];
+  structured?: ContextMessage['structured'];
   origin?: ContextMessage['origin'];
 }
 
@@ -198,6 +202,8 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
             toolCallId: event.toolCallId,
             isError: event.result.isError,
             note: event.result.note,
+            display: event.result.display,
+            structured: event.result.structured,
           },
           time,
         });
@@ -223,6 +229,20 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
       }
     }
     resetOpenState();
+  };
+
+  // Mirrors `ContextMemory.withdrawUnansweredTailInput`: drop the tail user
+  // input only when no output sits after it (injections skipped); a no-op
+  // otherwise. Unlike undo, nothing past the anchor is removed.
+  const applyWithdrawTailInput = (): void => {
+    for (let i = transcript.length - 1; i >= clearFloor; i--) {
+      const message = transcript[i]!.message;
+      if (message.origin?.kind === 'injection') continue;
+      if (!isRealUserInput(message)) return;
+      transcript.splice(i, 1);
+      foldedLength = Math.max(0, foldedLength - 1);
+      return;
+    }
   };
 
   for (const record of records) {
@@ -267,9 +287,14 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         if (record.keptUserMessageCount !== undefined) {
           // +1 for the summary message; +1 more when the selection split into
           // head + tail, because the live context then also holds an elision
-          // marker message between the two segments.
+          // marker message between the two segments. Records with digest
+          // pinning additionally carry the pinned prefix (earlier summaries
+          // and the kept messages around them) verbatim ahead of the kept
+          // user messages.
           foldedLength =
-            record.keptUserMessageCount + (record.keptHeadUserMessageCount === undefined ? 1 : 2);
+            (record.pinnedPrefixCount ?? 0) +
+            record.keptUserMessageCount +
+            (record.keptHeadUserMessageCount === undefined ? 1 : 2);
         } else if (record.compactedCount < foldedLength) {
           // Legacy record (predates keptUserMessageCount) that kept
           // history.slice(compactedCount) verbatim. Mirror ContextMemory's
@@ -304,6 +329,9 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
       }
       case 'context.undo':
         applyUndo(record.count);
+        break;
+      case 'context.withdraw_tail_input':
+        applyWithdrawTailInput();
         break;
       case 'context.clear':
         clearFloor = transcript.length;

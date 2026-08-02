@@ -64,6 +64,12 @@ class TestTerminal implements Terminal {
 
 	setProgress(_active: boolean): void {}
 
+	enterAltScreen(): void {}
+
+	exitAltScreen(): void {}
+
+	setMouseReporting(_enabled: boolean): void {}
+
 	sendInput(data: string): void {
 		this.inputHandler?.(data);
 	}

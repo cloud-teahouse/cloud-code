@@ -9,7 +9,7 @@ import {
   SSHKaos,
 } from '#/ssh';
 import type { StatResult } from '#/types';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test, vi } from 'vitest';
 
 // Environment variable configuration for SSH connection
 const SSH_SMOKE = process.env['KAOS_SSH_SMOKE'] === '1';
@@ -1414,8 +1414,10 @@ describe('SSHKaos mkdir existOk edge cases', () => {
 describe('SSHKaos.close lifecycle', () => {
   class FakeClient extends EventEmitter {
     closed = false;
+    endCalls = 0;
 
     end(): void {
+      this.endCalls += 1;
       queueMicrotask(() => {
         this.closed = true;
         this.emit('close');
@@ -1441,7 +1443,18 @@ describe('SSHKaos.close lifecycle', () => {
     }
   }
 
-  function createCloseableKaos(): SSHKaos {
+  /**
+   * A client whose socket is already dead (the server dropped first): ssh2's
+   * end() is then a no-op and no further 'close' event fires
+   * (ssh2 client.js — the socket-writable guard).
+   */
+  class DeadClient extends FakeClient {
+    override end(): void {
+      this.endCalls += 1;
+    }
+  }
+
+  function createCloseableKaos(client: FakeClient = new FakeClient()): SSHKaos {
     const instance = Object.create(SSHKaos.prototype) as SSHKaos;
     const internals = instance as unknown as {
       _client: FakeClient;
@@ -1450,7 +1463,7 @@ describe('SSHKaos.close lifecycle', () => {
       _sftp: { end(): void };
       _envLayers: readonly Record<string, string>[];
     };
-    internals._client = new FakeClient();
+    internals._client = client;
     internals._cwd = '/tmp';
     internals._home = '/tmp';
     internals._envLayers = [];
@@ -1468,5 +1481,41 @@ describe('SSHKaos.close lifecycle', () => {
     await kaos.close();
 
     await expect(kaos.exec('pwd')).rejects.toThrow(/channel closed/);
+  });
+
+  it('is idempotent: repeated calls return the same promise and end() runs once', async () => {
+    const client = new FakeClient();
+    const kaos = createCloseableKaos(client);
+
+    const first = kaos.close();
+    const second = kaos.close();
+    expect(second).toBe(first);
+
+    await first;
+    await expect(kaos.close()).resolves.toBeUndefined();
+    expect(client.endCalls).toBe(1);
+  });
+
+  it('resolves via the fallback timeout when the connection is already dead (no close event)', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new DeadClient();
+      const kaos = createCloseableKaos(client);
+
+      let resolved = false;
+      const pending = kaos.close().then(() => {
+        resolved = true;
+      });
+
+      // The dead socket never emits 'close'; only the fallback may settle it.
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(resolved).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(resolved).toBe(true);
+      expect(client.endCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

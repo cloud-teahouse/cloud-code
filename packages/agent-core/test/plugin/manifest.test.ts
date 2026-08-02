@@ -530,6 +530,36 @@ describe('parseManifest', () => {
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warn' }));
   });
 
+  it('resolves agents directories like skills directories', async () => {
+    const root = await makePlugin(
+      { 'kimi.plugin.json': JSON.stringify({ name: 'demo', agents: './agents/' }) },
+      { dirs: ['agents'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.manifest?.agents).toEqual([path.join(root, 'agents')]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('accepts an agents list and rejects entries without a ./ prefix', async () => {
+    const root = await makePlugin(
+      {
+        'kimi.plugin.json': JSON.stringify({
+          name: 'demo',
+          agents: ['./agents/', '../outside/'],
+        }),
+      },
+      { dirs: ['agents'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.manifest?.agents).toEqual([path.join(root, 'agents')]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: '"agents" path must start with "./" (got "../outside/")',
+      }),
+    );
+  });
+
   it('reads the systemPrompt field, trimming surrounding whitespace', async () => {
     const root = await makePlugin({
       'kimi.plugin.json': JSON.stringify({ name: 'demo', systemPrompt: '\nAlways cite sources.\n' }),
@@ -636,6 +666,31 @@ describe('parseManifest', () => {
     );
   });
 
+  it('warns when an agents path is not a directory, and when agents has the wrong shape', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', agents: ['./missing/'] }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.agents).toEqual([]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: '"agents" path is not a directory (./missing/)',
+      }),
+    );
+
+    const bad = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', agents: 42 }),
+    });
+    const badResult = await parseManifest(bad);
+    expect(badResult.manifest?.agents).toEqual([]);
+    expect(badResult.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: '"agents" must be a string or string[]',
+      }),
+    );
+  });
   it('warns on a blank systemPromptPath', async () => {
     const root = await makePlugin({
       'kimi.plugin.json': JSON.stringify({
@@ -723,4 +778,5 @@ describe('parseManifest', () => {
     expect(result.manifest?.systemPrompt).toBe('x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES));
     expect(result.diagnostics).toEqual([]);
   });
+
 });

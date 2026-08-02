@@ -4,9 +4,9 @@ export * from './rpc';
 export * from './config';
 export * from './flags';
 export * from './session/export';
-export * from './telemetry';
 export * from './errors';
 export * from './plugin';
+export { getUserLanguage, onUserLanguageChange, setUserLanguage } from './profile/user-language';
 export { buildReplay } from './agent/replay/build';
 export { isAgentReplayUserTurnRecord, limitAgentReplayByTurns } from './agent/replay/turns';
 export {
@@ -96,7 +96,6 @@ export type {
   CropImageOptions,
   CropImageOutcome,
   ImageCompressionCaptionInput,
-  ImageCompressionTelemetry,
   ImageCropRegion,
   ImageVariantDescription,
 } from './tools/support/image-compress';
@@ -122,7 +121,9 @@ export type {
   AgentRecordPersistence,
 } from './agent/records';
 export { AGENT_WIRE_PROTOCOL_VERSION } from './agent/records';
-export type { AgentConfigUpdateData } from './agent/config';
+export type { AgentConfigUpdateData, ServiceTier } from './agent/config';
+export { isFastTierSupported } from './agent/config';
+export type { FastTierModelShape, FastTierProviderShape } from './agent/config';
 export type { CompactionBeginData, CompactionResult } from './agent/compaction';
 export {
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
@@ -162,13 +163,13 @@ export * from './di';
 // VSCode-style `Event<T>` symbol collides with `./rpc`'s `Event` (agent-core
 // protocol Event union, exported via `export * from './rpc'` above). Callers
 // that need the emitter `Event<T>` type import it from the explicit sub-path
-// `@moonshot-ai/agent-core/base/common/event` (declared in `package.json`
+// `@cloud-code/agent-core/base/common/event` (declared in `package.json`
 // `exports`). This keeps the existing top-level `Event` semantics stable for
 // consumers like `services/src/event/event.ts` while letting new code reach
 // for the emitter type without naming clashes.
 export { Emitter } from './base/common/event';
 
-// ─── In-process services (merged from @moonshot-ai/services) ─────────────────
+// ─── In-process services (merged from @cloud-code/services) ─────────────────
 // Re-exports the `IXxxService` contracts, default `XxxService` implementations,
 // `toProtocol*` translators and error classes. Importing this barrel triggers
 // the `registerSingleton(...)` side-effects at the bottom of each `*Service.ts`,

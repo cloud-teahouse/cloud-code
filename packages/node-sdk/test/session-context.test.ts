@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, type KimiError } from '#/index';
+import { createCloudCodeHarness, type CloudCodeError } from '#/index';
 
 import {
   makeTempDir,
@@ -30,7 +30,7 @@ describe('Session context', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-work-');
     const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-additional-dir-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_additional_resume', workDir });
@@ -48,8 +48,9 @@ describe('Session context', () => {
   it('clears context without replacing the session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-work-');
+    const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-context-additional-');
     await writeTestConfig(homeDir, 200_000);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_clear', workDir });
@@ -71,7 +72,7 @@ describe('Session context', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-import-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-import-work-');
     await writeTestConfig(homeDir, 200_000);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_import', workDir });
@@ -113,7 +114,7 @@ describe('Session context', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-status-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-status-work-');
     await writeTestConfig(homeDir, 200_000);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_status', workDir });
@@ -141,7 +142,7 @@ describe('Session context', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-resume-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-resume-work-');
     await writeTestConfig(homeDir, 200_000);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_resume', workDir });
@@ -151,7 +152,20 @@ describe('Session context', () => {
 
       const resumed = await harness.resumeSession({ id: 'ses_context_resume' });
 
-      await expect(resumed.getContext()).resolves.toEqual(imported);
+      // The resumed session's tail is an unanswered import, so the
+      // one-shot resume continuation reminder rides along (same misfire class
+      // as Claude's trailing-attachment case — treated as an interrupted
+      // turn). The imported message and its estimated token count still
+      // round-trip unchanged.
+      const resumedContext = await resumed.getContext();
+      expect(resumedContext.tokenCount).toBe(imported.tokenCount);
+      expect(resumedContext.history).toEqual([
+        ...imported.history,
+        expect.objectContaining({
+          role: 'user',
+          origin: { kind: 'injection', variant: 'resume_continuation' },
+        }),
+      ]);
       expect(resumed.getResumeState()?.agents['main']?.replay).toContainEqual(
         expect.objectContaining({
           type: 'message',
@@ -166,16 +180,16 @@ describe('Session context', () => {
   it('rejects whitespace-only imported content without mutating context', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-empty-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-empty-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_empty', workDir });
 
       await expect(session.importContext(' \n\t ', "file 'empty.md'")).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.invalid',
         details: { reason: 'import_content_empty' },
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
       await expect(session.getContext()).resolves.toEqual({ history: [], tokenCount: 0 });
     } finally {
       await harness.close();
@@ -186,7 +200,7 @@ describe('Session context', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-overflow-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-overflow-work-');
     await writeTestConfig(homeDir, 100);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_context_overflow', workDir });
@@ -196,14 +210,14 @@ describe('Session context', () => {
       await expect(
         session.importContext('Second import.', "file 'second.md'"),
       ).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'context.overflow',
         details: {
           reason: 'import_context_overflow',
           currentTokenCount: expect.any(Number),
           maxContextTokens: 100,
         },
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
       await expect(session.getContext()).resolves.toEqual(contextBeforeRejectedImport);
     } finally {
       await harness.close();

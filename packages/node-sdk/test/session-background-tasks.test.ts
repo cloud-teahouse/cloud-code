@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, type KimiError } from '#/index';
+import { createCloudCodeHarness, type CloudCodeError } from '#/index';
 
 import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -15,7 +15,7 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput', () => {
   it('lists an empty task set for a fresh session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_bg_list_empty', workDir });
@@ -32,7 +32,7 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput', () => {
   it('returns empty output for an unknown task id', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_bg_unknown', workDir });
@@ -46,18 +46,18 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput', () => {
   it('rejects empty task ids with a stable error code', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_bg_empty_id', workDir });
       await expect(session.getBackgroundTaskOutput('')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'task.task_id_empty',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
       await expect(session.stopBackgroundTask('')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'task.task_id_empty',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -66,24 +66,24 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput', () => {
   it('rejects after the session is closed', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_bg_closed', workDir });
       await session.close();
 
       await expect(session.listBackgroundTasks()).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.closed',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
       await expect(session.getBackgroundTaskOutput('bash-aaaaaaaa')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.closed',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
       await expect(session.stopBackgroundTask('bash-aaaaaaaa')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.closed',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -92,7 +92,7 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput', () => {
   it('stopBackgroundTask is a no-op for an unknown task id', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_bg_stop_unknown', workDir });

@@ -41,6 +41,32 @@ const ID_REGEX = /^[0-9a-f]{8}$/;
  */
 const MAX_ID_ATTEMPTS = 8;
 
+/**
+ * Generate one 8-hex cron task id. `isTaken` lets the caller reject
+ * collisions against its own index (the store's live map, a project
+ * file's ids, ...); pass `() => false` when the caller knows the
+ * namespace is empty. Throws after {@link MAX_ID_ATTEMPTS} collisions
+ * rather than spinning forever — that should be unreachable and
+ * surfacing it beats a silent hang.
+ *
+ * Exported for `CronManager`, which needs to mint ids for durable
+ * tasks that never enter the in-memory store (created by a session
+ * that does not own the project schedule).
+ */
+export function generateCronTaskId(isTaken: (id: string) => boolean): string {
+  for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
+    const candidate = randomBytes(4).toString('hex');
+    // randomBytes(4).toString('hex') is always 8 lowercase hex chars,
+    // so the regex check is belt-and-braces against future refactors
+    // that swap the id source.
+    if (!ID_REGEX.test(candidate)) continue;
+    if (!isTaken(candidate)) return candidate;
+  }
+  throw new Error(
+    `generateCronTaskId: failed to generate a unique 8-hex id after ${MAX_ID_ATTEMPTS} attempts`,
+  );
+}
+
 export class SessionCronStore {
   /**
    * Backing map. `Map` preserves insertion order in JS, which we rely on
@@ -136,16 +162,6 @@ export class SessionCronStore {
   }
 
   private generateUniqueId(): string {
-    for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
-      const candidate = randomBytes(4).toString('hex');
-      // randomBytes(4).toString('hex') is always 8 lowercase hex chars,
-      // so the regex check is belt-and-braces against future refactors
-      // that swap the id source.
-      if (!ID_REGEX.test(candidate)) continue;
-      if (!this.tasks.has(candidate)) return candidate;
-    }
-    throw new Error(
-      `SessionCronStore: failed to generate a unique 8-hex id after ${MAX_ID_ATTEMPTS} attempts`,
-    );
+    return generateCronTaskId((id) => this.tasks.has(id));
   }
 }

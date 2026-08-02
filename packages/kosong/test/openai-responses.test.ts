@@ -2,6 +2,7 @@ import {
   APIContextOverflowError,
   APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
+  APIQuotaExceededError,
   APIStatusError,
   ChatProviderError,
   isRetryableGenerateError,
@@ -35,6 +36,17 @@ function makeResponsesAPIResponse() {
   };
 }
 
+/**
+ * Wrap a mocked Responses API payload in the APIPromise shape the provider
+ * consumes (`.withResponse()`), mirroring the OpenAI SDK. `headers` seeds the
+ * raw fetch Response so tests can exercise `x-codex-*` header capture.
+ */
+function withResponseOk(data: unknown, headers?: Record<string, string>) {
+  return {
+    withResponse: () => Promise.resolve({ data, response: new Response(null, { headers }) }),
+  };
+}
+
 function createProvider(): OpenAIResponsesChatProvider {
   return new OpenAIResponsesChatProvider({
     model: 'gpt-4.1',
@@ -58,7 +70,7 @@ async function captureRequestBody(
     .fn()
     .mockImplementation((params: unknown) => {
       capturedBody = params as Record<string, unknown>;
-      return Promise.resolve(makeResponsesAPIResponse());
+      return withResponseOk(makeResponsesAPIResponse());
     });
 
   const stream = await provider.generate(systemPrompt, tools, history, options);
@@ -950,6 +962,21 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(provider.maxCompletionTokens).toBe(1024);
     });
 
+    it('omitMaxOutputTokens: withMaxCompletionTokens is a no-op and the parameter is never sent', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'gpt-5.6-terra',
+        apiKey: 'test-key',
+        omitMaxOutputTokens: true,
+      }).withMaxCompletionTokens(272000);
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_output_tokens']).toBeUndefined();
+      expect(provider.maxCompletionTokens).toBeUndefined();
+    });
+
     it('maps json_schema response format to text.format', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -1184,7 +1211,7 @@ describe('OpenAIResponsesChatProvider', () => {
       (provider as any)._stream = false;
       ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
         .fn()
-        .mockResolvedValue(makeResponsesAPIResponse());
+        .mockReturnValue(withResponseOk(makeResponsesAPIResponse()));
 
       const stream = await provider.generate(
         '',
@@ -1212,20 +1239,22 @@ describe('OpenAIResponsesChatProvider', () => {
       (provider as any)._stream = false;
       ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
         .fn()
-        .mockResolvedValue({
-          id: 'resp_fn',
-          object: 'response',
-          status: 'completed',
-          output: [
-            {
-              type: 'function_call',
-              call_id: 'call_xyz',
-              name: 'lookup',
-              arguments: '{"q":"hi"}',
-            },
-          ],
-          usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
-        });
+        .mockReturnValue(
+          withResponseOk({
+            id: 'resp_fn',
+            object: 'response',
+            status: 'completed',
+            output: [
+              {
+                type: 'function_call',
+                call_id: 'call_xyz',
+                name: 'lookup',
+                arguments: '{"q":"hi"}',
+              },
+            ],
+            usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+          }),
+        );
 
       const stream = await provider.generate(
         '',
@@ -1249,17 +1278,19 @@ describe('OpenAIResponsesChatProvider', () => {
       (provider as any)._stream = false;
       ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
         .fn()
-        .mockResolvedValue({
-          id: 'resp_no_call_id',
-          output: [
-            {
-              type: 'function_call',
-              name: 'lookup',
-              arguments: '{}',
-            },
-          ],
-          usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
-        });
+        .mockReturnValue(
+          withResponseOk({
+            id: 'resp_no_call_id',
+            output: [
+              {
+                type: 'function_call',
+                name: 'lookup',
+                arguments: '{}',
+              },
+            ],
+            usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+          }),
+        );
 
       const stream = await provider.generate(
         '',
@@ -1281,27 +1312,29 @@ describe('OpenAIResponsesChatProvider', () => {
       (provider as any)._stream = false;
       ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
         .fn()
-        .mockResolvedValue({
-          id: 'resp_reason',
-          object: 'response',
-          status: 'completed',
-          output: [
-            {
-              type: 'reasoning',
-              encrypted_content: 'enc_token_abc',
-              summary: [
-                { type: 'summary_text', text: 'Step 1' },
-                { type: 'summary_text', text: 'Step 2' },
-              ],
-            },
-            {
-              type: 'message',
-              role: 'assistant',
-              content: [{ type: 'output_text', text: 'done', annotations: [] }],
-            },
-          ],
-          usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
-        });
+        .mockReturnValue(
+          withResponseOk({
+            id: 'resp_reason',
+            object: 'response',
+            status: 'completed',
+            output: [
+              {
+                type: 'reasoning',
+                encrypted_content: 'enc_token_abc',
+                summary: [
+                  { type: 'summary_text', text: 'Step 1' },
+                  { type: 'summary_text', text: 'Step 2' },
+                ],
+              },
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'done', annotations: [] }],
+              },
+            ],
+            usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+          }),
+        );
 
       const stream = await provider.generate(
         '',
@@ -1323,17 +1356,19 @@ describe('OpenAIResponsesChatProvider', () => {
       (provider as any)._stream = false;
       ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
         .fn()
-        .mockResolvedValue({
-          id: 'resp_empty_reasoning',
-          output: [
-            {
-              type: 'reasoning',
-              encrypted_content: 'enc_empty',
-              summary: [],
-            },
-          ],
-          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-        });
+        .mockReturnValue(
+          withResponseOk({
+            id: 'resp_empty_reasoning',
+            output: [
+              {
+                type: 'reasoning',
+                encrypted_content: 'enc_empty',
+                summary: [],
+              },
+            ],
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          }),
+        );
 
       const stream = await provider.generate('', [], []);
       const parts: StreamedMessagePart[] = [];
@@ -1347,16 +1382,18 @@ describe('OpenAIResponsesChatProvider', () => {
       (provider as any)._stream = false;
       ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
         .fn()
-        .mockResolvedValue({
-          id: 'resp_reason2',
-          output: [
-            {
-              type: 'reasoning',
-              summary: [{ type: 'summary_text', text: 'Thinking...' }],
-            },
-          ],
-          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-        });
+        .mockReturnValue(
+          withResponseOk({
+            id: 'resp_reason2',
+            output: [
+              {
+                type: 'reasoning',
+                summary: [{ type: 'summary_text', text: 'Thinking...' }],
+              },
+            ],
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          }),
+        );
 
       const stream = await provider.generate(
         '',
@@ -1498,7 +1535,7 @@ describe('OpenAIResponsesChatProvider', () => {
         .fn()
         .mockImplementation((params: unknown) => {
           capturedParams = params as Record<string, unknown>;
-          return Promise.resolve(makeAsyncIterable(events));
+          return withResponseOk(makeAsyncIterable(events));
         });
 
       const stream = await provider.generate(
@@ -1512,7 +1549,6 @@ describe('OpenAIResponsesChatProvider', () => {
         parts.push(part);
       }
 
-      // Verify stream: true was sent
       expect(capturedParams!['stream']).toBe(true);
 
       expect(parts).toEqual([
@@ -1615,7 +1651,7 @@ describe('OpenAIResponsesChatProvider', () => {
 
       ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
         .fn()
-        .mockResolvedValue(makeAsyncIterable(events));
+        .mockReturnValue(withResponseOk(makeAsyncIterable(events)));
 
       const result = await generate(
         provider,
@@ -1993,6 +2029,35 @@ describe('OpenAIResponsesChatProvider', () => {
       expect((caughtError as Error).message).toMatch(/rate_limit_exceeded.*too many/);
     });
 
+    it('classifies a mid-stream usage_limit_reached failure as a terminal quota error', async () => {
+      // Quota exhaustion can also arrive as a response.failed SSE event. It
+      // must be terminal like its HTTP 429 twin — the transient
+      // rate_limit_exceeded event above stays retryable.
+      const events = [
+        {
+          type: 'response.failed',
+          response: {
+            id: 'resp_quota',
+            status: 'failed',
+            error: { code: 'usage_limit_reached', message: 'The usage limit has been reached' },
+          },
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIQuotaExceededError);
+      expect((caughtError as APIQuotaExceededError).statusCode).toBe(429);
+      expect((caughtError as Error).message).toMatch(/usage_limit_reached.*usage limit/);
+      expect(isRetryableGenerateError(caughtError)).toBe(false);
+    });
+
     it('normalizes malformed gateway error frames with nested rate-limit JSON', async () => {
       const events = [
         {
@@ -2217,3 +2282,70 @@ function makeAsyncIterable(
     },
   };
 }
+
+describe('per-request auth headers (ChatGPT Codex contract, zero provider change)', () => {
+  it('sends request-scoped headers (e.g. ChatGPT-Account-ID) merged over constructor defaults', async () => {
+    const requests: Array<{ url: string; headers: Headers }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      requests.push({ url, headers: new Headers(init?.headers) });
+      return new Response(JSON.stringify(makeResponsesAPIResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    try {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'gpt-5.2-codex',
+        baseUrl: 'https://chatgpt.test/backend-api/codex',
+        defaultHeaders: { originator: 'codex_cli_rs' },
+      });
+      (provider as any)._stream = false;
+
+      const stream = await provider.generate('system', [], [], {
+        auth: {
+          apiKey: 'access-token-1',
+          headers: { 'ChatGPT-Account-ID': 'acct-1' },
+        },
+      });
+      await collectStreamParts(stream as OpenAIResponsesStreamedMessage);
+
+      expect(requests).toHaveLength(1);
+      // kosong posts to {baseUrl}/responses — the Codex backend base needs no /v1.
+      expect(requests[0]!.url).toBe('https://chatgpt.test/backend-api/codex/responses');
+      expect(requests[0]!.headers.get('authorization')).toBe('Bearer access-token-1');
+      expect(requests[0]!.headers.get('chatgpt-account-id')).toBe('acct-1');
+      expect(requests[0]!.headers.get('originator')).toBe('codex_cli_rs');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('hands the full ProviderRequestAuth (apiKey + headers) to a clientFactory per request', async () => {
+    const seen: Array<unknown> = [];
+    const provider = new OpenAIResponsesChatProvider({
+      model: 'gpt-5.2-codex',
+      baseUrl: 'https://chatgpt.test/backend-api/codex',
+      clientFactory: (auth) => {
+        seen.push(auth);
+        // Minimal OpenAI-SDK-shaped stub: the provider only calls
+        // `client.responses.create` on the non-streaming path.
+        return {
+          responses: { create: vi.fn().mockReturnValue(withResponseOk(makeResponsesAPIResponse())) },
+        } as never;
+      },
+    });
+    (provider as any)._stream = false;
+
+    const stream = await provider.generate('system', [], [], {
+      auth: { apiKey: 'access-token-2', headers: { 'ChatGPT-Account-ID': 'acct-2' } },
+    });
+    await collectStreamParts(stream as OpenAIResponsesStreamedMessage);
+
+    expect(seen).toEqual([
+      { apiKey: 'access-token-2', headers: { 'ChatGPT-Account-ID': 'acct-2' } },
+    ]);
+  });
+});

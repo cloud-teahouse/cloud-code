@@ -7,7 +7,7 @@ export default defineConfig({
   outDir: 'dist',
   clean: true,
   deps: {
-    alwaysBundle: [/^@moonshot-ai\//],
+    alwaysBundle: [/^@cloud-code\//],
     neverBundle: [],
   },
 });

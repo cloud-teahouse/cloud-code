@@ -69,4 +69,5 @@ export interface ContextResponse {
   planMode: { active: boolean; id?: string };
   goal: import('../../server/src/lib/context-projector').GoalSnapshot | null;
   swarm: { active: boolean; trigger?: string };
+  coordinator: { active: boolean };
 }

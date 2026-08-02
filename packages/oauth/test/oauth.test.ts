@@ -22,7 +22,7 @@ import {
   requestDeviceAuthorization,
   type RefreshOptions,
 } from '../src/oauth';
-import { KIMI_CODE_PLATFORM } from '../src/identity';
+import { CLOUD_CODE_PLATFORM } from '../src/identity';
 import type { DeviceHeaders, OAuthFlowConfig } from '../src/types';
 
 interface FakeResponse {
@@ -118,7 +118,7 @@ class FakeOAuthServer {
 let server: FakeOAuthServer;
 
 const TEST_DEVICE_HEADERS: DeviceHeaders = {
-  'X-Msh-Platform': KIMI_CODE_PLATFORM,
+  'X-Msh-Platform': CLOUD_CODE_PLATFORM,
   'X-Msh-Version': '0.0.0-test',
   'X-Msh-Device-Name': 'test-device',
   'X-Msh-Device-Model': 'test-model',
@@ -228,10 +228,10 @@ describe('requestDeviceAuthorization', () => {
     });
     await requestAuth();
     const recorded = server.recorded[0]!;
-    expect(recorded.headers['x-msh-platform']).toBe(KIMI_CODE_PLATFORM);
+    expect(recorded.headers['x-msh-platform']).toBe(CLOUD_CODE_PLATFORM);
     expect(recorded.headers['x-msh-device-id']).toBe('test-device-id');
     expect(recorded.headers['x-msh-version']).toBe('0.0.0-test');
-    expect(recorded.headers['user-agent'] ?? '').not.toContain('kimi-code-cli');
+    expect(recorded.headers['user-agent'] ?? '').not.toContain('cloud-code-cli');
   });
 
   it('omits X-Msh-* device headers when deviceHeaders are absent', async () => {

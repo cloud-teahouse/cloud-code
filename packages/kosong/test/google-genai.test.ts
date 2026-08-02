@@ -6,6 +6,7 @@ import {
   APITimeoutError,
   ChatProviderError,
 } from '#/errors';
+import { generate } from '#/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/message';
 import {
   convertGoogleGenAIError,
@@ -1032,7 +1033,7 @@ describe('GoogleGenAIChatProvider', () => {
         model: 'gemini-2.5-flash',
         apiKey: 'test-key',
         baseUrl: 'https://qianxun.example/v1beta',
-        defaultHeaders: { 'User-Agent': 'kimi-code-cli/test' },
+        defaultHeaders: { 'User-Agent': 'cloud-code-cli/test' },
       });
       const client = (
         provider as unknown as {
@@ -1046,7 +1047,7 @@ describe('GoogleGenAIChatProvider', () => {
       )._client;
       expect(client.apiClient.getCustomBaseUrl()).toBe('https://qianxun.example/v1beta');
       expect(client.apiClient.getHeaders()).toMatchObject({
-        'User-Agent': 'kimi-code-cli/test',
+        'User-Agent': 'cloud-code-cli/test',
       });
     });
 
@@ -1967,6 +1968,68 @@ describe('messagesToGoogleGenAIContents - extra branches', () => {
     const contents = body['contents'] as Array<{ parts: Array<Record<string, unknown>> }>;
     expect(contents[0]!.parts[0]).toMatchObject({
       fileData: { fileUri: 'data:image/png' },
+    });
+  });
+});
+
+describe('F8 defensive wire layer (generate() path)', () => {
+  it('repairs truncated tool-call arguments instead of throwing client-side', async () => {
+    const provider = createProvider();
+    const mockModels = (provider as any)._client.models as Record<string, unknown>;
+    let capturedBody: Record<string, unknown> | undefined;
+    mockModels['generateContentStream'] = vi.fn().mockImplementation((params: unknown) => {
+      capturedBody = params as Record<string, unknown>;
+      async function* stream() {
+        yield makeGenerateContentResponse();
+      }
+      return Promise.resolve(stream());
+    });
+
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'go' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hi' }],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'tc_bad',
+            name: 'foo',
+            arguments: '{"q":"trunc',
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'result' }],
+        toolCalls: [],
+        toolCallId: 'tc_bad',
+      },
+      { role: 'user', content: [{ type: 'text', text: 'next' }], toolCalls: [] },
+    ];
+    const repairs: string[] = [];
+
+    // Same blind spot as the Anthropic path: messagesToGoogleGenAIContents
+    // hard-throws on malformed arguments JSON when called directly (kept as
+    // the last assertion above), but through generate() the defensive wire
+    // layer closes the truncation first.
+    const result = await generate(provider, 'sys', [], history, undefined, {
+      onNormalizeRepair: (kind) => {
+        repairs.push(kind);
+      },
+    });
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'Hello' }]);
+    expect(repairs).toEqual(['arguments_closed']);
+    const contents = capturedBody?.['contents'] as Array<{
+      parts: Array<Record<string, unknown>>;
+    }>;
+    const functionCallPart = contents
+      .flatMap((content) => content.parts)
+      .find((part) => part['functionCall'] !== undefined)!;
+    expect(functionCallPart['functionCall']).toMatchObject({
+      name: 'foo',
+      args: { q: 'trunc' },
     });
   });
 });

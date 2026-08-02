@@ -21,7 +21,7 @@
  *   - `TaskAlreadyFinishedError` (→ 40904) when the task has reached a
  *     terminal status (completed/failed/cancelled/timed_out/killed/lost).
  *
- * **Anti-corruption**: imports `@moonshot-ai/agent-core` only for the
+ * **Anti-corruption**: imports `@cloud-code/agent-core` only for the
  * `createDecorator` value and the `BackgroundTaskInfo` type.
  *
  * Reference table (task kind + status):
@@ -40,7 +40,7 @@
 
 import { createDecorator } from '../../di';
 import type { BackgroundTaskInfo } from '../../agent/background';
-import type { BackgroundTask, BackgroundTaskKind, BackgroundTaskStatus } from '@moonshot-ai/protocol';
+import type { BackgroundTask, BackgroundTaskKind, BackgroundTaskStatus } from '@cloud-code/protocol';
 
 // ---------------------------------------------------------------------------
 // Adapter helpers (moved from adapter/task-adapter.ts)
@@ -49,6 +49,10 @@ import type { BackgroundTask, BackgroundTaskKind, BackgroundTaskStatus } from '@
 function mapKind(k: BackgroundTaskInfo['kind']): BackgroundTaskKind {
   switch (k) {
     case 'process':
+      return 'bash';
+    case 'pty-session':
+      // SCHEMAS §7 has no session literal; a PTY session is a shell-command
+      // task, so 'bash' is the closest spec literal (same as 'process').
       return 'bash';
     case 'agent':
       return 'subagent';
@@ -121,7 +125,11 @@ export function toProtocolTask(
   if (info.endedAt !== null && info.endedAt !== undefined) {
     base.completed_at = new Date(info.endedAt).toISOString();
   }
-  if (info.kind === 'process' && 'command' in info && typeof info.command === 'string') {
+  if (
+    (info.kind === 'process' || info.kind === 'pty-session') &&
+    'command' in info &&
+    typeof info.command === 'string'
+  ) {
     base.command = info.command;
   }
   if (output !== undefined) {

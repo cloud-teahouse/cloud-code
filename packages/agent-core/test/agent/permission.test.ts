@@ -1,10 +1,15 @@
-import type { Kaos } from '@moonshot-ai/kaos';
-import type { ToolCall } from '@moonshot-ai/kosong';
+import type { Kaos } from '@cloud-code/kaos';
+import type { ToolCall } from '@cloud-code/kosong';
 import * as posixPath from 'node:path/posix';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
+import { buildReplay } from '../../src';
 import { PermissionModeInjector } from '../../src/agent/injection/permission-mode';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../src/agent/records';
 import {
   PermissionManager,
   type ApprovalResponse,
@@ -14,6 +19,7 @@ import {
 } from '../../src/agent/permission';
 import {
   matchPermissionRule,
+  collectCoveredSubjects,
   parsePattern,
   type PermissionRuleMatchExecution,
 } from '../../src/agent/permission/matches-rule';
@@ -25,6 +31,9 @@ import { createPermissionDecisionPolicies } from '../../src/agent/permission/pol
 import { SwarmModeAgentSwarmApprovePermissionPolicy } from '../../src/agent/permission/policies/swarm-mode-agent-swarm-approve';
 import { YoloModeApprovePermissionPolicy } from '../../src/agent/permission/policies/yolo-mode-approve';
 import { ToolAccesses } from '../../src/loop';
+import { BashTool } from '../../src/tools/builtin/shell/bash';
+import { ExecSessionTool } from '../../src/tools/builtin/shell/exec-session';
+import { ShellSessionManager } from '../../src/agent/shell-session';
 import type { ToolInputDisplay } from '../../src/tools/display';
 import {
   literalRulePattern,
@@ -32,7 +41,9 @@ import {
   matchesGlobRuleSubject,
 } from '../../src/tools/support/rule-match';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { createBackgroundManager } from './background/helpers';
 import { createCommandKaos, testAgent } from './harness/agent';
+import { createScriptedGenerate } from './harness/scripted-generate';
 
 describe('Agent permission', () => {
   it('auto mode bypasses approval for ordinary builtin tools', async () => {
@@ -46,15 +57,15 @@ describe('Agent permission', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "auto", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "auto" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "auto" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Run Bash in auto mode" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Run Bash in auto mode" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [wire] llm.tools_snapshot          { "hash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s; a foreground command that hits its timeout is killed.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "command": { "type": "string", "minLength": 1, "description": "The command to execute." }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" } }, "required": [ "command" ], "additionalProperties": false } } ], "time": "<time>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "messageCount": 2, "turnStep": "0.1", "time": "<time>" }
+      [wire] llm.tools_snapshot          { "hash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s; a foreground command that hits its timeout is killed.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n- Do not insert \`sleep\` between commands that can run immediately — just run them. Never retry a failing command in a sleep loop; diagnose the root cause instead.\\n- If you must poll an external process (for example a CI run), use a check command such as \`gh run view\` rather than sleeping first; if a sleep is unavoidable, keep it short (1-5 seconds) so the user is not blocked.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n\\n**Git operations:**\\n- Mutating git commands (commit, push, reset, rebase, amending, …) ask for user approval by default — if one is denied, do not retry the same mutation or route around it; adjust your approach or ask the user.\\n- Commit only when the user explicitly asks. When asked to commit, first gather state with parallel Bash calls in one response: \`git status\` (never \`-uall\`, which can blow up on large repos), \`git diff\` for staged and unstaged changes, and \`git log\` to match the repository's commit-message style.\\n- Draft a short message focused on the *why*. Do not stage files that likely contain secrets (\`.env\`, credentials) — warn the user if they asked for those. Stage specific files by name; never \`git add -A\` or \`git add .\`, which can sweep in secrets or large binaries.\\n- Pass the commit message via a HEREDOC to preserve formatting:\\n\\n  \`\`\`sh\\n  git commit -m \\"$(cat <<'EOF'\\n  Commit message here.\\n  EOF\\n  )\\"\\n  \`\`\`\\n\\n  Then run \`git status\` after the commit to verify.\\n- Never update the git config, never skip hooks (\`--no-verify\`, \`--no-gpg-sign\`) unless the user explicitly asks, and never use interactive flags (\`git rebase -i\`, \`git add -i\`) — interactive input is not supported.\\n- If a pre-commit hook fails, the commit did NOT happen — fix the issue, re-stage, and create a NEW commit. Never \`--amend\` after a hook failure: it would rewrite the PREVIOUS commit and can destroy work.\\n- For pull requests use the \`gh\` CLI. Before writing the PR, gather in parallel: \`git status\`, \`git diff\`, whether the branch tracks a remote and is up to date, and \`git log\` plus \`git diff <base>...HEAD\` for the full branch history. Review ALL commits going into the PR, not just the latest. Keep the title under 70 characters and pass the body via a HEREDOC with \`## Summary\` and \`## Test plan\` sections:\\n\\n  \`\`\`sh\\n  gh pr create --title \\"the pr title\\" --body \\"$(cat <<'EOF'\\n  ## Summary\\n  <1-3 bullet points>\\n\\n  ## Test plan\\n  <bulleted checklist>\\n  EOF\\n  )\\"\\n  \`\`\`\\n\\n  Return the PR URL when done.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "additionalProperties": false, "properties": { "command": { "description": "The command to execute.", "minLength": 1, "type": "string" }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "exclusiveMinimum": 0, "maximum": 9007199254740991, "type": "integer" } }, "required": [ "command" ], "type": "object" } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "messageCount": 2, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "Running without asking." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "argumentsPart": "{\\"command\\":\\"printf permission-output\\",\\"timeout\\":60}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "Running without asking." } }, "time": "<time>" }
@@ -66,16 +77,16 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "messageId": "mock-1" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 172, "maxContextTokens": 1000000, "contextUsage": 0.000172, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 176, "maxContextTokens": 1000000, "contextUsage": 0.000176, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 147, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999828, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999828, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "The command printed auto-output." }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "The command printed auto-output." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 176, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-2" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 176, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 176, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 187, "maxContextTokens": 1000000, "contextUsage": 0.000187, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 323, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 323, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 323, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 187, "maxContextTokens": 1000000, "contextUsage": 0.000187, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 323, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 323, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 323, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -106,14 +117,14 @@ describe('Agent permission', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "yolo" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "yolo" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Run Bash in yolo mode" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Run Bash in yolo mode" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [wire] llm.tools_snapshot          { "hash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s; a foreground command that hits its timeout is killed.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "command": { "type": "string", "minLength": 1, "description": "The command to execute." }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" } }, "required": [ "command" ], "additionalProperties": false } } ], "time": "<time>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
+      [wire] llm.tools_snapshot          { "hash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s; a foreground command that hits its timeout is killed.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n- Do not insert \`sleep\` between commands that can run immediately — just run them. Never retry a failing command in a sleep loop; diagnose the root cause instead.\\n- If you must poll an external process (for example a CI run), use a check command such as \`gh run view\` rather than sleeping first; if a sleep is unavoidable, keep it short (1-5 seconds) so the user is not blocked.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n\\n**Git operations:**\\n- Mutating git commands (commit, push, reset, rebase, amending, …) ask for user approval by default — if one is denied, do not retry the same mutation or route around it; adjust your approach or ask the user.\\n- Commit only when the user explicitly asks. When asked to commit, first gather state with parallel Bash calls in one response: \`git status\` (never \`-uall\`, which can blow up on large repos), \`git diff\` for staged and unstaged changes, and \`git log\` to match the repository's commit-message style.\\n- Draft a short message focused on the *why*. Do not stage files that likely contain secrets (\`.env\`, credentials) — warn the user if they asked for those. Stage specific files by name; never \`git add -A\` or \`git add .\`, which can sweep in secrets or large binaries.\\n- Pass the commit message via a HEREDOC to preserve formatting:\\n\\n  \`\`\`sh\\n  git commit -m \\"$(cat <<'EOF'\\n  Commit message here.\\n  EOF\\n  )\\"\\n  \`\`\`\\n\\n  Then run \`git status\` after the commit to verify.\\n- Never update the git config, never skip hooks (\`--no-verify\`, \`--no-gpg-sign\`) unless the user explicitly asks, and never use interactive flags (\`git rebase -i\`, \`git add -i\`) — interactive input is not supported.\\n- If a pre-commit hook fails, the commit did NOT happen — fix the issue, re-stage, and create a NEW commit. Never \`--amend\` after a hook failure: it would rewrite the PREVIOUS commit and can destroy work.\\n- For pull requests use the \`gh\` CLI. Before writing the PR, gather in parallel: \`git status\`, \`git diff\`, whether the branch tracks a remote and is up to date, and \`git log\` plus \`git diff <base>...HEAD\` for the full branch history. Review ALL commits going into the PR, not just the latest. Keep the title under 70 characters and pass the body via a HEREDOC with \`## Summary\` and \`## Test plan\` sections:\\n\\n  \`\`\`sh\\n  gh pr create --title \\"the pr title\\" --body \\"$(cat <<'EOF'\\n  ## Summary\\n  <1-3 bullet points>\\n\\n  ## Test plan\\n  <bulleted checklist>\\n  EOF\\n  )\\"\\n  \`\`\`\\n\\n  Return the PR URL when done.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "additionalProperties": false, "properties": { "command": { "description": "The command to execute.", "minLength": 1, "type": "string" }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "exclusiveMinimum": 0, "maximum": 9007199254740991, "type": "integer" } }, "required": [ "command" ], "type": "object" } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "Running in yolo mode." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "argumentsPart": "{\\"command\\":\\"printf permission-output\\",\\"timeout\\":60}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "Running in yolo mode." } }, "time": "<time>" }
@@ -125,16 +136,16 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "messageId": "mock-1" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 32, "maxContextTokens": 1000000, "contextUsage": 0.000032, "planMode": false, "swarmMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 36, "maxContextTokens": 1000000, "contextUsage": 0.000036, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999968, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "messageCount": 3, "turnStep": "0.2", "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999968, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "messageCount": 3, "turnStep": "0.2", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "The command printed yolo-output." }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "The command printed yolo-output." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 36, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-2" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 36, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 36, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 47, "maxContextTokens": 1000000, "contextUsage": 0.000047, "planMode": false, "swarmMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 47, "maxContextTokens": 1000000, "contextUsage": 0.000047, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -167,7 +178,7 @@ describe('Agent permission', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "manual", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 152, "maxContextTokens": 1000000, "contextUsage": 0.000152, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 145, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 145, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 152, "maxContextTokens": 1000000, "contextUsage": 0.000152, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 145, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 145, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Back to manual" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 1, "origin": { "kind": "user" } }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Back to manual" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -180,7 +191,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "1", "step": 1, "usage": { "inputOther": 217, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-2" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 1, "step": 1, "stepId": "<uuid-3>", "usage": { "inputOther": 217, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 217, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 225, "maxContextTokens": 1000000, "contextUsage": 0.000225, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 362, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 362, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 217, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 225, "maxContextTokens": 1000000, "contextUsage": 0.000225, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 362, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 362, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 217, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -222,8 +233,8 @@ describe('Agent permission', () => {
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Try to run Bash" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [wire] llm.tools_snapshot          { "hash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s; a foreground command that hits its timeout is killed.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "command": { "type": "string", "minLength": 1, "description": "The command to execute." }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" } }, "required": [ "command" ], "additionalProperties": false } } ], "time": "<time>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
+      [wire] llm.tools_snapshot          { "hash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s; a foreground command that hits its timeout is killed.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n- Do not insert \`sleep\` between commands that can run immediately — just run them. Never retry a failing command in a sleep loop; diagnose the root cause instead.\\n- If you must poll an external process (for example a CI run), use a check command such as \`gh run view\` rather than sleeping first; if a sleep is unavoidable, keep it short (1-5 seconds) so the user is not blocked.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n\\n**Git operations:**\\n- Mutating git commands (commit, push, reset, rebase, amending, …) ask for user approval by default — if one is denied, do not retry the same mutation or route around it; adjust your approach or ask the user.\\n- Commit only when the user explicitly asks. When asked to commit, first gather state with parallel Bash calls in one response: \`git status\` (never \`-uall\`, which can blow up on large repos), \`git diff\` for staged and unstaged changes, and \`git log\` to match the repository's commit-message style.\\n- Draft a short message focused on the *why*. Do not stage files that likely contain secrets (\`.env\`, credentials) — warn the user if they asked for those. Stage specific files by name; never \`git add -A\` or \`git add .\`, which can sweep in secrets or large binaries.\\n- Pass the commit message via a HEREDOC to preserve formatting:\\n\\n  \`\`\`sh\\n  git commit -m \\"$(cat <<'EOF'\\n  Commit message here.\\n  EOF\\n  )\\"\\n  \`\`\`\\n\\n  Then run \`git status\` after the commit to verify.\\n- Never update the git config, never skip hooks (\`--no-verify\`, \`--no-gpg-sign\`) unless the user explicitly asks, and never use interactive flags (\`git rebase -i\`, \`git add -i\`) — interactive input is not supported.\\n- If a pre-commit hook fails, the commit did NOT happen — fix the issue, re-stage, and create a NEW commit. Never \`--amend\` after a hook failure: it would rewrite the PREVIOUS commit and can destroy work.\\n- For pull requests use the \`gh\` CLI. Before writing the PR, gather in parallel: \`git status\`, \`git diff\`, whether the branch tracks a remote and is up to date, and \`git log\` plus \`git diff <base>...HEAD\` for the full branch history. Review ALL commits going into the PR, not just the latest. Keep the title under 70 characters and pass the body via a HEREDOC with \`## Summary\` and \`## Test plan\` sections:\\n\\n  \`\`\`sh\\n  gh pr create --title \\"the pr title\\" --body \\"$(cat <<'EOF'\\n  ## Summary\\n  <1-3 bullet points>\\n\\n  ## Test plan\\n  <bulleted checklist>\\n  EOF\\n  )\\"\\n  \`\`\`\\n\\n  Return the PR URL when done.\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "additionalProperties": false, "properties": { "command": { "description": "The command to execute.", "minLength": 1, "type": "string" }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "exclusiveMinimum": 0, "maximum": 9007199254740991, "type": "integer" } }, "required": [ "command" ], "type": "object" } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I will try Bash." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "argumentsPart": "{\\"command\\":\\"printf should-not-run\\",\\"timeout\\":60}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will try Bash." } }, "time": "<time>" }
@@ -246,16 +257,16 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "messageId": "mock-1" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 27, "maxContextTokens": 1000000, "contextUsage": 0.000027, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 82, "maxContextTokens": 1000000, "contextUsage": 0.000082, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event           { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started                   { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
-      [wire] llm.request                         { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999973, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "aca3041121ee711028f726fed37e7b999f7e8885c05dbece76ef97eb43e2ec1e", "messageCount": 3, "turnStep": "0.2", "time": "<time>" }
+      [wire] llm.request                         { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999973, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "300fd6e43b6f379a9c3b20a1cba151a07a3d12e486256f4ed512ab8d05b5d1c0", "messageCount": 3, "turnStep": "0.2", "time": "<time>" }
       [emit] assistant.delta                     { "turnId": 0, "delta": "I will not run the command." }
       [wire] context.append_loop_event           { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "I will not run the command." } }, "time": "<time>" }
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 93, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-2" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 93, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 93, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 103, "maxContextTokens": 1000000, "contextUsage": 0.000103, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 98, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 98, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 98, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 103, "maxContextTokens": 1000000, "contextUsage": 0.000103, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 98, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 98, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 98, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                          { "turnId": 0, "reason": "completed" }
     `);
     expect(execWithEnv).not.toHaveBeenCalled();
@@ -386,28 +397,22 @@ describe('Permission auto mode', () => {
     expect(requestApproval).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['auto', 'auto-mode-approve'],
-    ['yolo', 'yolo-mode-approve'],
-  ] as const)('tracks %s mode bypass through %s', async (mode, policyName) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-    manager.setMode(mode);
+  it.each(['auto', 'yolo'] as const)(
+    'bypasses approval in %s mode without requesting approval',
+    async (mode) => {
+      const { manager, requestApproval } = makePermissionManager(async () => ({
+        decision: 'approved',
+      }));
+      manager.setMode(mode);
 
-    await expect(manager.beforeToolCall(hookContext({ id: 'call_1' }))).resolves.toBeUndefined();
+      await expect(manager.beforeToolCall(hookContext({ id: 'call_1' }))).resolves.toBeUndefined();
 
-    expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith('permission_policy_decision', {
-      policy_name: policyName,
-      tool_name: 'Bash',
-      permission_mode: mode,
-      decision: 'approve',
-    });
-  });
+      expect(requestApproval).not.toHaveBeenCalled();
+    },
+  );
 
-  it('tracks plan-mode Bash bypass in auto mode through auto-mode-approve', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+  it('bypasses approval for plan-mode Bash in auto mode', async () => {
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({
         decision: 'approved',
       }),
@@ -418,18 +423,12 @@ describe('Permission auto mode', () => {
     await expect(manager.beforeToolCall(hookContext({ id: 'call_plan_bash' }))).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith('permission_policy_decision', {
-      policy_name: 'auto-mode-approve',
-      tool_name: 'Bash',
-      permission_mode: 'auto',
-      decision: 'approve',
-    });
   });
 
   it.each(['auto', 'yolo'] as const)(
-    'tracks mode policy for default-allowed tools in %s mode',
+    'does not request approval for default-allowed tools in %s mode',
     async (mode) => {
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      const { manager, requestApproval } = makePermissionManager(async () => ({
         decision: 'approved',
       }));
       manager.setMode(mode);
@@ -445,15 +444,6 @@ describe('Permission auto mode', () => {
       ).resolves.toBeUndefined();
 
       expect(requestApproval).not.toHaveBeenCalled();
-      expect(telemetryTrack).toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({
-          policy_name: mode === 'auto' ? 'auto-mode-approve' : 'yolo-mode-approve',
-          tool_name: 'Read',
-          permission_mode: mode,
-          decision: 'approve',
-        }),
-      );
     },
   );
 
@@ -463,7 +453,7 @@ describe('Permission auto mode', () => {
   ] as const)(
     'requests approval in manual mode for %s outside the cwd',
     async (toolName, args, operation, action) => {
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      const { manager, requestApproval } = makePermissionManager(async () => ({
         decision: 'approved',
       }));
       manager.setMode('manual');
@@ -484,15 +474,6 @@ describe('Permission auto mode', () => {
         }),
         expect.any(Object),
       );
-      expect(telemetryTrack).toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({
-          policy_name: 'fallback-ask',
-          tool_name: toolName,
-          permission_mode: 'manual',
-          decision: 'ask',
-        }),
-      );
     },
   );
 
@@ -500,7 +481,7 @@ describe('Permission auto mode', () => {
     ['Write', { path: '/tmp/notes.md', content: 'x' }],
     ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }],
   ] as const)('approves %s outside the cwd in yolo mode', async (toolName, args) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.setMode('yolo');
@@ -510,15 +491,6 @@ describe('Permission auto mode', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'yolo-mode-approve',
-        tool_name: toolName,
-        permission_mode: 'yolo',
-        decision: 'approve',
-      }),
-    );
   });
 
   it.each(
@@ -551,7 +523,7 @@ describe('Permission auto mode', () => {
     ['Write', { path: '/tmp/notes.md', content: 'x' }],
     ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }],
   ] as const)('approves %s outside the cwd in auto mode', async (toolName, args) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.setMode('auto');
@@ -561,15 +533,6 @@ describe('Permission auto mode', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'auto-mode-approve',
-        tool_name: toolName,
-        permission_mode: 'auto',
-        decision: 'approve',
-      }),
-    );
   });
 
   it.each([
@@ -595,7 +558,7 @@ describe('Permission auto mode', () => {
   );
 
   it('approves Grep search outside the cwd in auto mode', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.setMode('auto');
@@ -611,13 +574,6 @@ describe('Permission auto mode', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'auto-mode-approve',
-        tool_name: 'Grep',
-      }),
-    );
   });
 
   it('keeps explicit deny rules higher priority than yolo outside-workspace approval', async () => {
@@ -648,7 +604,7 @@ describe('Permission auto mode', () => {
   });
 
   it('keeps ask rules higher priority than matching allow rules', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.rules.push(
@@ -673,24 +629,10 @@ describe('Permission auto mode', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'user-configured-ask',
-        tool_name: 'Bash',
-        decision: 'ask',
-      }),
-    );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'user-configured-allow',
-      }),
-    );
   });
 
   it('reuses approve-for-session even when an ask rule still matches the call', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
       scope: 'session',
       selectedLabel: 'Approve for this session',
@@ -711,14 +653,6 @@ describe('Permission auto mode', () => {
     await expect(call()).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'session-approval-history',
-        tool_name: 'Bash',
-        decision: 'approve',
-      }),
-    );
   });
 
   it('approves repeated outside-workspace writes in yolo mode without session approval', async () => {
@@ -751,16 +685,22 @@ describe('Permission policy chain', () => {
     expect(createPermissionDecisionPolicies({} as Agent).map((policy) => policy.name)).toEqual([
       'pre-tool-call-hook',
       'agent-swarm-exclusive-deny',
+      'coordinator-worker-spawn-deny',
+      'teammate-spawn-deny',
+      'worktree-teammate-deny',
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
       'user-configured-deny',
-      'auto-mode-approve',
       'session-approval-history',
+      'git-mutation-gate',
+      'guardian-review',
+      'auto-mode-approve',
       'user-configured-ask',
       'user-configured-allow',
       'exit-plan-mode-review-ask',
       'goal-start-review-ask',
       'plan-mode-tool-approve',
+      'worktree-tool-approve',
       'sensitive-file-access-ask',
       'git-control-path-access-ask',
       'yolo-mode-approve',
@@ -772,7 +712,7 @@ describe('Permission policy chain', () => {
   });
 
   it('denies invalid AgentSwarm batches before auto-mode approval', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.mode = 'auto';
@@ -797,15 +737,6 @@ describe('Permission policy chain', () => {
     });
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'agent-swarm-exclusive-deny',
-        tool_name: 'AgentSwarm',
-        permission_mode: 'auto',
-        decision: 'deny',
-      }),
-    );
   });
 });
 
@@ -980,14 +911,11 @@ describe('Simple permission policy direct behavior', () => {
 });
 
 describe('PreToolUse permission policy', () => {
-  it('blocks before approval and records the hook policy decision', async () => {
-    const triggerBlock = vi.fn(async () => ({
-      block: true,
-      reason: 'blocked by hook',
-    }));
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+  it('blocks before approval', async () => {
+    const trigger = vi.fn(async () => [{ action: 'block' as const, reason: 'blocked by hook' }]);
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
-      { hooks: { triggerBlock } as unknown as Agent['hooks'] },
+      { hooks: { trigger } as unknown as Agent['hooks'] },
     );
 
     await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_block' }))).resolves
@@ -997,7 +925,7 @@ describe('PreToolUse permission policy', () => {
       });
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(triggerBlock).toHaveBeenCalledWith('PreToolUse', {
+    expect(trigger).toHaveBeenCalledWith('PreToolUse', {
       matcherValue: 'Bash',
       signal: expect.any(AbortSignal),
       inputData: {
@@ -1005,23 +933,20 @@ describe('PreToolUse permission policy', () => {
         toolInput: { command: 'printf first', timeout: 60 },
         toolCallId: 'call_hook_block',
       },
-    });
-    expect(telemetryTrack).toHaveBeenCalledWith('permission_policy_decision', {
-      policy_name: 'pre-tool-call-hook',
-      tool_name: 'Bash',
-      permission_mode: 'manual',
-      decision: 'deny',
+      ifContext: {
+        toolName: 'Bash',
+        execution: expect.objectContaining({ approvalRule: expect.any(String) }),
+      },
     });
   });
 
   it.each(['auto', 'yolo'] as const)('runs before %s mode bypass', async (mode) => {
-    const triggerBlock = vi.fn(async () => ({
-      block: true,
-      reason: `${mode} hook block`,
-    }));
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const trigger = vi.fn(async () => [
+      { action: 'block' as const, reason: `${mode} hook block` },
+    ]);
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
-      { hooks: { triggerBlock } as unknown as Agent['hooks'] },
+      { hooks: { trigger } as unknown as Agent['hooks'] },
     );
     manager.setMode(mode);
 
@@ -1032,46 +957,28 @@ describe('PreToolUse permission policy', () => {
       });
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'pre-tool-call-hook',
-        permission_mode: mode,
-        decision: 'deny',
-      }),
-    );
   });
 
   it('continues through later policies when the hook does not block', async () => {
-    const triggerBlock = vi.fn(async () => undefined);
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const trigger = vi.fn(async () => []);
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
-      { hooks: { triggerBlock } as unknown as Agent['hooks'] },
+      { hooks: { trigger } as unknown as Agent['hooks'] },
     );
 
     await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_allow' }))).resolves
       .toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-        tool_name: 'Bash',
-        decision: 'ask',
-      }),
-    );
   });
 
   it('passes an empty hook input object for non-plain arguments', async () => {
-    const triggerBlock = vi.fn(async () => ({
-      block: true,
-      reason: 'array args blocked',
-    }));
-    const { manager } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-      { hooks: { triggerBlock } as unknown as Agent['hooks'] },
-    );
+    const trigger = vi.fn(async () => [
+      { action: 'block' as const, reason: 'array args blocked' },
+    ]);
+    const { manager } = makePermissionManager(async () => ({ decision: 'approved' }), {
+      hooks: { trigger } as unknown as Agent['hooks'],
+    });
 
     await manager.beforeToolCall(
       hookContext({
@@ -1081,7 +988,7 @@ describe('PreToolUse permission policy', () => {
       }),
     );
 
-    expect(triggerBlock).toHaveBeenCalledWith(
+    expect(trigger).toHaveBeenCalledWith(
       'PreToolUse',
       expect.objectContaining({
         inputData: {
@@ -1091,6 +998,87 @@ describe('PreToolUse permission policy', () => {
         },
       }),
     );
+  });
+
+  it('escalates to the approval broker when the hook returns permissionDecision ask', async () => {
+    const trigger = vi.fn(async () => [
+      { action: 'allow' as const, permissionDecision: 'ask' as const },
+    ]);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { hooks: { trigger } as unknown as Agent['hooks'] },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_ask' }))).resolves
+      .toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks with the rejection message when a hook-asked approval is rejected', async () => {
+    const trigger = vi.fn(async () => [
+      { action: 'allow' as const, permissionDecision: 'ask' as const },
+    ]);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'rejected' }),
+      { hooks: { trigger } as unknown as Agent['hooks'] },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_ask_reject' }))).resolves
+      .toMatchObject({
+        block: true,
+        reason: expect.stringContaining('rejected'),
+      });
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('rewrites the call args when the hook returns updatedInput', async () => {
+    const updatedInput = { command: 'printf rewritten', timeout: 60 };
+    const trigger = vi.fn(async () => [{ action: 'allow' as const, updatedInput }]);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { hooks: { trigger } as unknown as Agent['hooks'] },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_rewrite' }))).resolves
+      .toEqual({ updatedArgs: updatedInput });
+
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('keeps the updatedInput rewrite when a hook-asked approval is approved', async () => {
+    const updatedInput = { command: 'printf rewritten', timeout: 60 };
+    const trigger = vi.fn(async () => [
+      { action: 'allow' as const, permissionDecision: 'ask' as const, updatedInput },
+    ]);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { hooks: { trigger } as unknown as Agent['hooks'] },
+    );
+
+    await expect(
+      manager.beforeToolCall(hookContext({ id: 'call_hook_ask_rewrite' })),
+    ).resolves.toEqual({ updatedArgs: updatedInput });
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a deny decision win over a simultaneous ask or updatedInput', async () => {
+    const trigger = vi.fn(async () => [
+      { action: 'allow' as const, permissionDecision: 'ask' as const },
+      { action: 'block' as const, reason: 'deny wins' },
+      { action: 'allow' as const, updatedInput: { command: 'printf rewritten' } },
+    ]);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { hooks: { trigger } as unknown as Agent['hooks'] },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_deny_wins' }))).resolves
+      .toMatchObject({ block: true, reason: 'deny wins' });
+
+    expect(requestApproval).not.toHaveBeenCalled();
   });
 });
 
@@ -1110,7 +1098,7 @@ describe('Default tool approve policy', () => {
     ['AskUserQuestion', { questions: [] }],
     ['Skill', { name: 'test-skill' }],
   ] as const)('approves %s in manual mode without requesting approval', async (toolName, args) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
 
@@ -1125,15 +1113,6 @@ describe('Default tool approve policy', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'default-tool-approve',
-        tool_name: toolName,
-        permission_mode: 'manual',
-        decision: 'approve',
-      }),
-    );
   });
 
   it.each([
@@ -1142,7 +1121,7 @@ describe('Default tool approve policy', () => {
     ['Edit', { path: '/workspace/a.ts', old_string: 'a', new_string: 'b' }],
     ['Custom', { value: 1 }],
   ] as const)('does not default-approve %s', async (toolName, args) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
 
@@ -1157,14 +1136,10 @@ describe('Default tool approve policy', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'default-tool-approve' }),
-    );
   });
 
   it('keeps auto-mode AskUserQuestion deny above default approval', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.setMode('auto');
@@ -1183,14 +1158,6 @@ describe('Default tool approve policy', () => {
     });
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'auto-mode-ask-user-question-deny',
-        tool_name: 'AskUserQuestion',
-        decision: 'deny',
-      }),
-    );
   });
 });
 
@@ -1385,7 +1352,7 @@ describe('User-configured permission policies', () => {
   });
 
   it('continues past malformed user rule patterns', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.rules.push({
@@ -1399,13 +1366,6 @@ describe('User-configured permission policies', () => {
       .toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-        decision: 'ask',
-      }),
-    );
   });
 
   it('uses the first matching deny rule in effective order', async () => {
@@ -1456,8 +1416,8 @@ describe('User-configured permission policies', () => {
       });
   });
 
-  it('requests approval for argument-aware ask rules and records non-sensitive match telemetry', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+  it('requests approval for argument-aware ask rules', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.rules.push({
@@ -1476,19 +1436,10 @@ describe('User-configured permission policies', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'user-configured-ask',
-        rule_decision: 'ask',
-        has_rule_args: true,
-        match_strategy: 'matches_rule',
-      }),
-    );
   });
 
   it('lets non-matching ask rules fall through to matching allow rules', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.rules.push(
@@ -1514,19 +1465,10 @@ describe('User-configured permission policies', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'user-configured-allow',
-        rule_decision: 'allow',
-        has_rule_args: true,
-        match_strategy: 'matches_rule',
-      }),
-    );
   });
 
   it('falls back to approval when an allow rule argument does not match', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.rules.push({
@@ -1545,18 +1487,12 @@ describe('User-configured permission policies', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-      }),
-    );
   });
 
   it.each(['turn-override', 'project', 'user'] as const)(
     'matches %s scoped user-configured rules',
     async (scope) => {
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      const { manager, requestApproval } = makePermissionManager(async () => ({
         decision: 'approved',
       }));
       manager.rules.push({
@@ -1569,20 +1505,13 @@ describe('User-configured permission policies', () => {
         .toBeUndefined();
 
       expect(requestApproval).not.toHaveBeenCalled();
-      expect(telemetryTrack).toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({
-          policy_name: 'user-configured-allow',
-          rule_decision: 'allow',
-        }),
-      );
     },
   );
 });
 
 describe('Plan mode tool approve policy', () => {
   it('approves EnterPlanMode in manual mode without requesting approval', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
 
@@ -1597,21 +1526,13 @@ describe('Plan mode tool approve policy', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'plan-mode-tool-approve',
-        tool_name: 'EnterPlanMode',
-        decision: 'approve',
-      }),
-    );
   });
 
   it.each(['Write', 'Edit'] as const)(
     'approves %s when it only writes the active plan file',
     async (toolName) => {
       const planFilePath = '/workspace/.kimi/plans/current.md';
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      const { manager, requestApproval } = makePermissionManager(
         async () => ({ decision: 'approved' }),
         { planModeActive: true, planFilePath },
       );
@@ -1631,21 +1552,13 @@ describe('Plan mode tool approve policy', () => {
       ).resolves.toBeUndefined();
 
       expect(requestApproval).not.toHaveBeenCalled();
-      expect(telemetryTrack).toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({
-          policy_name: 'plan-mode-tool-approve',
-          tool_name: toolName,
-          decision: 'approve',
-        }),
-      );
     },
   );
 
   it('denies active plan-mode writes that have no file write access', async () => {
     const planFilePath = '/workspace/.kimi/plans/current.md';
     const args = { path: planFilePath, content: '# Plan' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { planModeActive: true, planFilePath },
     );
@@ -1668,18 +1581,10 @@ describe('Plan mode tool approve policy', () => {
     });
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'plan-mode-guard-deny',
-        tool_name: 'Write',
-        decision: 'deny',
-      }),
-    );
   });
 
   it('approves ExitPlanMode directly when plan mode is inactive', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
 
@@ -1695,18 +1600,10 @@ describe('Plan mode tool approve policy', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'plan-mode-tool-approve',
-        tool_name: 'ExitPlanMode',
-        decision: 'approve',
-      }),
-    );
   });
 
   it('approves ExitPlanMode while active when there is no plan review display', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { planModeActive: true, planFilePath: '/tmp/plan.md' },
     );
@@ -1727,18 +1624,10 @@ describe('Plan mode tool approve policy', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'plan-mode-tool-approve',
-        tool_name: 'ExitPlanMode',
-        decision: 'approve',
-      }),
-    );
   });
 
   it('approves ExitPlanMode while active when the plan review is blank', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { planModeActive: true, planFilePath: '/tmp/plan.md' },
     );
@@ -1755,18 +1644,10 @@ describe('Plan mode tool approve policy', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'plan-mode-tool-approve',
-        tool_name: 'ExitPlanMode',
-        decision: 'approve',
-      }),
-    );
   });
 
   it('defers non-empty plan reviews to the review approval policy', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { planModeActive: true, planFilePath: '/tmp/plan.md' },
     );
@@ -1788,14 +1669,6 @@ describe('Plan mode tool approve policy', () => {
     });
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'exit-plan-mode-review-ask',
-        tool_name: 'ExitPlanMode',
-        decision: 'ask',
-      }),
-    );
   });
 });
 
@@ -2116,8 +1989,147 @@ describe('ExitPlanMode permission policy', () => {
     expect(result?.syntheticResult?.output).not.toContain('Plan saved to:');
   });
 
+  it('attaches a structured approved outcome with path, choice, and feedback', async () => {
+    const { manager } = makePlanPermissionManager({
+      mode: 'manual',
+      plan: '# Draft Plan',
+      approval: { decision: 'approved', selectedLabel: 'Approach B', feedback: 'also update the README' },
+    });
+
+    const result = await manager.beforeToolCall(
+      hookContext({
+        id: 'call_exit_structured',
+        toolName: 'ExitPlanMode',
+        args: { options: planOptions },
+        execution: planReviewExecution({
+          plan: '# Draft Plan',
+          path: '/tmp/plan.md',
+          options: planOptions,
+        }),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      syntheticResult: {
+        isError: false,
+        structured: {
+          outcome: 'approved',
+          chosen: 'Approach B',
+          path: '/tmp/plan.md',
+          feedback: 'also update the README',
+        },
+      },
+    });
+  });
+
+  it('attaches a structured approved outcome without optional fields', async () => {
+    const { manager } = makePlanPermissionManager({
+      mode: 'manual',
+      plan: '# Draft Plan',
+      approval: { decision: 'approved' },
+    });
+
+    const result = await manager.beforeToolCall(
+      hookContext({
+        id: 'call_exit_structured_bare',
+        toolName: 'ExitPlanMode',
+        args: {},
+        execution: planReviewExecution({ plan: '# Draft Plan' }),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      syntheticResult: { structured: { outcome: 'approved' } },
+    });
+    expect(result?.syntheticResult?.structured).toEqual({ outcome: 'approved' });
+  });
+
+  it('attaches a structured rejected outcome on plain rejection', async () => {
+    const { manager } = makePlanPermissionManager({
+      mode: 'manual',
+      plan: '# Draft Plan',
+      approval: { decision: 'rejected', selectedLabel: 'Reject' },
+    });
+
+    const result = await manager.beforeToolCall(
+      hookContext({
+        id: 'call_exit_structured_reject',
+        toolName: 'ExitPlanMode',
+        args: {},
+        execution: planReviewExecution({ plan: '# Draft Plan', path: '/tmp/plan.md' }),
+      }),
+    );
+
+    expect(result?.syntheticResult?.structured).toEqual({ outcome: 'rejected' });
+  });
+
+  it('attaches the feedback to the structured outcome on revise-with-feedback', async () => {
+    const { manager } = makePlanPermissionManager({
+      mode: 'manual',
+      plan: '# Draft Plan',
+      approval: { decision: 'rejected', selectedLabel: 'Revise', feedback: 'Add verification.' },
+    });
+
+    const result = await manager.beforeToolCall(
+      hookContext({
+        id: 'call_exit_structured_feedback',
+        toolName: 'ExitPlanMode',
+        args: {},
+        execution: planReviewExecution({ plan: '# Draft Plan', path: '/tmp/plan.md' }),
+      }),
+    );
+
+    expect(result?.syntheticResult?.structured).toEqual({
+      outcome: 'rejected',
+      feedback: 'Add verification.',
+    });
+    expect(result?.syntheticResult?.display).toBeUndefined();
+  });
+
+  it('attaches a structured revise_requested outcome and display ref on bare revise', async () => {
+    const { manager } = makePlanPermissionManager({
+      mode: 'manual',
+      plan: '# Draft Plan',
+      approval: { decision: 'rejected', selectedLabel: 'Revise' },
+    });
+
+    const result = await manager.beforeToolCall(
+      hookContext({
+        id: 'call_exit_structured_revise',
+        toolName: 'ExitPlanMode',
+        args: {},
+        execution: planReviewExecution({ plan: '# Draft Plan', path: '/tmp/plan.md' }),
+      }),
+    );
+
+    expect(result?.syntheticResult?.structured).toEqual({ outcome: 'revise_requested' });
+    expect(result?.syntheticResult?.display).toEqual({
+      key: 'toolResult.exitPlanMode.revisionsRequested',
+    });
+  });
+
+  it('attaches a structured dismissed outcome and display ref on cancellation', async () => {
+    const { manager } = makePlanPermissionManager({
+      mode: 'manual',
+      plan: '# Draft Plan',
+      approval: { decision: 'cancelled' },
+    });
+
+    const result = await manager.beforeToolCall(
+      hookContext({
+        id: 'call_exit_structured_dismissed',
+        toolName: 'ExitPlanMode',
+        args: {},
+        execution: planReviewExecution({ plan: '# Draft Plan', path: '/tmp/plan.md' }),
+      }),
+    );
+
+    expect(result?.syntheticResult?.structured).toEqual({ outcome: 'dismissed' });
+    expect(result?.syntheticResult?.display).toEqual({ key: 'toolResult.exitPlanMode.dismissed' });
+  });
+
   it('does not force a selected-approach prefix for labels that are not in the options', async () => {
-    const { manager, telemetryTrack } = makePlanPermissionManager({
+    const { manager } = makePlanPermissionManager({
       mode: 'manual',
       plan: '# Draft Plan',
       approval: { decision: 'approved', selectedLabel: 'Approach C' },
@@ -2137,10 +2149,6 @@ describe('ExitPlanMode permission policy', () => {
     );
 
     expect(result?.syntheticResult?.output).not.toContain('Selected approach:');
-    expect(telemetryTrack).toHaveBeenCalledWith('plan_resolved', {
-      outcome: 'approved',
-      chosen_option: 'Approach C',
-    });
   });
 
   it('returns the exit failure when reject-and-exit cannot leave plan mode', async () => {
@@ -2170,8 +2178,8 @@ describe('ExitPlanMode permission policy', () => {
     });
   });
 
-  it('tracks approval transport errors before rethrowing', async () => {
-    const { manager, telemetryTrack } = makePlanPermissionManager({
+  it('rethrows approval transport errors', async () => {
+    const { manager } = makePlanPermissionManager({
       mode: 'manual',
       plan: '# Draft Plan',
       approvalError: new Error('approval transport closed'),
@@ -2187,36 +2195,12 @@ describe('ExitPlanMode permission policy', () => {
         }),
       ),
     ).rejects.toThrow('approval transport closed');
-
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_approval_result',
-      expect.objectContaining({
-        policy_name: 'exit-plan-mode-review-ask',
-        tool_name: 'ExitPlanMode',
-        result: 'error',
-      }),
-    );
-  });
-
-  it('attaches the request trace id to permission_approval_result', async () => {
-    const { manager, telemetryTrack } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-    );
-
-    await expect(
-      manager.beforeToolCall(hookContext({ id: 'call_traced', traceId: 'trace-perm-1' })),
-    ).resolves.toBeUndefined();
-
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_approval_result',
-      expect.objectContaining({ result: 'approved', trace_id: 'trace-perm-1' }),
-    );
   });
 });
 
 describe('Agent-local approve for session', () => {
   it('turns approved session-scoped responses into an agent-local runtime rule cache', async () => {
-    const { manager, record, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, record, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
       scope: 'session',
       selectedLabel: 'Approve for this session',
@@ -2227,27 +2211,6 @@ describe('Agent-local approve for session', () => {
     await expect(manager.beforeToolCall(hookContext({ id: 'call_1' }))).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenNthCalledWith(
-      1,
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-        tool_name: 'Bash',
-        permission_mode: 'manual',
-        decision: 'ask',
-      }),
-    );
-    expect(telemetryTrack).toHaveBeenNthCalledWith(
-      2,
-      'permission_approval_result',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-        tool_name: 'Bash',
-        permission_mode: 'manual',
-        result: 'approved_for_session',
-        session_cache_written: true,
-      }),
-    );
     expect(record).toHaveBeenCalledWith({
       type: 'permission.record_approval_result',
       turnId: 0,
@@ -2274,15 +2237,6 @@ describe('Agent-local approve for session', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenNthCalledWith(
-      3,
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'session-approval-history',
-        tool_name: 'Bash',
-        decision: 'approve',
-      }),
-    );
 
     await expect(
       manager.beforeToolCall(
@@ -2419,7 +2373,7 @@ describe('Agent-local approve for session', () => {
   });
 
   it('continues across non-matching and malformed session approval patterns', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.recordApprovalResult({
@@ -2451,20 +2405,10 @@ describe('Agent-local approve for session', () => {
       .toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'session-approval-history',
-        tool_name: 'Bash',
-        decision: 'approve',
-        has_rule_args: true,
-        match_strategy: 'matches_rule',
-      }),
-    );
   });
 
   it('does not reuse a session approval whose tool name does not match', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+    const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
     }));
     manager.recordApprovalResult({
@@ -2480,13 +2424,6 @@ describe('Agent-local approve for session', () => {
       .toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-        tool_name: 'Bash',
-      }),
-    );
   });
 
   it('replays session approval wire events into agent permission state', () => {
@@ -2541,9 +2478,9 @@ describe('Agent-local approve for session', () => {
   });
 });
 
-describe('Approval telemetry', () => {
+describe('Approval hooks', () => {
   it('fires observer hooks while waiting for user approval', async () => {
-    const triggerBlock = vi.fn(async () => undefined);
+    const trigger = vi.fn(async () => []);
     const fireAndForgetTrigger = vi.fn(async () => []);
     const { manager, requestApproval } = makePermissionManager(
       async () => {
@@ -2568,7 +2505,7 @@ describe('Approval telemetry', () => {
         };
       },
       {
-        hooks: { triggerBlock, fireAndForgetTrigger } as unknown as Agent['hooks'],
+        hooks: { trigger, fireAndForgetTrigger } as unknown as Agent['hooks'],
       },
     );
 
@@ -2592,7 +2529,7 @@ describe('Approval telemetry', () => {
   });
 
   it('does not fire approval observer hooks without an approval request', async () => {
-    const triggerBlock = vi.fn(async () => undefined);
+    const trigger = vi.fn(async () => []);
     const fireAndForgetTrigger = vi.fn(async () => []);
     const { manager, requestApproval } = makePermissionManager(
       async () => ({
@@ -2600,7 +2537,7 @@ describe('Approval telemetry', () => {
       }),
       {
         approvalRpc: false,
-        hooks: { triggerBlock, fireAndForgetTrigger } as unknown as Agent['hooks'],
+        hooks: { trigger, fireAndForgetTrigger } as unknown as Agent['hooks'],
       },
     );
 
@@ -2618,8 +2555,8 @@ describe('Approval telemetry', () => {
     );
   });
 
-  it('tracks cancelled approval requests', async () => {
-    const { manager, telemetryTrack } = makePermissionManager(async () => ({
+  it('blocks the tool when the approval request is cancelled', async () => {
+    const { manager } = makePermissionManager(async () => ({
       decision: 'cancelled',
       feedback: 'request closed',
     }));
@@ -2628,27 +2565,6 @@ describe('Approval telemetry', () => {
       block: true,
       reason: expect.stringContaining('approval request was cancelled'),
     });
-
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-        tool_name: 'Bash',
-        permission_mode: 'manual',
-        decision: 'ask',
-      }),
-    );
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_approval_result',
-      expect.objectContaining({
-        policy_name: 'fallback-ask',
-        tool_name: 'Bash',
-        permission_mode: 'manual',
-        result: 'cancelled',
-        has_feedback: true,
-        session_cache_written: false,
-      }),
-    );
   });
 });
 
@@ -2725,7 +2641,7 @@ describe('Default git CWD Write/Edit permission', () => {
 
   it('still requests approval for Bash inside a git cwd in manual mode', async () => {
     const { kaos, stat } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -2740,10 +2656,6 @@ describe('Default git CWD Write/Edit permission', () => {
       }),
       expect.any(Object),
     );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
     expect(stat).not.toHaveBeenCalled();
   });
 
@@ -2752,7 +2664,7 @@ describe('Default git CWD Write/Edit permission', () => {
       markerPath: '/extra/.git',
       statModes: { '/extra': DIR_MODE },
     });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { cwd: '/extra', kaos, additionalDirs: ['/extra'] },
     );
@@ -2773,16 +2685,12 @@ describe('Default git CWD Write/Edit permission', () => {
       }),
       expect.any(Object),
     );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
     expect(stat).not.toHaveBeenCalled();
   });
 
   it('bypasses approval for Write to a relative path inside a git cwd', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -2792,20 +2700,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'git-cwd-write-approve',
-        tool_name: 'Write',
-        permission_mode: 'manual',
-        decision: 'approve',
-      }),
-    );
   });
 
   it('bypasses approval for Edit on an absolute path inside the git cwd', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -2817,15 +2716,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'git-cwd-write-approve',
-        tool_name: 'Edit',
-        permission_mode: 'manual',
-        decision: 'approve',
-      }),
-    );
   });
 
   it.each([
@@ -2833,7 +2723,7 @@ describe('Default git CWD Write/Edit permission', () => {
     ['Edit', { path: '/extra/src/a.ts', old_string: 'A', new_string: 'B' }],
   ] as const)('approves %s on an additionalDir path in manual mode', async (toolName, args) => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos, additionalDirs: ['/extra'] },
     );
@@ -2849,19 +2739,10 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'git-cwd-write-approve',
-        tool_name: toolName,
-        permission_mode: 'manual',
-        decision: 'approve',
-      }),
-    );
   });
 
   it('still requests approval when cwd is not inside a git work tree', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos: nonGitKaos() },
     );
@@ -2871,10 +2752,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('rechecks missing git marker checks across repeated Write/Edit calls in the same cwd', async () => {
@@ -2936,7 +2813,7 @@ describe('Default git CWD Write/Edit permission', () => {
 
   it('still requests approval for a shared-prefix path outside additionalDirs', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos, additionalDirs: ['/extra'] },
     );
@@ -2946,19 +2823,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('still requests approval for a path inside the git root but outside the cwd', async () => {
     const { kaos } = gitKaos({ markerPath: '/a/.git' });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { cwd: '/a/b/c', kaos },
     );
@@ -2968,17 +2837,13 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it.each(['.git/config', '.git/hooks/pre-commit'])(
     'still requests approval for git control file %s',
     async (path) => {
       const { kaos } = gitKaos();
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      const { manager, requestApproval } = makePermissionManager(
         async () => ({ decision: 'approved' }),
         { kaos },
       );
@@ -2987,16 +2852,12 @@ describe('Default git CWD Write/Edit permission', () => {
         .toBeUndefined();
 
       expect(requestApproval).toHaveBeenCalledTimes(1);
-      expect(telemetryTrack).not.toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-      );
     },
   );
 
   it('still requests approval for a git control file inside an additionalDir', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos, additionalDirs: ['/extra'] },
     );
@@ -3006,25 +2867,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'git-control-path-access-ask',
-        tool_name: 'Write',
-        permission_mode: 'manual',
-        decision: 'ask',
-        git_control_path: true,
-      }),
-    );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('still requests approval for case-variant git control files', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3034,10 +2881,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('still requests approval for a linked-worktree gitdir inside cwd', async () => {
@@ -3049,7 +2892,7 @@ describe('Default git CWD Write/Edit permission', () => {
         throw notFound(path);
       }),
     });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3059,15 +2902,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('does not ask for ordinary file access when a git marker exists', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3083,15 +2922,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'default-tool-approve' }),
-    );
   });
 
   it('asks before accessing the .git marker path itself', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3107,20 +2942,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'git-control-path-access-ask',
-        tool_name: 'Read',
-        decision: 'ask',
-        git_control_path: true,
-      }),
-    );
   });
 
   it('does not check git control paths when cwd is empty', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { cwd: '', kaos },
     );
@@ -3136,16 +2962,12 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'default-tool-approve' }),
-    );
   });
 
   it('detects Win32 .git path components case-insensitively', async () => {
     const kaos = createFakeKaos({ pathClass: () => 'win32' });
     const args = { path: 'C:\\repo\\.GIT\\config' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { cwd: 'C:\\repo', kaos },
     );
@@ -3165,13 +2987,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'git-control-path-access-ask',
-        git_control_path: true,
-      }),
-    );
   });
 
   it.each([
@@ -3202,7 +3017,7 @@ describe('Default git CWD Write/Edit permission', () => {
         if (path === '/workspace/.git') return 'gitdir: .gitdir\n';
         throw notFound(path);
       });
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      const { manager, requestApproval } = makePermissionManager(
         async () => ({ decision: 'approved' }),
         { kaos: createFakeKaos({ stat, readText }) },
       );
@@ -3218,15 +3033,6 @@ describe('Default git CWD Write/Edit permission', () => {
       ).resolves.toBeUndefined();
 
       expect(requestApproval).toHaveBeenCalledTimes(1);
-      expect(telemetryTrack).toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({
-          policy_name: 'git-control-path-access-ask',
-          tool_name: toolName,
-          permission_mode: 'manual',
-          decision: 'ask',
-        }),
-      );
     },
   );
 
@@ -3234,7 +3040,7 @@ describe('Default git CWD Write/Edit permission', () => {
     const { kaos } = gitKaos({
       statModes: { '/workspace/out': SYMLINK_MODE },
     });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3244,17 +3050,13 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('bypasses approval for a lexical target inside git cwd without resolving target symlinks', async () => {
     const { kaos } = gitKaos({
       statModes: { '/workspace/link.txt': SYMLINK_MODE },
     });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3264,10 +3066,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('still requests approval for a sensitive file inside the git cwd', async () => {
@@ -3286,7 +3084,7 @@ describe('Default git CWD Write/Edit permission', () => {
 
   it('still requests approval for a sensitive file inside an additionalDir', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos, additionalDirs: ['/extra'] },
     );
@@ -3296,20 +3094,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'sensitive-file-access-ask',
-        tool_name: 'Write',
-        permission_mode: 'manual',
-        decision: 'ask',
-        sensitive_path: true,
-      }),
-    );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it.each(['.env.local', '.aws/credentials'])(
@@ -3318,7 +3102,7 @@ describe('Default git CWD Write/Edit permission', () => {
       const { kaos } = gitKaos({
         statModes: path.includes('/') ? { '/workspace/.aws': DIR_MODE } : {},
       });
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      const { manager, requestApproval } = makePermissionManager(
         async () => ({ decision: 'approved' }),
         { kaos },
       );
@@ -3327,10 +3111,6 @@ describe('Default git CWD Write/Edit permission', () => {
         .toBeUndefined();
 
       expect(requestApproval).toHaveBeenCalledTimes(1);
-      expect(telemetryTrack).not.toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-      );
     },
   );
 
@@ -3340,7 +3120,7 @@ describe('Default git CWD Write/Edit permission', () => {
       const { kaos } = gitKaos({
         statModes: path.includes('/') ? { '/workspace/src': DIR_MODE } : {},
       });
-      const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      const { manager, requestApproval } = makePermissionManager(
         async () => ({ decision: 'approved' }),
         { kaos },
       );
@@ -3349,20 +3129,12 @@ describe('Default git CWD Write/Edit permission', () => {
         .toBeUndefined();
 
       expect(requestApproval).not.toHaveBeenCalled();
-      expect(telemetryTrack).not.toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({ policy_name: 'sensitive-file-access-ask' }),
-      );
-      expect(telemetryTrack).toHaveBeenCalledWith(
-        'permission_policy_decision',
-        expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-      );
     },
   );
 
   it('requests approval for sensitive read access before default approval', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3378,21 +3150,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'sensitive-file-access-ask',
-        tool_name: 'Read',
-        decision: 'ask',
-        file_access_operation: 'read',
-        sensitive_path: true,
-      }),
-    );
   });
 
   it('detects sensitive Win32 paths case-insensitively', async () => {
     const kaos = createFakeKaos({ pathClass: () => 'win32' });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { cwd: 'C:\\repo', kaos },
     );
@@ -3408,18 +3170,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'sensitive-file-access-ask',
-        sensitive_path: true,
-      }),
-    );
   });
 
   it('bypasses approval for new files when SSH Kaos reports numeric no-such-file', async () => {
     const { kaos } = gitKaos({ missingError: sshNotFound });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3429,20 +3184,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'git-cwd-write-approve',
-        tool_name: 'Write',
-        permission_mode: 'manual',
-        decision: 'approve',
-      }),
-    );
   });
 
   it('lets an explicit `ask` rule keep the approval prompt for Write', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3458,15 +3204,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
-  it('lets an explicit `allow` rule take the original allow path without git cwd approval telemetry', async () => {
+  it('lets an explicit `allow` rule take the original allow path', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3481,15 +3223,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('keeps explicit `deny` rules higher priority than the bypass', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3508,15 +3246,11 @@ describe('Default git CWD Write/Edit permission', () => {
     });
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('does not fire in auto mode because auto-mode-approve takes over', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3527,19 +3261,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'auto-mode-approve',
-        tool_name: 'Write',
-        permission_mode: 'auto',
-        decision: 'approve',
-      }),
-    );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('does not fire on Windows path semantics (Windows stMode unverified)', async () => {
@@ -3551,7 +3272,7 @@ describe('Default git CWD Write/Edit permission', () => {
           : Promise.reject(new Error('ENOENT')),
       );
     const kaos = createFakeKaos({ stat, pathClass: () => 'win32' });
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3561,15 +3282,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('does not approve when cwd is empty', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { cwd: '', kaos },
     );
@@ -3579,16 +3296,12 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('does not approve Write when execution has no write file access', async () => {
     const { kaos } = gitKaos();
     const args = { path: 'src/a.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3608,16 +3321,12 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('approves multiple write accesses when all are inside the git cwd', async () => {
     const { kaos } = gitKaos();
     const args = { path: 'src/a.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3640,16 +3349,12 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('does not approve when any write access is outside the cwd', async () => {
     const { kaos } = gitKaos();
     const args = { path: 'src/a.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3672,19 +3377,11 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('does not approve non-Write/Edit tools even if they report write access', async () => {
     const { kaos } = gitKaos();
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+    const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
     );
@@ -3704,10 +3401,6 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
-    );
   });
 
   it('rechecks git marker hits across repeated Write/Edit calls in the same cwd', async () => {
@@ -3872,6 +3565,712 @@ describe('Permission rule helpers', () => {
 
 });
 
+describe('Compound Bash permission (tree-sitter ruleMatch)', () => {
+  it('dispatches on rule decision: deny/ask match ∃, allow matches ∀', async () => {
+    const execution = await bashRuleMatchExecution('git st && rm x');
+    const deny = permissionRule('Bash(rm *)', 'deny');
+    const ask = permissionRule('Bash(rm *)', 'ask');
+    const allowRm = permissionRule('Bash(rm *)', 'allow');
+    const allowGit = permissionRule('Bash(git *)', 'allow');
+
+    expect(matchPermissionRule({ rule: deny, toolName: 'Bash', execution })).toBeDefined();
+    expect(matchPermissionRule({ rule: ask, toolName: 'Bash', execution })).toBeDefined();
+    // A single allow rule covering only one segment must NOT match.
+    expect(matchPermissionRule({ rule: allowRm, toolName: 'Bash', execution })).toBeUndefined();
+    expect(matchPermissionRule({ rule: allowGit, toolName: 'Bash', execution })).toBeUndefined();
+
+    const allGit = await bashRuleMatchExecution('git st && git push');
+    expect(matchPermissionRule({ rule: allowGit, toolName: 'Bash', execution: allGit })).toBeDefined();
+  });
+
+  it('matches negated deny rules per segment', async () => {
+    // `ls` is "not rm", so `Bash(!rm *)` fires on the compound even though
+    // `echo hi` also matches — ∃ over segments, same as opencode.
+    const execution = await bashRuleMatchExecution('ls && echo hi');
+    const deny = permissionRule('Bash(!rm *)', 'deny');
+    expect(matchPermissionRule({ rule: deny, toolName: 'Bash', execution })).toBeDefined();
+  });
+
+  it('collectCoveredSubjects unions allow rules across segments', async () => {
+    const execution = await bashRuleMatchExecution('git add . && git push origin main');
+    const cover = collectCoveredSubjects({
+      rules: [permissionRule('Bash(git add *)'), permissionRule('Bash(git push *)')],
+      toolName: 'Bash',
+      execution,
+    });
+    expect(cover?.fullyCovered).toBe(true);
+    expect(cover?.firstMatch).toBeDefined();
+
+    const partial = collectCoveredSubjects({
+      rules: [permissionRule('Bash(git add *)')],
+      toolName: 'Bash',
+      execution,
+    });
+    expect(partial?.fullyCovered).toBe(false);
+
+    // Tool-name-only rules cover every subject.
+    const nameOnly = collectCoveredSubjects({
+      rules: [permissionRule('Bash')],
+      toolName: 'Bash',
+      execution,
+    });
+    expect(nameOnly?.fullyCovered).toBe(true);
+
+    // Executions without ruleMatch opt out of the union path entirely.
+    expect(
+      collectCoveredSubjects({ rules: [permissionRule('Bash')], toolName: 'Bash', execution: {} }),
+    ).toBeUndefined();
+  });
+
+  it('does not match bare commands against their own prefix rule (known limitation)', async () => {
+    // `git push *` requires a trailing argument, so a bare `git push` is
+    // asked again even after approval — inherited from opencode, documented
+    // in design §4 alongside the other glob caveats.
+    const execution = await bashRuleMatchExecution('git push');
+    expect(execution.approvalRules).toEqual(['Bash(git push *)']);
+    const cover = collectCoveredSubjects({
+      rules: [permissionRule('Bash(git push *)')],
+      toolName: 'Bash',
+      execution,
+    });
+    expect(cover?.fullyCovered).toBe(false);
+  });
+
+  it('approves a compound command when session rules union-cover all segments', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    seedSessionApprovalRules(manager, ['Bash(git add *)', 'Bash(git push *)']);
+
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_covered', 'git add . && git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('asks while a segment is uncovered, then approves with a complementary user allow rule', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    seedSessionApprovalRules(manager, ['Bash(git add *)', 'Bash(git push *)']);
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_uncovered', 'git add . && npm i')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+
+    manager.rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(npm *)' });
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_now_covered', 'git add . && npm i')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps deny rules above session-approved coverage', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    seedSessionApprovalRules(manager, ['Bash(git add *)', 'Bash(git push *)']);
+    manager.rules.push({
+      decision: 'deny',
+      scope: 'user',
+      pattern: 'Bash(rm *)',
+      reason: 'rm is blocked',
+    });
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_deny_wins', 'git add . && rm x')),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: 'Tool "Bash" was denied by permission rule. Reason: rm is blocked',
+    });
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('fires ask rules when any segment matches', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.rules.push({ decision: 'ask', scope: 'user', pattern: 'Bash(rm *)' });
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_ask_segment', 'git status && rm x')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes one session rule per segment and replays exact and prefix-matching commands', async () => {
+    const { manager, record, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+      scope: 'session',
+      selectedLabel: 'Approve for this session',
+    }));
+    const compound = 'git add . && git push origin main';
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_compound_1', compound)),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'permission.record_approval_result',
+        sessionApprovalRule: literalRulePattern('Bash', compound),
+        sessionApprovalRules: ['Bash(git add *)', 'Bash(git push *)'],
+      }),
+    );
+    expect(manager.sessionApprovalRulePatterns).toEqual(
+      expect.arrayContaining(['Bash(git add *)', 'Bash(git push *)']),
+    );
+
+    // Exact replay: no second prompt.
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_compound_2', compound)),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+
+    // Prefix variant: each segment is covered by its session rule.
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_compound_3', 'git add src && git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+
+    // Single command covered by one of the stored prefixes.
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_single', 'git push origin main')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps legacy literal single-command session rules working', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    seedSessionApprovalRules(manager, [literalRulePattern('Bash', 'printf hello')]);
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_legacy_literal', 'printf hello')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('lets legacy literal compound session rules lapse into a fresh prompt', async () => {
+    // Documented tradeoff (design §4): pre-F2 escaped whole-string rules
+    // cannot match any single segment, so the user is asked once more and
+    // the new approval stores per-segment rules.
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    seedSessionApprovalRules(manager, [literalRulePattern('Bash', 'git add . && git push')]);
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_legacy_compound', 'git add . && git push')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves pre-F2 whole-string semantics for degraded analyses', async () => {
+    // The degraded form has a single subject (the whole command), so ∃/∀
+    // collapse to the old glob behavior — including its known looseness
+    // (`git *` matching the whole compound string), which the AST form fixes.
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(git *)' });
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_degraded_loose',
+          args: { command: 'git st && rm x', timeout: 60 },
+          execution: degradedLikeExecution('git st && rm x'),
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+
+    // Same rule against the AST form: the uncovered `rm x` segment blocks
+    // the allow and the call falls through to a prompt.
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_ast_strict', 'git st && rm x')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ExecSession Bash rule namespace', () => {
+  async function execSessionExecution(
+    command: string,
+  ): Promise<PermissionPolicyContext['execution']> {
+    const tool = new ExecSessionTool(
+      createFakeKaos(),
+      '/workspace',
+      new ShellSessionManager(createBackgroundManager().manager),
+    );
+    const execution = await tool.resolveExecution({ command });
+    if (!('execute' in execution)) throw new Error('expected a runnable execution');
+    return execution;
+  }
+
+  async function execSessionHookContext(
+    id: string,
+    command: string,
+  ): Promise<PermissionPolicyContext> {
+    return hookContext({
+      id,
+      toolName: 'ExecSession',
+      args: { command },
+      execution: await execSessionExecution(command),
+    });
+  }
+
+  it('matches rules in the Bash namespace via ruleToolName, not the tool call name', async () => {
+    const execution = await execSessionExecution('git push origin main');
+    expect(execution.ruleToolName).toBe('Bash');
+    expect(execution.approvalRule).toBe(literalRulePattern('Bash', 'git push origin main'));
+    expect(execution.approvalRules).toEqual(['Bash(git push *)']);
+
+    // Bash-namespace rules match the ExecSession call…
+    expect(
+      matchPermissionRule({
+        rule: permissionRule('Bash(git push *)'),
+        toolName: 'ExecSession',
+        execution,
+      }),
+    ).toBeDefined();
+    // …while rules written in the tool's own name do not.
+    expect(
+      matchPermissionRule({
+        rule: permissionRule('ExecSession(git push *)'),
+        toolName: 'ExecSession',
+        execution,
+      }),
+    ).toBeUndefined();
+
+    const cover = collectCoveredSubjects({
+      rules: [permissionRule('Bash(git push *)')],
+      toolName: 'ExecSession',
+      execution,
+    });
+    expect(cover?.fullyCovered).toBe(true);
+  });
+
+  it('reuses a session approval across ExecSession and one-shot Bash calls (RFC §3.4)', async () => {
+    const { manager, record, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+      scope: 'session',
+      selectedLabel: 'Approve for this session',
+    }));
+
+    // The first session creation asks; the approval stores Bash-namespace rules.
+    await expect(
+      manager.beforeToolCall(await execSessionHookContext('call_session_1', 'git push origin main')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'permission.record_approval_result',
+        toolName: 'ExecSession',
+        sessionApprovalRule: literalRulePattern('Bash', 'git push origin main'),
+        sessionApprovalRules: ['Bash(git push *)'],
+      }),
+    );
+
+    // Same-prefix session creation is covered without re-asking.
+    await expect(
+      manager.beforeToolCall(
+        await execSessionHookContext('call_session_2', 'git push origin develop'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+
+    // The same grant also covers a one-shot Bash call with the same prefix.
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_bash_covered', 'git push origin develop')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+
+    // A different prefix still asks.
+    await expect(
+      manager.beforeToolCall(await execSessionHookContext('call_session_3', 'git status')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets a user-configured allow Bash(git push *) cover ExecSession creation', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(git push *)' });
+
+    await expect(
+      manager.beforeToolCall(
+        await execSessionHookContext('call_session_allow', 'git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('honors a user-configured deny in the Bash namespace for ExecSession', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.rules.push({
+      decision: 'deny',
+      scope: 'user',
+      pattern: 'Bash(rm *)',
+      reason: 'no rm',
+    });
+
+    await expect(
+      manager.beforeToolCall(await execSessionHookContext('call_session_deny', 'rm -rf x')),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining('no rm'),
+    });
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+});
+
+describe('Git mutation gate policy (C3 P3)', () => {
+  async function execSessionGateContext(
+    id: string,
+    command: string,
+  ): Promise<PermissionPolicyContext> {
+    const tool = new ExecSessionTool(
+      createFakeKaos(),
+      '/workspace',
+      new ShellSessionManager(createBackgroundManager().manager),
+    );
+    const execution = await tool.resolveExecution({ command });
+    if (!('execute' in execution)) throw new Error('expected a runnable execution');
+    return hookContext({ id, toolName: 'ExecSession', args: { command }, execution });
+  }
+
+  function approvalActionOf(requestApproval: ReturnType<typeof vi.fn>): string {
+    const request = requestApproval.mock.calls[0]?.[0] as { action?: unknown } | undefined;
+    return typeof request?.action === 'string' ? request.action : '';
+  }
+
+  it('lets session-approved rules unlock before the gate ever fires', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    seedSessionApprovalRules(manager, ['Bash(git push *)']);
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_gate_session', 'git push origin main')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('approves straight through when configured allow rules union-cover every segment', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.rules.push(
+      { decision: 'allow', scope: 'user', pattern: 'Bash(git add *)' },
+      { decision: 'allow', scope: 'user', pattern: 'Bash(git push *)' },
+    );
+
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_gate_allow_union', 'git add . && git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('stays out of the way in yolo mode', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.mode = 'yolo';
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_gate_yolo', 'git push origin main')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('denies fail-closed without an interactive approval channel', async () => {
+    const { manager } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { approvalRpc: false },
+    );
+
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_gate_headless', 'git push origin main'),
+      ),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining('no interactive approval channel is available'),
+    });
+  });
+
+  it('asks with a graded prompt line per git class', async () => {
+    const cases = [
+      {
+        command: 'git push origin main',
+        text: 'sends shared state to a remote',
+        gitClass: 'shared-remote',
+      },
+      { command: 'git reset --hard HEAD~1', text: 'rewrites git history', gitClass: 'history-write' },
+      { command: 'git commit -m x', text: 'modifies local repository state', gitClass: 'local-write' },
+      { command: 'git -c alias.x=!rm co', text: 'inline git config', gitClass: 'config-injection' },
+      { command: 'git co', text: 'unknown git subcommand', gitClass: 'unknown' },
+    ] as const;
+    for (const { command, text, gitClass } of cases) {
+      const { manager, requestApproval } = makePermissionManager(async () => ({
+        decision: 'approved',
+      }));
+      await expect(
+        manager.beforeToolCall(await compoundHookContext(`call_gate_${gitClass}`, command)),
+      ).resolves.toBeUndefined();
+      expect(requestApproval, command).toHaveBeenCalledTimes(1);
+      expect(approvalActionOf(requestApproval), command).toContain('Git mutation gate');
+      expect(approvalActionOf(requestApproval), command).toContain(text);
+    }
+  });
+
+  it('names the most consequential class when several segments mutate', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_gate_ranked', 'git commit -m x && git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(approvalActionOf(requestApproval)).toContain('sends shared state to a remote');
+  });
+
+  it('catches a sudo-wrapped git mutation via wrapper-stripped classification', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_gate_sudo', 'sudo git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(approvalActionOf(requestApproval)).toContain('sends shared state to a remote');
+  });
+
+  it('gates ExecSession creation exactly like a Bash call', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+
+    await expect(
+      manager.beforeToolCall(
+        await execSessionGateContext('call_gate_exec_session', 'git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(approvalActionOf(requestApproval)).toContain('Git mutation gate');
+  });
+
+  it('does not touch session transport tools (WriteStdin)', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.mode = 'auto';
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_gate_writestdin',
+          toolName: 'WriteStdin',
+          args: { session_id: 'session-1', chars: 'git push origin main\n' },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('ignores read-level git commands', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.mode = 'auto';
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_gate_read', 'git status')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('turns the gate off with git_mutation = "allow"', async () => {
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kimiConfig: { providers: {}, permission: { gitMutation: 'allow' } } },
+    );
+    manager.mode = 'auto';
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_gate_off', 'git push origin main')),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('hard-blocks with git_mutation = "deny" and never offers a prompt', async () => {
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kimiConfig: { providers: {}, permission: { gitMutation: 'deny' } } },
+    );
+
+    await expect(
+      manager.beforeToolCall(await compoundHookContext('call_gate_deny', 'git push origin main')),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining('permission.git_mutation = "deny"'),
+    });
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('still honors configured allow rules under git_mutation = "deny"', async () => {
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kimiConfig: { providers: {}, permission: { gitMutation: 'deny' } } },
+    );
+    manager.rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(git push *)' });
+
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_gate_deny_exempt', 'git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+});
+
+describe('Session approval grants (C3 P5)', () => {
+  it('records grant metadata, defaulting to the tool-approval surface', () => {
+    const { manager } = makePermissionManager(async () => ({ decision: 'approved' }));
+    manager.recordApprovalResult({
+      turnId: 3,
+      toolCallId: 'call_grant',
+      toolName: 'Bash',
+      action: 'run command',
+      sessionApprovalRule: 'Bash(git push *)',
+      result: { decision: 'approved', scope: 'session' },
+    });
+
+    expect(manager.sessionApprovalGrants).toEqual([
+      {
+        pattern: 'Bash(git push *)',
+        toolName: 'Bash',
+        grantedAtTurnId: 3,
+        surface: 'tool-approval',
+      },
+    ]);
+    // The pattern getter derives its keys from the same store.
+    expect(manager.sessionApprovalRulePatterns).toEqual(['Bash(git push *)']);
+  });
+
+  it('marks grants approved through the git mutation gate with its surface', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+      scope: 'session',
+      selectedLabel: 'Approve for this session',
+    }));
+
+    await expect(
+      manager.beforeToolCall(
+        await compoundHookContext('call_gate_grant', 'git add . && git push origin main'),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+
+    // One grant per approved segment, both surfaced to the gate.
+    expect(manager.sessionApprovalGrants).toEqual([
+      {
+        pattern: 'Bash(git add *)',
+        toolName: 'Bash',
+        grantedAtTurnId: 0,
+        surface: 'git-mutation-gate',
+      },
+      {
+        pattern: 'Bash(git push *)',
+        toolName: 'Bash',
+        grantedAtTurnId: 0,
+        surface: 'git-mutation-gate',
+      },
+    ]);
+  });
+
+  it('replays wire records into grants, deriving the surface from the recorded action', () => {
+    const ctx = testAgent();
+    // Pre-P5 record shape: a generic prompt text carries no gate prefix and
+    // falls back to the tool-approval surface.
+    ctx.dispatch({
+      type: 'permission.record_approval_result',
+      turnId: 1,
+      toolCallId: 'call_old',
+      toolName: 'Bash',
+      action: 'run command',
+      sessionApprovalRule: 'Bash(make *)',
+      result: { decision: 'approved', scope: 'session' },
+    });
+    // A gate-approved record is identified by the gate's graded prompt line.
+    ctx.dispatch({
+      type: 'permission.record_approval_result',
+      turnId: 2,
+      toolCallId: 'call_gate_replay',
+      toolName: 'Bash',
+      action:
+        'Git mutation gate: this command sends shared state to a remote — pushed refs ' +
+        'cannot be taken back. Review the command before approving.',
+      sessionApprovalRule: 'Bash(git push *)',
+      result: { decision: 'approved', scope: 'session' },
+    });
+
+    expect(ctx.agent.permission.sessionApprovalGrants).toEqual([
+      { pattern: 'Bash(make *)', toolName: 'Bash', grantedAtTurnId: 1, surface: 'tool-approval' },
+      {
+        pattern: 'Bash(git push *)',
+        toolName: 'Bash',
+        grantedAtTurnId: 2,
+        surface: 'git-mutation-gate',
+      },
+    ]);
+    expect(ctx.agent.permission.sessionApprovalRulePatterns).toEqual([
+      'Bash(make *)',
+      'Bash(git push *)',
+    ]);
+  });
+
+  it('stores no grant for one-shot or rejected approvals', () => {
+    const { manager } = makePermissionManager(async () => ({ decision: 'approved' }));
+    manager.recordApprovalResult({
+      turnId: 0,
+      toolCallId: 'call_once',
+      toolName: 'Bash',
+      action: 'run command',
+      result: { decision: 'approved' },
+    });
+    manager.recordApprovalResult({
+      turnId: 0,
+      toolCallId: 'call_rejected',
+      toolName: 'Bash',
+      action: 'run command',
+      sessionApprovalRule: 'Bash(make *)',
+      result: { decision: 'rejected' },
+    });
+
+    expect(manager.sessionApprovalGrants).toEqual([]);
+    expect(manager.sessionApprovalRulePatterns).toEqual([]);
+  });
+});
+
 function bashCall(): ToolCall {
   return {
     type: 'function',
@@ -3894,28 +4293,27 @@ function makePermissionManager(
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
     readonly swarmModeActive?: boolean;
+    readonly kimiConfig?: Agent['kimiConfig'];
   } = {},
 ): {
   manager: PermissionManager;
   record: ReturnType<typeof vi.fn>;
   requestApproval: ReturnType<typeof vi.fn>;
-  telemetryTrack: ReturnType<typeof vi.fn>;
 } {
   let manager!: PermissionManager;
   const requestApproval = vi.fn(handleApproval);
   const record = vi.fn();
-  const telemetryTrack = vi.fn();
   const agent = {
     type: options.agentType ?? 'main',
     config: { cwd: options.cwd ?? '/workspace' },
     kaos: options.kaos ?? createFakeKaos(),
+    kimiConfig: options.kimiConfig,
     getAdditionalDirs: () => options.additionalDirs ?? [],
     emitStatusUpdated: vi.fn(),
     records: { logRecord: record },
     replayBuilder: { push: vi.fn() },
     rpc: options.approvalRpc === false ? undefined : { requestApproval },
     hooks: options.hooks,
-    telemetry: { track: telemetryTrack },
     planMode: {
       get isActive() {
         return options.planModeActive ?? false;
@@ -3934,7 +4332,7 @@ function makePermissionManager(
   } as unknown as Agent;
   manager = new PermissionManager(agent, options);
   Object.assign(agent, { permission: manager });
-  return { manager, record, requestApproval, telemetryTrack };
+  return { manager, record, requestApproval };
 }
 
 function makePlanPermissionManager(input: {
@@ -3948,7 +4346,6 @@ function makePlanPermissionManager(input: {
   record: ReturnType<typeof vi.fn>;
   requestApproval: ReturnType<typeof vi.fn>;
   exit: ReturnType<typeof vi.fn>;
-  telemetryTrack: ReturnType<typeof vi.fn>;
 } {
   const requestApproval = vi.fn(async () => {
     if (input.approvalError !== undefined) throw input.approvalError;
@@ -3956,7 +4353,6 @@ function makePlanPermissionManager(input: {
   });
   const record = vi.fn();
   const exit = vi.fn();
-  const telemetryTrack = vi.fn();
   const path = input.path ?? '/tmp/plan.md';
   const agent = {
     type: 'main',
@@ -3967,8 +4363,6 @@ function makePlanPermissionManager(input: {
     replayBuilder: { push: vi.fn() },
     rpc: { requestApproval },
     log: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
-    telemetry: { track: telemetryTrack },
-    turn: { traceIdForTurn: () => undefined },
     planMode: {
       get isActive() {
         return true;
@@ -3994,7 +4388,7 @@ function makePlanPermissionManager(input: {
   const manager = new PermissionManager(agent);
   Object.assign(agent, { permission: manager });
   manager.mode = input.mode;
-  return { manager, record, requestApproval, exit, telemetryTrack };
+  return { manager, record, requestApproval, exit };
 }
 
 function hookContext(input: {
@@ -4003,7 +4397,6 @@ function hookContext(input: {
   readonly args?: Record<string, unknown> | undefined;
   readonly execution?: PermissionPolicyContext['execution'] | undefined;
   readonly toolCalls?: readonly ToolCall[] | undefined;
-  readonly traceId?: string | undefined;
 }): PermissionPolicyContext {
   const toolName = input.toolName ?? 'Bash';
   const args = input.args ?? { command: 'printf first', timeout: 60 };
@@ -4016,7 +4409,6 @@ function hookContext(input: {
   return {
     turnId: '0',
     stepNumber: 1,
-    traceId: input.traceId,
     signal: new AbortController().signal,
     llm: {} as PermissionPolicyContext['llm'],
     toolCall,
@@ -4197,3 +4589,666 @@ function testAccesses(toolName: string, args: Record<string, unknown>) {
 function canonicalTestPath(path: string): string {
   return posixPath.isAbsolute(path) ? posixPath.normalize(path) : posixPath.resolve('/workspace', path);
 }
+
+/** Real BashTool execution for `command` — exercises the tree-sitter ruleMatch path end to end. */
+async function bashRuleMatchExecution(
+  command: string,
+): Promise<PermissionPolicyContext['execution']> {
+  const tool = new BashTool(
+    createFakeKaos(),
+    '/workspace',
+    createBackgroundManager().manager,
+    {},
+  );
+  const execution = await tool.resolveExecution({ command, timeout: 60 });
+  if (!('execute' in execution)) throw new Error('expected a runnable execution');
+  return execution;
+}
+
+async function compoundHookContext(id: string, command: string): Promise<PermissionPolicyContext> {
+  return hookContext({
+    id,
+    args: { command, timeout: 60 },
+    execution: await bashRuleMatchExecution(command),
+  });
+}
+
+function seedSessionApprovalRules(
+  manager: PermissionManager,
+  patterns: readonly string[],
+): void {
+  manager.recordApprovalResult({
+    turnId: 0,
+    toolCallId: 'seed',
+    toolName: 'Bash',
+    action: 'run command',
+    sessionApprovalRule: patterns[0],
+    sessionApprovalRules: patterns,
+    result: { decision: 'approved', scope: 'session' },
+  });
+}
+
+/** The degraded analysis form: one subject (the whole command), one literal rule. */
+function degradedLikeExecution(command: string): PermissionPolicyContext['execution'] {
+  return {
+    description: 'run command',
+    approvalRule: literalRulePattern('Bash', command),
+    approvalRules: [literalRulePattern('Bash', command)],
+    matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, command),
+    ruleMatch: {
+      subjects: [command],
+      matches: (ruleArgs, subject) => matchesGlobRuleSubject(ruleArgs, subject),
+    },
+    execute: async () => ({ output: '' }),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Guardian AI approval reviewer (F3) — integration through the       */
+/*  policy chain with the scripted-generate harness.                   */
+/* ------------------------------------------------------------------ */
+
+describe('Guardian review policy', () => {
+  function guardianBashCall(command: string, id = 'call_guardian_bash'): ToolCall {
+    return {
+      type: 'function',
+      id,
+      name: 'Bash',
+      arguments: JSON.stringify({ command, timeout: 60 }),
+    };
+  }
+
+  function wireEvents(ctx: ReturnType<typeof testAgent>, name: string) {
+    return ctx.allEvents.filter(
+      (event) => event.type === '[wire]' && event.event === name,
+    ) as Array<{ readonly args: Record<string, unknown> }>;
+  }
+
+  function guardianReviewCalls(ctx: ReturnType<typeof testAgent>) {
+    return ctx.llmCalls.filter((call) => call.tools.length === 0);
+  }
+
+  function guardianReviewPromptText(ctx: ReturnType<typeof testAgent>): string {
+    const call = guardianReviewCalls(ctx)[0];
+    if (call === undefined) throw new Error('expected a guardian review call');
+    return call.history
+      .map((message) =>
+        message.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n'),
+      )
+      .join('\n');
+  }
+
+  it('approves a reviewed action without writing a session rule (auto mode)', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('guardian-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running it.' }, guardianBashCall('printf hi'));
+    ctx.mockNextResponse({ type: 'text', text: '{"outcome":"allow"}' });
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run the command' }] });
+    await ctx.untilTurnEnd();
+
+    // The reviewer was consulted exactly once, through agent.generate.
+    expect(guardianReviewCalls(ctx)).toHaveLength(1);
+    // The command ran.
+    const results = ctx.allEvents.filter(
+      (event) => event.type === '[rpc]' && event.event === 'tool.result',
+    );
+    expect(JSON.stringify(results)).toContain('guardian-ok');
+    // Wire: assessment logged with the allow outcome; llm.request carries
+    // kind 'guardian' and points at the empty-tools snapshot.
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(1);
+    expect(wireEvents(ctx, 'guardian.assessment')[0]!.args).toMatchObject({
+      toolName: 'Bash',
+      outcome: 'allow',
+      riskLevel: 'low',
+      userAuthorization: 'unknown',
+      model: 'mock-model',
+    });
+    const guardianRequests = wireEvents(ctx, 'llm.request').filter(
+      (event) => event.args['kind'] === 'guardian',
+    );
+    expect(guardianRequests).toHaveLength(1);
+    const emptyToolsSnapshot = wireEvents(ctx, 'llm.tools_snapshot').find(
+      (event) => Array.isArray(event.args['tools']) && event.args['tools'].length === 0,
+    );
+    expect(emptyToolsSnapshot).toBeDefined();
+    expect(guardianRequests[0]!.args['toolsHash']).toBe(emptyToolsSnapshot!.args['hash']);
+    // An AI grant is one-shot: no human approval record, no session rule.
+    expect(wireEvents(ctx, 'permission.record_approval_result')).toHaveLength(0);
+    expect(ctx.agent.permission.sessionApprovalRulePatterns).toEqual([]);
+    // Replay of the wire (guardian records included) has no side effects.
+    await ctx.expectResumeMatches();
+  });
+
+  it('blocks a denied action with rationale and anti-circumvention instructions', async () => {
+    const execWithEnv = vi.fn().mockRejectedValue(new Error('must not run'));
+    const ctx = testAgent({
+      kaos: createFakeKaos({ execWithEnv }),
+      // git_mutation = "allow": the gate is off, so the mutation reaches the
+      // guardian (design doc §5 — the default "ask" would route it to a
+      // human prompt before the review).
+      initialConfig: {
+        providers: {},
+        guardian: { enabled: true },
+        permission: { gitMutation: 'allow' },
+      },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'Pushing.' },
+      guardianBashCall('git push --force'),
+    );
+    ctx.mockNextResponse({
+      type: 'text',
+      text: '{"risk_level":"high","user_authorization":"low","outcome":"deny","rationale":"Force-push could destroy unpushed work."}',
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'Understood, stopping.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'push it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(execWithEnv).not.toHaveBeenCalled();
+    expect(wireEvents(ctx, 'guardian.assessment')[0]!.args).toMatchObject({
+      outcome: 'deny',
+      riskLevel: 'high',
+    });
+    const results = JSON.stringify(
+      ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'tool.result'),
+    );
+    expect(results).toContain('rejected due to unacceptable risk');
+    expect(results).toContain('Force-push could destroy unpushed work.');
+    expect(results).toContain('must not attempt to achieve the same outcome via workaround');
+  });
+
+  it('recovers an assessment wrapped in prose', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('prose-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf prose'));
+    ctx.mockNextResponse({
+      type: 'text',
+      text: 'Thinking out loud here.\n{"outcome":"allow","rationale":"Benign print."}\nDone.',
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'Finished.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(wireEvents(ctx, 'guardian.assessment')[0]!.args).toMatchObject({
+      outcome: 'allow',
+      rationale: 'Benign print.',
+    });
+    expect(wireEvents(ctx, 'guardian.review_failed')).toHaveLength(0);
+  });
+
+  it('falls back to human approval on a malformed review (interactive)', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('human-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf human'));
+    ctx.mockNextResponse({ type: 'text', text: 'I cannot produce JSON today.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+
+    const approval = await ctx.takeApprovalRequest();
+    approval.respond({ decision: 'approved' });
+    await ctx.untilTurnEnd();
+
+    expect(wireEvents(ctx, 'guardian.review_failed')).toHaveLength(1);
+    expect(wireEvents(ctx, 'guardian.review_failed')[0]!.args).toMatchObject({
+      failureKind: 'parse',
+      fallback: 'ask',
+    });
+    // The human decision flows through the normal approval record.
+    expect(wireEvents(ctx, 'permission.record_approval_result')).toHaveLength(1);
+    expect(wireEvents(ctx, 'guardian.circuit_breaker_tripped')).toHaveLength(0);
+  });
+
+  it('falls back to human approval on a review timeout (interactive)', async () => {
+    const scripted = createScriptedGenerate();
+    const ctx = testAgent({
+      kaos: createCommandKaos('timeout-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true, timeoutMs: 25 } },
+      generate: (provider, systemPrompt, tools, history, callbacks, options) => {
+        if (tools.length === 0) {
+          return new Promise((_, reject) => {
+            options?.signal?.addEventListener('abort', () => {
+              reject(new Error('review deadline'));
+            });
+          });
+        }
+        return scripted.generate(provider, systemPrompt, tools, history, callbacks, options);
+      },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    scripted.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf t'));
+    scripted.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+
+    const approval = await ctx.takeApprovalRequest();
+    approval.respond({ decision: 'approved' });
+    await ctx.untilTurnEnd();
+
+    expect(wireEvents(ctx, 'guardian.review_failed')[0]!.args).toMatchObject({
+      failureKind: 'timeout',
+      fallback: 'ask',
+    });
+  });
+
+  it('trips the circuit breaker after three consecutive denials and stops reviewing', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('breaker-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    const deny = (rationale: string) =>
+      ({ type: 'text', text: `{"outcome":"deny","rationale":"${rationale}"}` }) as const;
+    ctx.mockNextResponse({ type: 'text', text: 'one' }, guardianBashCall('rm -rf a', 'c1'));
+    ctx.mockNextResponse(deny('first'));
+    ctx.mockNextResponse({ type: 'text', text: 'two' }, guardianBashCall('rm -rf b', 'c2'));
+    ctx.mockNextResponse(deny('second'));
+    ctx.mockNextResponse({ type: 'text', text: 'three' }, guardianBashCall('rm -rf c', 'c3'));
+    ctx.mockNextResponse(deny('third'));
+    ctx.mockNextResponse({ type: 'text', text: 'four' }, guardianBashCall('printf ok', 'c4'));
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'clean up' }] });
+
+    // The fourth action is not reviewed — the breaker tripped on the third
+    // denial, so it falls back to a human.
+    const approval = await ctx.takeApprovalRequest();
+    approval.respond({ decision: 'approved' });
+    await ctx.untilTurnEnd();
+
+    expect(guardianReviewCalls(ctx)).toHaveLength(3);
+    expect(wireEvents(ctx, 'guardian.circuit_breaker_tripped')).toHaveLength(1);
+    expect(wireEvents(ctx, 'guardian.circuit_breaker_tripped')[0]!.args).toMatchObject({
+      turnId: 0,
+      consecutiveDenials: 3,
+      windowDenials: 3,
+    });
+    const warnings = ctx.allEvents.filter(
+      (event) => event.type === '[rpc]' && event.event === 'warning',
+    );
+    expect(JSON.stringify(warnings)).toContain('guardian-circuit-breaker-tripped');
+  });
+
+  it('never trips the breaker on repeated review failures', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('fail-soft'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    for (let i = 1; i <= 3; i++) {
+      ctx.mockNextResponse(
+        { type: 'text', text: `try ${String(i)}` },
+        guardianBashCall(`printf ${String(i)}`, `f${String(i)}`),
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'garbage, not json' });
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run three' }] });
+
+    // Each failed review falls back to a human; approve all three.
+    for (let i = 0; i < 3; i++) {
+      const approval = await ctx.takeApprovalRequest();
+      approval.respond({ decision: 'approved' });
+    }
+    await ctx.untilTurnEnd();
+
+    expect(guardianReviewCalls(ctx)).toHaveLength(3);
+    expect(wireEvents(ctx, 'guardian.review_failed')).toHaveLength(3);
+    expect(wireEvents(ctx, 'guardian.circuit_breaker_tripped')).toHaveLength(0);
+    expect(
+      ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'warning'),
+    ).toHaveLength(0);
+  });
+
+  it('does nothing when guardian is disabled (regression baseline)', async () => {
+    const ctx = testAgent({ kaos: createCommandKaos('plain-auto') });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf plain'));
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(guardianReviewCalls(ctx)).toHaveLength(0);
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(0);
+    expect(wireEvents(ctx, 'guardian.review_failed')).toHaveLength(0);
+    await ctx.expectResumeMatches();
+  });
+
+  it('does not review in manual mode', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('manual-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf m'));
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+
+    const approval = await ctx.takeApprovalRequest();
+    approval.respond({ decision: 'approved' });
+    await ctx.untilTurnEnd();
+
+    expect(guardianReviewCalls(ctx)).toHaveLength(0);
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(0);
+  });
+
+  it('does not review in yolo mode', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('yolo-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf y'));
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(guardianReviewCalls(ctx)).toHaveLength(0);
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(0);
+  });
+
+  it('passes default-approved read-only tools through without a review', async () => {
+    const ctx = testAgent({
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['TaskList'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'Checking.' },
+      { type: 'function', id: 'call_tasks', name: 'TaskList', arguments: '{}' },
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'list tasks' }] });
+    await ctx.untilTurnEnd();
+
+    expect(guardianReviewCalls(ctx)).toHaveLength(0);
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(0);
+  });
+
+  it('keeps user-configured deny rules ahead of the guardian', async () => {
+    const execWithEnv = vi.fn().mockRejectedValue(new Error('must not run'));
+    const ctx = testAgent({
+      kaos: createFakeKaos({ execWithEnv }),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+      permission: {
+        initialRules: [{ decision: 'deny', scope: 'turn-override', pattern: 'Bash(rm *)' }],
+      },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Deleting.' }, guardianBashCall('rm -rf x'));
+    ctx.mockNextResponse({ type: 'text', text: 'Stopped.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'delete it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(execWithEnv).not.toHaveBeenCalled();
+    expect(guardianReviewCalls(ctx)).toHaveLength(0);
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(0);
+  });
+
+  it('does not re-review a command the human approved for the session', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('session-grant-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    // First call: the review fails → human fallback → approve for session.
+    // Second call (same command): the session grant must short-circuit
+    // before the guardian — no second review, no second prompt.
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf human', 'c1'));
+    ctx.mockNextResponse({ type: 'text', text: 'not json' });
+    ctx.mockNextResponse({ type: 'text', text: 'Again.' }, guardianBashCall('printf human', 'c2'));
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it twice' }] });
+
+    const approval = await ctx.takeApprovalRequest();
+    approval.respond({
+      decision: 'approved',
+      scope: 'session',
+      selectedLabel: 'Approve for this session',
+    });
+    await ctx.untilTurnEnd();
+
+    // Exactly one review (the failed first one) and one approval prompt.
+    expect(guardianReviewCalls(ctx)).toHaveLength(1);
+    expect(wireEvents(ctx, 'guardian.review_failed')).toHaveLength(1);
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(0);
+    expect(wireEvents(ctx, 'permission.record_approval_result')).toHaveLength(1);
+    expect(ctx.agent.permission.sessionApprovalRulePatterns.length).toBeGreaterThan(0);
+    // Both commands ran.
+    const results = JSON.stringify(
+      ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'tool.result'),
+    );
+    expect(results.match(/session-grant-ok/g)).toHaveLength(2);
+  });
+
+  it('still reviews a command the human approved for once only', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('once-only-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    // Same shape as above, but the human approves the fallback for ONCE:
+    // nothing is memorized, so the repeat call goes back to the guardian.
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf once', 'c1'));
+    ctx.mockNextResponse({ type: 'text', text: 'not json' });
+    ctx.mockNextResponse({ type: 'text', text: 'Again.' }, guardianBashCall('printf once', 'c2'));
+    ctx.mockNextResponse({ type: 'text', text: '{"outcome":"allow"}' });
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it twice' }] });
+
+    const approval = await ctx.takeApprovalRequest();
+    approval.respond({ decision: 'approved' });
+    await ctx.untilTurnEnd();
+
+    expect(guardianReviewCalls(ctx)).toHaveLength(2);
+    expect(wireEvents(ctx, 'guardian.review_failed')).toHaveLength(1);
+    expect(wireEvents(ctx, 'guardian.assessment')).toHaveLength(1);
+    expect(ctx.agent.permission.sessionApprovalRulePatterns).toEqual([]);
+    const results = JSON.stringify(
+      ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'tool.result'),
+    );
+    expect(results.match(/once-only-ok/g)).toHaveLength(2);
+  });
+
+  it('sends compound-command segments in the review action JSON (F2)', async () => {
+    const execWithEnv = vi.fn().mockRejectedValue(new Error('must not run'));
+    const ctx = testAgent({
+      kaos: createFakeKaos({ execWithEnv }),
+      // git_mutation = "allow": `git add` is a local-write mutation that the
+      // default gate would intercept before the guardian ever sees it.
+      initialConfig: {
+        providers: {},
+        guardian: { enabled: true },
+        permission: { gitMutation: 'allow' },
+      },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'Committing.' },
+      guardianBashCall('git add . && rm -rf /'),
+    );
+    ctx.mockNextResponse({
+      type: 'text',
+      text: '{"risk_level":"critical","outcome":"deny","rationale":"One segment deletes the filesystem root."}',
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'Stopped.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'commit and clean' }] });
+    await ctx.untilTurnEnd();
+
+    const prompt = guardianReviewPromptText(ctx);
+    expect(prompt).toContain('"segments": [');
+    expect(prompt).toContain('git add .');
+    expect(prompt).toContain('rm -rf /');
+    expect(prompt).toContain('"ast_degraded": false');
+    // The whole call is blocked when the reviewer denies any segment.
+    expect(execWithEnv).not.toHaveBeenCalled();
+    expect(wireEvents(ctx, 'guardian.assessment')[0]!.args).toMatchObject({ outcome: 'deny' });
+  });
+
+  it('marks AST-degraded commands in the review action JSON', async () => {
+    const ctx = testAgent({
+      kaos: createCommandKaos('degraded-ok'),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('((('));
+    ctx.mockNextResponse({ type: 'text', text: '{"outcome":"allow"}' });
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(guardianReviewPromptText(ctx)).toContain('"ast_degraded": true');
+  });
+
+  it('denies fail-closed when a review fails without an approval channel (headless)', async () => {
+    const execWithEnv = vi.fn().mockRejectedValue(new Error('must not run'));
+    const ctx = testAgent({
+      kaos: createFakeKaos({ execWithEnv }),
+      initialConfig: { providers: {}, guardian: { enabled: true } },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+    // Headless: keep event emission, drop the approval channel.
+    const rpc = ctx.agent.rpc as { emitEvent?: unknown } | undefined;
+    (ctx.agent as unknown as { rpc?: unknown }).rpc = { emitEvent: rpc?.emitEvent };
+
+    ctx.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf h'));
+    ctx.mockNextResponse({ type: 'text', text: 'not json either' });
+    ctx.mockNextResponse({ type: 'text', text: 'Understood.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(execWithEnv).not.toHaveBeenCalled();
+    expect(wireEvents(ctx, 'guardian.review_failed')[0]!.args).toMatchObject({
+      failureKind: 'parse',
+      fallback: 'deny',
+    });
+    const results = JSON.stringify(
+      ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'tool.result'),
+    );
+    expect(results).toContain('no interactive approval channel is available');
+    expect(results).not.toContain('rejected due to unacceptable risk');
+  });
+
+  it('uses timeout-specific feedback for a headless review timeout', async () => {
+    const execWithEnv = vi.fn().mockRejectedValue(new Error('must not run'));
+    const scripted = createScriptedGenerate();
+    const ctx = testAgent({
+      kaos: createFakeKaos({ execWithEnv }),
+      initialConfig: { providers: {}, guardian: { enabled: true, timeoutMs: 25 } },
+      generate: (provider, systemPrompt, tools, history, callbacks, options) => {
+        if (tools.length === 0) {
+          return new Promise((_, reject) => {
+            options?.signal?.addEventListener('abort', () => {
+              reject(new Error('review deadline'));
+            });
+          });
+        }
+        return scripted.generate(provider, systemPrompt, tools, history, callbacks, options);
+      },
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+    const rpc = ctx.agent.rpc as { emitEvent?: unknown } | undefined;
+    (ctx.agent as unknown as { rpc?: unknown }).rpc = { emitEvent: rpc?.emitEvent };
+
+    scripted.mockNextResponse({ type: 'text', text: 'Running.' }, guardianBashCall('printf x'));
+    scripted.mockNextResponse({ type: 'text', text: 'Understood.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run it' }] });
+    await ctx.untilTurnEnd();
+
+    expect(execWithEnv).not.toHaveBeenCalled();
+    expect(wireEvents(ctx, 'guardian.review_failed')[0]!.args).toMatchObject({
+      failureKind: 'timeout',
+      fallback: 'deny',
+    });
+    const results = JSON.stringify(
+      ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'tool.result'),
+    );
+    // The timeout copy must not read like an explicit reviewer denial.
+    expect(results).toContain('did not finish before its deadline');
+    expect(results).toContain('Do not assume the action is unsafe based on the timeout alone');
+    expect(results).not.toContain('rejected due to unacceptable risk');
+  });
+
+  it('replays guardian records as UI state only, without re-reviewing', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'guardian.assessment',
+        turnId: 0,
+        toolCallId: 'c1',
+        toolName: 'Bash',
+        outcome: 'deny',
+        riskLevel: 'high',
+        userAuthorization: 'low',
+        rationale: 'Too risky.',
+        model: 'mock-model',
+        durationMs: 12,
+      },
+      {
+        type: 'guardian.review_failed',
+        turnId: 0,
+        toolCallId: 'c2',
+        toolName: 'Bash',
+        failureKind: 'timeout',
+        fallback: 'deny',
+        durationMs: 30_000,
+      },
+      {
+        type: 'guardian.circuit_breaker_tripped',
+        turnId: 0,
+        consecutiveDenials: 3,
+        windowDenials: 3,
+      },
+    ]);
+
+    const replay = await buildReplay(persistence);
+
+    expect(replay).toEqual([
+      expect.objectContaining({
+        type: 'guardian_assessment',
+        record: expect.objectContaining({ outcome: 'deny', rationale: 'Too risky.' }),
+      }),
+    ]);
+  });
+});

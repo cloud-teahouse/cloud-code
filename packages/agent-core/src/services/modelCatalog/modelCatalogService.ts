@@ -1,18 +1,18 @@
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import type { KimiConfig, ModelAlias, ProviderConfig, ProviderType } from '../../config';
+import type { CloudCodeConfig, ModelAlias, ProviderConfig, ProviderType } from '../../config';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
   RefreshOAuthProviderModelsResponse,
   RefreshProviderModelsResponse,
   SetDefaultModelResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 import {
   refreshProviderModels,
   type ManagedKimiOAuthRef,
   type RefreshProviderHost,
   type RefreshResult,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/oauth';
 
 import { createManagedAuthFacade, type ServicesAuthFacade } from '../auth/managedAuth';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
@@ -90,7 +90,7 @@ export class ModelCatalogService
       throw new ModelNotFoundError(modelId);
     }
 
-    const updated = await this.core.rpc.setKimiConfig({ defaultModel: modelId });
+    const updated = await this.core.rpc.setCloudCodeConfig({ defaultModel: modelId });
     const updatedAlias = updated.models?.[modelId] ?? alias;
     return {
       default_model: modelId,
@@ -102,7 +102,7 @@ export class ModelCatalogService
     };
   }
 
-  private _providerTypeOf(config: KimiConfig, alias: ModelAlias): ProviderType | undefined {
+  private _providerTypeOf(config: CloudCodeConfig, alias: ModelAlias): ProviderType | undefined {
     const providerId = alias.provider ?? config.defaultProvider;
     return config.providers[providerId ?? '']?.type;
   }
@@ -155,10 +155,14 @@ export class ModelCatalogService
   private _buildRefreshHost(): RefreshProviderHost {
     return {
       getConfig: () => this._readConfig(),
-      removeProvider: (providerId) => this.core.rpc.removeKimiProvider({ providerId }),
-      setConfig: (patch) => this.core.rpc.setKimiConfig(patch as Record<string, unknown>),
+      removeProvider: (providerId) => this.core.rpc.removeCloudCodeProvider({ providerId }),
+      setConfig: (patch) => this.core.rpc.setCloudCodeConfig(patch as Record<string, unknown>),
       resolveOAuthToken: (providerName, oauthRef) =>
         this._resolveOAuthToken(providerName, oauthRef),
+      resolveOAuthHeaders: async (providerName, oauthRef) => {
+        const tokenProvider = this._authFacade.resolveOAuthTokenProvider(providerName, oauthRef);
+        return tokenProvider?.getAuthHeaders?.();
+      },
       userAgent: this.core.kimiRequestHeaders?.['User-Agent'],
     };
   }
@@ -174,12 +178,12 @@ export class ModelCatalogService
     return tokenProvider.getAccessToken();
   }
 
-  private async _readConfig(): Promise<KimiConfig> {
-    return this.core.rpc.getKimiConfig({ reload: true });
+  private async _readConfig(): Promise<CloudCodeConfig> {
+    return this.core.rpc.getCloudCodeConfig({ reload: true });
   }
 
   private async _provider(
-    config: KimiConfig,
+    config: CloudCodeConfig,
     providerId: string,
     provider: ProviderConfig,
   ): Promise<ProviderCatalogItem> {

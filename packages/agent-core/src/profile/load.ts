@@ -17,10 +17,16 @@ export function loadAgentProfilesFromSources(
   paths: readonly string[],
   sources: Readonly<Record<string, string>>,
 ): Record<string, ResolvedAgentProfile> {
-  const rawProfiles = paths.map((profilePath) =>
+  return resolveAgentProfiles(loadRawAgentProfilesFromSources(paths, sources));
+}
+
+export function loadRawAgentProfilesFromSources(
+  paths: readonly string[],
+  sources: Readonly<Record<string, string>>,
+): RawAgentProfile[] {
+  return paths.map((profilePath) =>
     finalizeRawAgentProfileSource(readRequiredSource(sources, profilePath), profilePath, sources),
   );
-  return resolveAgentProfiles(rawProfiles);
 }
 
 async function loadRawAgentProfiles(paths: readonly string[]): Promise<RawAgentProfile[]> {

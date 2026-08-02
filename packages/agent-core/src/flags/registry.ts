@@ -4,12 +4,12 @@ import type { FlagDefinitionInput } from './types';
  * Experimental feature flags.
  *
  * To add one, append an entry and gate runtime behavior through the scoped
- * resolver available on `KimiCore`, `Session`, or `Agent`:
- *   { id: 'my_feature', title: 'My feature', description: '...', env: 'KIMI_CODE_EXPERIMENTAL_MY_FEATURE', default: false, surface: 'both' }
+ * resolver available on `CloudCodeCore`, `Session`, or `Agent`:
+ *   { id: 'my_feature', title: 'My feature', description: '...', env: 'CLOUD_CODE_EXPERIMENTAL_MY_FEATURE', default: false, surface: 'both' }
  *
  * Keep the `as const satisfies` — it derives the literal `FlagId` union that gives `enabled()`
- * autocomplete and typo-checking. `env` must start with 'KIMI_CODE_EXPERIMENTAL_', be unique, and
- * not equal the master switch 'KIMI_CODE_EXPERIMENTAL_FLAG'; `id` must not be 'flag'.
+ * autocomplete and typo-checking. `env` must start with 'CLOUD_CODE_EXPERIMENTAL_', be unique, and
+ * not equal the master switch 'CLOUD_CODE_EXPERIMENTAL_FLAG'; `id` must not be 'flag'.
  */
 export const FLAG_DEFINITIONS = [
   // Micro compaction has been disabled and removed: the capability cannot be
@@ -19,7 +19,7 @@ export const FLAG_DEFINITIONS = [
   //   id: 'micro_compaction',
   //   title: 'Micro compaction',
   //   description: 'Trim older large tool results from context while keeping recent conversation intact.',
-  //   env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
+  //   env: 'CLOUD_CODE_EXPERIMENTAL_MICRO_COMPACTION',
   //   default: false,
   //   surface: 'core',
   // },
@@ -28,7 +28,7 @@ export const FLAG_DEFINITIONS = [
     title: 'Tool select (progressive tool disclosure)',
     description:
       'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares dynamically loaded tools.',
-    env: 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT',
+    env: 'CLOUD_CODE_EXPERIMENTAL_TOOL_SELECT',
     default: false,
     surface: 'core',
   },
@@ -37,7 +37,7 @@ export const FLAG_DEFINITIONS = [
     title: 'Secondary model for subagents',
     description:
       'Let newly spawned subagents use a separately configured secondary model by default, with an explicit primary-model override for quality-sensitive tasks.',
-    env: 'KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL',
+    env: 'CLOUD_CODE_EXPERIMENTAL_SECONDARY_MODEL',
     default: false,
     surface: 'core',
   },

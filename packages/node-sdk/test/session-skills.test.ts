@@ -1,19 +1,19 @@
 /**
  * Scenario: public SDK skill discovery and activation.
- * Responsibilities: list workspace/session skills and activate a session skill through KimiHarness.
+ * Responsibilities: list workspace/session skills and activate a session skill through CloudCodeHarness.
  * Wiring: the in-process core and filesystem are real; only the remote model provider is stubbed.
  * Run: pnpm exec vitest run packages/node-sdk/test/session-skills.test.ts
  */
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type * as KosongModule from '@moonshot-ai/kosong';
+import type * as KosongModule from '@cloud-code/kosong';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
-  createKimiHarness,
+  createCloudCodeHarness,
   type Event,
-  type KimiError,
+  type CloudCodeError,
   type SkillActivatedEvent,
   type SkillSummary,
 } from '#/index';
@@ -33,7 +33,7 @@ const fakeProviderState = vi.hoisted(() => ({
   responseText: 'skill response',
 }));
 
-vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
+vi.mock('@cloud-code/kosong', async (importOriginal) => {
   const actual = await importOriginal<typeof KosongModule>();
   return {
     ...actual,
@@ -92,7 +92,7 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_list', workDir });
@@ -106,7 +106,7 @@ describe('Session skills', () => {
         source: 'project',
         disableModelInvocation: true,
       });
-      expect(listed?.path.endsWith('/.kimi-code/skills/review/SKILL.md')).toBe(true);
+      expect(listed?.path.endsWith('/.cloud-code/skills/review/SKILL.md')).toBe(true);
       expect(JSON.stringify(skills)).not.toContain('Review the requested file.');
     } finally {
       await harness.close();
@@ -124,7 +124,7 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_activate', workDir });
@@ -179,7 +179,7 @@ describe('Session skills', () => {
       expect(state['isCustomTitle']).toBe(false);
       expect(state['lastPrompt']).toBe('/review src/app.ts');
 
-      const skillDir = normalizeWorkDir(await realpath(join(workDir, '.kimi-code', 'skills', 'review')));
+      const skillDir = normalizeWorkDir(await realpath(join(workDir, '.cloud-code', 'skills', 'review')));
       await expect(
         waitForAgentWireEvent(
           homeDir,
@@ -195,11 +195,11 @@ describe('Session skills', () => {
             text: [
               'User activated the skill "review". Follow the loaded skill instructions.',
               '',
-              `<kimi-skill-loaded name="review" trigger="user-slash" source="project" dir="${skillDir}" args="src/app.ts">`,
+              `<cloud-code-skill-loaded name="review" trigger="user-slash" source="project" dir="${skillDir}" args="src/app.ts">`,
               'Review the requested file.',
               '',
               'ARGUMENTS: src/app.ts',
-              '</kimi-skill-loaded>',
+              '</cloud-code-skill-loaded>',
             ].join('\n'),
           },
         ],
@@ -214,15 +214,15 @@ describe('Session skills', () => {
     }
   });
 
-  it('resolves user brand skills from KIMI_CODE_HOME, not the OS home', async () => {
+  it('resolves user brand skills from CLOUD_CODE_HOME, not the OS home', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const processHome = await makeTempDir(tempDirs, 'kimi-sdk-skills-process-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
     vi.stubEnv('HOME', processHome);
-    vi.stubEnv('KIMI_CODE_HOME', homeDir);
+    vi.stubEnv('CLOUD_CODE_HOME', homeDir);
     await writeLegacyUserSkill(processHome, 'sdk-real-home-only', 'SDK real home skill');
     await writeBrandUserSkill(homeDir, 'sdk-sandbox-only', 'SDK sandbox skill');
-    const harness = createKimiHarness({ identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_env_home', workDir });
@@ -252,22 +252,22 @@ describe('Session skills', () => {
     });
 
     await expect(session.activateSkill('   ')).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'skill.name_empty',
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
     expect(activateSkill).not.toHaveBeenCalled();
 
     await session.close();
     expect(closeSession).toHaveBeenCalledWith({ sessionId: session.id });
     expect(clearSessionHandlers).toHaveBeenCalledWith(session.id);
     await expect(session.listSkills()).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'session.closed',
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
     await expect(session.activateSkill('review')).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'session.closed',
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
   });
 
   it('finalizes local close state when the core close RPC fails', async () => {
@@ -293,9 +293,9 @@ describe('Session skills', () => {
     expect(closeSession).toHaveBeenCalledTimes(1);
     expect(clearSessionHandlers).toHaveBeenCalledWith(session.id);
     await expect(session.listSkills()).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'session.closed',
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
   });
 
   it('exposes public skill event and summary types', () => {
@@ -304,7 +304,7 @@ describe('Session skills', () => {
   });
 });
 
-describe('KimiHarness workspace skills', () => {
+describe('CloudCodeHarness workspace skills', () => {
   it('returns project skills when no session exists', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-work-');
@@ -316,7 +316,7 @@ describe('KimiHarness workspace skills', () => {
       '',
       'Inspect every changed file.',
     ]);
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const skills = await harness.listWorkspaceSkills(workDir);
@@ -334,14 +334,14 @@ describe('KimiHarness workspace skills', () => {
 
   it('preserves the core error when workDir is empty', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-home-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(harness.listWorkspaceSkills('   ')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.work_dir_required',
         message: 'listWorkspaceSkills requires workDir',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -349,14 +349,14 @@ describe('KimiHarness workspace skills', () => {
 
   it('preserves the core error when workDir is not a string', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-home-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(harness.listWorkspaceSkills(null as never)).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.work_dir_required',
         message: 'listWorkspaceSkills requires workDir',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -364,7 +364,7 @@ describe('KimiHarness workspace skills', () => {
 });
 
 async function writeSkill(workDir: string, name: string, lines: readonly string[]): Promise<void> {
-  const dir = join(workDir, '.kimi-code', 'skills', name);
+  const dir = join(workDir, '.cloud-code', 'skills', name);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'SKILL.md'), lines.join('\n'));
 }
@@ -374,7 +374,7 @@ async function writeLegacyUserSkill(
   name: string,
   description: string,
 ): Promise<void> {
-  await writeSkillFile(join(userHomeDir, '.kimi-code', 'skills', name), name, description);
+  await writeSkillFile(join(userHomeDir, '.cloud-code', 'skills', name), name, description);
 }
 
 async function writeBrandUserSkill(

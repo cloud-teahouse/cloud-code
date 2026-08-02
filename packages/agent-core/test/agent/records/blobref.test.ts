@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -186,18 +186,93 @@ describe('blobref', () => {
     expect(url).toBe(dataUri);
   });
 
-  it('replaces missing blobs with placeholder text', async () => {
+  it('degrades missing blobs to a text marker part', async () => {
     const { store } = await makeStore();
+    // Valid-shaped but nonexistent hash: exercises the blob-missing path.
     const record: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: 'blobref:image/png;deadbeef' } }],
+      input: [{ type: 'image_url', imageUrl: { url: `blobref:image/png;${'d'.repeat(64)}` } }],
       origin: { kind: 'user' },
     };
 
     await store.rehydrate(record);
 
-    const url = (record.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
-    expect(url).toBe('[media missing]');
+    // The whole part degrades to text — keeping the media shape with a
+    // placeholder URL would 400 on strict providers every request.
+    expect((record as unknown as { input: unknown[] }).input[0]).toEqual({
+      type: 'text',
+      text: '[media missing]',
+    });
+  });
+
+  it('rejects blobref hashes that could traverse out of the blobs directory', async () => {
+    const { store, blobsDir } = await makeStore();
+    // A secret-shaped file next to the blobs dir: a naive join() would read it
+    // and inline it as a data URI, exfiltrating it into the model context.
+    const parentDir = join(blobsDir, '..');
+    const secretName = `secret-${randomBytes(4).toString('hex')}`;
+    await writeFile(join(parentDir, secretName), 'TOP SECRET');
+    cleanups.push(join(parentDir, secretName));
+
+    const record: AgentRecord = {
+      type: 'turn.prompt',
+      input: [
+        {
+          type: 'image_url',
+          imageUrl: { url: `blobref:image/png;../${secretName}` },
+        },
+      ],
+      origin: { kind: 'user' },
+    } as unknown as AgentRecord;
+
+    await store.rehydrate(record);
+
+    const part = (record as unknown as { input: unknown[] }).input[0];
+    expect(part).toEqual({ type: 'text', text: '[media missing]' });
+  });
+
+  it('rejects malformed hashes without touching the filesystem', async () => {
+    const { store } = await makeStore();
+    const badHashes = [
+      'deadbeef', // too short
+      'A'.repeat(64), // uppercase — the write side only emits lowercase
+      'g'.repeat(64), // not hex
+      `${'a'.repeat(63)}/a`, // 64 chars with a separator
+      `${'a'.repeat(64)};extra`, // trailing garbage
+    ];
+    for (const hash of badHashes) {
+      const record: AgentRecord = {
+        type: 'turn.prompt',
+        input: [{ type: 'image_url', imageUrl: { url: `blobref:image/png;${hash}` } }],
+        origin: { kind: 'user' },
+      } as unknown as AgentRecord;
+
+      await store.rehydrate(record);
+
+      expect((record as unknown as { input: unknown[] }).input[0]).toEqual({
+        type: 'text',
+        text: '[media missing]',
+      });
+    }
+  });
+
+  it('rejects a non-media mime even when the blob file exists', async () => {
+    const { store, blobsDir } = await makeStore();
+    const hash = 'a'.repeat(64);
+    await writeFile(join(blobsDir, hash), Buffer.from('<script>alert(1)</script>'));
+
+    const record: AgentRecord = {
+      type: 'turn.prompt',
+      input: [{ type: 'image_url', imageUrl: { url: `blobref:text/html;${hash}` } }],
+      origin: { kind: 'user' },
+    } as unknown as AgentRecord;
+
+    await store.rehydrate(record);
+
+    expect((record as unknown as { input: unknown[] }).input[0]).toEqual({
+      type: 'text',
+      text: '[media missing]',
+    });
   });
 
   it('deduplicates identical payloads by hash', async () => {
@@ -331,14 +406,17 @@ describe('blobref', () => {
     await store.rehydrate(recordA2);
     expect(firstImageUrl(recordA2)).toBe(`data:image/png;base64,${payloadA}`);
 
-    // B should have been evicted.
+    // B should have been evicted — its part degrades to the text marker.
     const recordB2: AgentRecord = {
       type: 'turn.prompt',
       input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedB) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordB2);
-    expect(firstImageUrl(recordB2)).toBe('[media missing]');
+    expect((recordB2.input as unknown as unknown[])[0]).toEqual({
+      type: 'text',
+      text: '[media missing]',
+    });
 
     // C should still be cached.
     const recordC2: AgentRecord = {
@@ -386,13 +464,16 @@ describe('blobref', () => {
     await store.rehydrate(recordSmall2);
     expect(firstImageUrl(recordSmall2)).toBe(`data:image/png;base64,${small}`);
 
-    // The large blob was never cached, so rehydration fails.
+    // The large blob was never cached, so rehydration degrades it to text.
     const recordLarge2: AgentRecord = {
       type: 'turn.prompt',
       input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedLarge) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordLarge2);
-    expect(firstImageUrl(recordLarge2)).toBe('[media missing]');
+    expect((recordLarge2.input as unknown as unknown[])[0]).toEqual({
+      type: 'text',
+      text: '[media missing]',
+    });
   });
 });

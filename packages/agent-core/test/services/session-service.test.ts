@@ -15,7 +15,7 @@ import {
   type UpdateSessionMetadataPayload,
 } from '../../src';
 import { TestInstantiationService } from '../../src/di/test';
-import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protocol';
+import { emptySessionUsage, type Event, type Session } from '@cloud-code/protocol';
 
 import {
   IApprovalService,
@@ -575,27 +575,6 @@ describe('SessionService.create', () => {
       agent_config: { model: 'moonshot-v1-128k' },
     });
     expect(state.sessions[0]!.metadata?.['cwd']).toBe('/tmp/x');
-  });
-
-  it('passes client telemetry metadata through to core createSession', async () => {
-    await svc.create(
-      { metadata: { cwd: '/tmp/web' } },
-      {
-        client: {
-          id: 'web_test_client',
-          name: 'kimi-code-web',
-          version: '0.1.1',
-          uiMode: 'web',
-        },
-      },
-    );
-
-    expect(state.createPayloads[0]!.client).toEqual({
-      id: 'web_test_client',
-      name: 'kimi-code-web',
-      version: '0.1.1',
-      uiMode: 'web',
-    });
   });
 
   it('rejects when metadata.cwd is absent (daemon route must pre-resolve workspace_id → cwd)', async () => {

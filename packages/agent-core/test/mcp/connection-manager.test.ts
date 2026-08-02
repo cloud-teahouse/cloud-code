@@ -4,7 +4,7 @@
  * Exercises the real connection manager and Session while stdio/HTTP MCP
  * processes provide the external boundary; timeout forwarding tests stub only
  * the MCP SDK client boundary. Run with `pnpm --filter
- * @moonshot-ai/agent-core exec vitest run test/mcp/connection-manager.test.ts`.
+ * @cloud-code/agent-core exec vitest run test/mcp/connection-manager.test.ts`.
  */
 
 import { realpathSync } from 'node:fs';
@@ -15,7 +15,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { testKaos } from '../fixtures/test-kaos';
-import type { ProviderConfig } from '@moonshot-ai/kosong';
+import type { ProviderConfig } from '@cloud-code/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { randomUUID } from 'node:crypto';
@@ -31,7 +31,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { z } from 'zod';
 
-import { KimiError } from '../../src/errors';
+import { CloudCodeError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
 import {
   MCP_STARTUP_TIMEOUT_ENV,
@@ -50,6 +50,7 @@ import { createScriptedGenerate } from '../agent/harness';
 
 const here = import.meta.dirname;
 const stdioFixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
+const instructionsFixture = join(here, 'fixtures', 'instructions-stdio-server.mjs');
 const cwdStdioFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const slowToolStdioFixture = join(here, 'fixtures', 'slow-tool-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
@@ -96,6 +97,25 @@ describe('McpConnectionManager', () => {
         expect(entry.toolCount).toBe(3);
         expect(entry.transport).toBe('stdio');
       }
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('exposes server instructions from the initialize handshake', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({
+        documented: stdioConfig([instructionsFixture]),
+        plain: stdioConfig(),
+      });
+      expect(cm.serverInstructions()).toEqual([
+        { name: 'documented', instructions: 'Always pass dates in ISO 8601 format.' },
+      ]);
+
+      // Removal drops the server's block from the aggregate.
+      await cm.remove('documented');
+      expect(cm.serverInstructions()).toEqual([]);
     } finally {
       await cm.shutdown();
     }
@@ -268,10 +288,10 @@ describe('McpConnectionManager', () => {
     }
   }, 7000);
 
-  it('reconnect throws a coded KimiError when the server name is unknown', async () => {
+  it('reconnect throws a coded CloudCodeError when the server name is unknown', async () => {
     const cm = new McpConnectionManager();
     try {
-      await expect(cm.reconnect('nope')).rejects.toBeInstanceOf(KimiError);
+      await expect(cm.reconnect('nope')).rejects.toBeInstanceOf(CloudCodeError);
       await expect(cm.reconnect('nope')).rejects.toMatchObject({ code: 'mcp.server_not_found' });
     } finally {
       await cm.shutdown();
@@ -286,7 +306,7 @@ describe('McpConnectionManager', () => {
       });
 
       const reconnect = cm.reconnect('off');
-      await expect(reconnect).rejects.toBeInstanceOf(KimiError);
+      await expect(reconnect).rejects.toBeInstanceOf(CloudCodeError);
       await expect(reconnect).rejects.toMatchObject({ code: 'mcp.server_disabled' });
       expect(cm.get('off')).toMatchObject({
         status: 'disabled',
@@ -873,7 +893,7 @@ describe('Session MCP startup', () => {
       id: 'test-mcp-oauth',
       kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
-      kimiHomeDir: kimiHome,
+      cloudCodeHomeDir: kimiHome,
       rpc: sessionRpc(),
     });
 
@@ -896,7 +916,7 @@ describe('Session MCP startup', () => {
       ).resolves.toContain('session-token');
       await expect(
         readFile(
-          join(processHome, '.kimi-code', 'credentials', 'mcp', `${provider.storeKey}-tokens.json`),
+          join(processHome, '.cloud-code', 'credentials', 'mcp', `${provider.storeKey}-tokens.json`),
           'utf-8',
         ),
       ).rejects.toMatchObject({ code: 'ENOENT' });
@@ -995,7 +1015,7 @@ describe('Session MCP startup', () => {
             transport: 'stdio',
             command: process.execPath,
             args: [slowToolStdioFixture],
-            env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
+            env: { CLOUD_CODE_TEST_MCP_TOOL_DELAY_MS: '300' },
           },
         },
       },
@@ -1020,6 +1040,11 @@ describe('Session MCP startup', () => {
       resolveTurnEnded = resolve;
     });
     const scripted = createScriptedGenerate();
+    // The first prompt also fires the session-title side channel (kind:
+    // 'title'), which does not wait for MCP startup by design — it carries no
+    // MCP tools. It takes the first scripted response; the turn's own request
+    // (the one this test gates on) is the second.
+    scripted.mockNextResponse({ type: 'text', text: '{"title": "MCP startup gate"}' });
     scripted.mockNextResponse({ type: 'text', text: 'ready' });
     const session = new Session({
       id: 'test-mcp-turn-ended',
@@ -1065,9 +1090,14 @@ describe('Session MCP startup', () => {
       });
       await sleep(100);
 
+      // Filter out the session-title side-channel call: it intentionally does
+      // not wait for MCP startup, so only turn requests are gated.
+      const turnCalls = () =>
+        scripted.calls.filter((call) => !call.systemPrompt.includes('sentence-case title'));
+
       expect(events.some((event) => event.type === 'turn.started')).toBe(true);
       expect(events.some((event) => event.type === 'turn.step.started')).toBe(false);
-      expect(scripted.calls).toHaveLength(0);
+      expect(turnCalls()).toHaveLength(0);
 
       await Promise.race([
         turnEnded,
@@ -1076,8 +1106,8 @@ describe('Session MCP startup', () => {
         }),
       ]);
 
-      expect(scripted.calls).toHaveLength(1);
-      const toolNames = scripted.calls[0]!.tools.map((tool) => tool.name);
+      expect(turnCalls()).toHaveLength(1);
+      const toolNames = turnCalls()[0]!.tools.map((tool) => tool.name);
       expect(toolNames).toContain('mcp__slow__echo');
     } finally {
       await session.close();
@@ -1133,6 +1163,46 @@ describe('Session MCP startup', () => {
       );
       expect(disconnects.length).toBeGreaterThanOrEqual(1);
       expect(connects.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await session.close();
+      await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  }, 10_000);
+
+  it('injects MCP server instructions into the main system prompt once connected', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-instructions-'));
+    const session = new Session({
+      id: 'test-mcp-instructions',
+      kaos: testKaos.withCwd(tmp),
+      homedir: join(tmp, 'session'),
+      rpc: sessionRpc(),
+      mcpConfig: {
+        servers: {
+          documented: {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [instructionsFixture],
+            startupTimeoutMs: 4_000,
+          },
+        },
+      },
+    });
+
+    try {
+      const main = await session.createMain();
+      // Servers connect asynchronously at startup — after the initial prompt
+      // was rendered — so the instructions section lands via the
+      // connection-change refresh. Poll until it does.
+      let prompt = main.config.systemPrompt;
+      for (let i = 0; i < 100 && !prompt.includes('# MCP Server Instructions'); i++) {
+        await sleep(50);
+        prompt = main.config.systemPrompt;
+      }
+      expect(prompt).toContain('# MCP Server Instructions');
+      expect(prompt).toContain('## documented');
+      expect(prompt).toContain('Always pass dates in ISO 8601 format.');
+      // A1: the session cwd is not a git repository, so no git section.
+      expect(prompt).not.toContain('## Git Status');
     } finally {
       await session.close();
       await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });

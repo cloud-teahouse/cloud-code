@@ -55,10 +55,10 @@ export interface PersistOriginalImageOptions {
 
 /**
  * Fallback store used when a call site has no session context:
- * `<os-tmp>/kimi-code-original-images`.
+ * `<os-tmp>/cloud-code-original-images`.
  */
 export function originalImageCacheDir(): string {
-  return join(tmpdir(), 'kimi-code-original-images');
+  return join(tmpdir(), 'cloud-code-original-images');
 }
 
 /**

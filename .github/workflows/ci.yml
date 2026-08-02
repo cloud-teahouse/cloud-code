@@ -1,135 +1,191 @@
 name: CI
 
 on:
-  pull_request:
   push:
-    branches:
-      - main
+    branches: [dev]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
+# Channel architecture (three channels: dev / beta / release):
+# this file ships in the public snapshot, so binary jobs key off
+# `github.repository` instead of repo-local edits — nothing to toggle during
+# the snapshot export. The public repo (cloud-teahouse/cloud-code) builds
+# beta-channel binaries here and republishes them into the rolling `beta`
+# pre-release on every push to dev. The private repo skips those jobs and
+# builds dev-channel artifacts in dev-ci.yml instead, so each repo builds
+# exactly the channel it ships. Tagged `v*` releases stay in release.yml.
+jobs:
+  build-test-lint:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v6
+      # No `version:` here on purpose — pnpm/action-setup@v4 errors out when the
+      # version is specified both in the workflow and in package.json's
+      # `packageManager` field. `packageManager` is the single source of truth.
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          # Must satisfy the root package.json `engines.node` (>=24.15.0);
+          # `.npmrc` sets engine-strict=true, so a lower version fails install.
+          node-version: 24
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - name: Smoke test CLI bundle
-        run: pnpm -C apps/kimi-code run smoke
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-  test:
-    runs-on: ubuntu-latest
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Lint
+        run: pnpm lint
+
+  # Builds the bun single-file binaries for every supported platform and
+  # uploads them as Actions artifacts. The injected version is `<short8>-beta`
+  # where short8 is the first 8 chars of the commit SHA (e.g. `6c7ebe6a-beta`),
+  # and the injected commit is the full SHA — /update on beta builds compares
+  # it against the rolling beta release's recorded build-commit.
+  bun-binary:
+    needs: build-test-lint
+    # Beta binaries only make sense on the public repo: they feed the rolling
+    # beta pre-release below. The private repo builds dev binaries (dev-ci.yml).
+    if: github.repository == 'cloud-teahouse/cloud-code'
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run test --shard=${{ matrix.shard }}/5
-
-  # pi-tui's suite runs on node:test (not vitest), so the root `pnpm run test`
-  # does not execute it; it needs its own job.
-  test-pi-tui:
+        include:
+          - { target: bun-linux-x64, artifact: cloud-code-linux-x64 }
+          - { target: bun-linux-arm64, artifact: cloud-code-linux-arm64 }
+          - { target: bun-darwin-x64, artifact: cloud-code-darwin-x64 }
+          - { target: bun-darwin-arm64, artifact: cloud-code-darwin-arm64 }
+          - { target: bun-windows-x64, artifact: cloud-code-windows-x64.exe }
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v6
+      # See above: the version comes from package.json `packageManager`.
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: 24
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @moonshot-ai/pi-tui test
+      - uses: oven-sh/setup-bun@v2
 
-  test-windows:
-    runs-on: windows-latest
-    # Temporarily disabled while Windows tests are being stabilized.
-    if: false
+      - name: Compute beta version
+        run: echo "BETA_VERSION=${GITHUB_SHA::8}-beta" >> "$GITHUB_ENV"
 
-    steps:
-      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-      - uses: pnpm/action-setup@v6
+      - name: Build packages
+        run: pnpm build
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      # Windows runners are slower and run the whole suite (including
-      # in-process e2e tests) under more contention, so the default 5s test
-      # timeout causes flaky failures. Give it more headroom.
-      - run: pnpm run test -- --testTimeout=30000
-
-  lint:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run lint
-      - run: pnpm run sherif
-
-  typecheck:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - name: Typecheck
+      - name: Compile single-file binary
         run: |
-          pnpm dlx --package @typescript/native-preview@beta tsgo --version
-          for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json; do
-            echo "Typechecking ${config}"
-            pnpm dlx --package @typescript/native-preview@beta tsgo -p "${config}" --noEmit
+          bun build apps/cloud-code/dist/main.mjs \
+            --compile \
+            --minify \
+            --define __CLOUD_CODE_VERSION__="\"${BETA_VERSION}\"" \
+            --define __CLOUD_CODE_CHANNEL__="\"beta\"" \
+            --define __CLOUD_CODE_COMMIT__="\"${GITHUB_SHA}\"" \
+            --define __CLOUD_CODE_BUILD_TARGET__="\"${{ matrix.target }}\"" \
+            --target=${{ matrix.target }} \
+            --outfile release/${{ matrix.artifact }}
+
+      - name: Smoke check (native target only)
+        if: matrix.target == 'bun-linux-x64'
+        run: |
+          ./release/${{ matrix.artifact }} --version
+          ./release/${{ matrix.artifact }} --version | grep -Fx "$BETA_VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ env.BETA_VERSION }}
+          path: release/${{ matrix.artifact }}
+          retention-days: 14
+
+  # Republishes every beta build into the single rolling `beta` pre-release:
+  # same tag, assets overwritten each push (action-gh-release updates the
+  # existing release for the tag). The notes carry machine-readable
+  # `build-commit:`/`build-version:` lines — beta /update compares the running
+  # binary's injected commit against them since short8s have no semver order.
+  publish-beta:
+    needs: bun-binary
+    if: github.repository == 'cloud-teahouse/cloud-code' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cloud-code-*
+          path: release
+          merge-multiple: true
+
+      # Same layout as tagged releases (see release.yml): raw binaries plus
+      # archives, and a sha256sums.txt that also covers the raw binaries —
+      # /update and the npm postinstall verify downloads against it.
+      - name: Package archives and checksums
+        run: |
+          cd release
+          mkdir -p raw
+          for f in cloud-code-*; do
+            case "$f" in
+              raw) ;;
+              *.exe) zip "${f%.exe}.zip" "$f"; mv "$f" raw/ ;;
+              *.tar.gz|*.zip) ;;
+              *) tar -czf "$f.tar.gz" "$f"; mv "$f" raw/ ;;
+            esac
           done
-      - name: Typecheck VS Code extension
-        run: pnpm --filter kimi-code run typecheck
-      - name: Typecheck kimi-web (vue-tsc)
-        run: pnpm --filter @moonshot-ai/kimi-web run typecheck
-      - name: Typecheck vis-server
-        run: pnpm --filter @moonshot-ai/vis-server run typecheck
-      - name: Typecheck vis-web
-        run: pnpm --filter @moonshot-ai/vis-web run typecheck
+          sha256sum raw/* > sha256sums.txt
+          sha256sum *.tar.gz *.zip >> sha256sums.txt
+          sed -i 's|  raw/|  |' sha256sums.txt
+
+      # The build-commit/build-version lines are the /update contract — the
+      # beta-channel checker parses them out of the release body. Keep the
+      # exact `key: value` shape on their own lines. The static part uses a
+      # quoted heredoc so its backticks stay literal.
+      - name: Generate release notes
+        run: |
+          {
+          echo "build-commit: ${GITHUB_SHA}"
+          echo "build-version: ${GITHUB_SHA::8}-beta"
+          echo
+          cat <<'EOF'
+          Rolling beta build of Cloud Code CLI, rebuilt on every push to `dev`.
+          Install: `curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash -s -- --channel=beta`
+          or npm: `npm install -g @cloud-teahouse/cloudcode-cli@beta`
+
+          滚动 beta 构建，每次推送 `dev` 分支时重建。
+          安装：`curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash -s -- --channel=beta`
+          或 npm：`npm install -g @cloud-teahouse/cloudcode-cli@beta`
+          EOF
+          } > release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: beta
+          name: Cloud Code CLI beta (${{ github.sha }})
+          body_path: release-notes.md
+          prerelease: true
+          make_latest: false
+          files: |
+            release/raw/*
+            release/*.tar.gz
+            release/*.zip
+            release/sha256sums.txt

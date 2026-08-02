@@ -25,13 +25,13 @@ import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
 
 const MANAGED_PREFIX = 'managed:';
-const KIMI_CODE_PLATFORM_ID = 'kimi-code';
-export const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
+const CLOUD_CODE_PLATFORM_ID = 'kimi-code';
+export const DEFAULT_CLOUD_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
 
 export function isManagedKimiCode(providerKey?: string | null): boolean {
   if (!providerKey) return false;
   if (!providerKey.startsWith(MANAGED_PREFIX)) return false;
-  return providerKey.slice(MANAGED_PREFIX.length) === KIMI_CODE_PLATFORM_ID;
+  return providerKey.slice(MANAGED_PREFIX.length) === CLOUD_CODE_PLATFORM_ID;
 }
 
 export function kimiCodeBaseUrl(): string {
@@ -39,7 +39,7 @@ export function kimiCodeBaseUrl(): string {
   // env override here instead of letting a trailing slash leak into the
   // persisted provider entry, where a later normalized rewrite would diff
   // against it and emit a spurious providers-changed event during login.
-  return (process.env['KIMI_CODE_BASE_URL'] ?? DEFAULT_KIMI_CODE_BASE_URL).replace(/\/+$/, '');
+  return (process.env['CLOUD_CODE_BASE_URL'] ?? DEFAULT_CLOUD_CODE_BASE_URL).replace(/\/+$/, '');
 }
 
 export function kimiCodeUsageUrl(): string {
@@ -47,7 +47,7 @@ export function kimiCodeUsageUrl(): string {
 }
 
 /**
- * Strict match against the managed Kimi Code endpoint: both URLs are parsed
+ * Strict match against the managed Cloud Code endpoint: both URLs are parsed
  * and compared by lowercase origin + pathname without trailing slashes.
  * Anything that fails to parse — or differs in host or path, e.g. a proxy,
  * gateway, or self-hosted mirror — is NOT the managed endpoint and must not

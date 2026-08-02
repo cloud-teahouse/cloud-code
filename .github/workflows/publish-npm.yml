@@ -1,0 +1,84 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Publish channel: release (dist-tag latest) or beta (dist-tag beta)"
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - beta
+      tag:
+        description: "Tag to publish (release channel only, e.g. v0.2.1)"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+# Publishes the scoped package @cloud-teahouse/cloudcode-cli
+# (apps/cloud-code). Its postinstall script fetches the platform binary from
+# the matching GitHub Release assets and verifies it against sha256sums.txt
+# (see apps/cloud-code/npm/): a `vX.Y.Z` release for dist-tag latest, the
+# rolling `beta` pre-release for dist-tag beta.
+jobs:
+  publish-release:
+    if: github.event_name == 'release' || inputs.channel == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Publish @cloud-teahouse/cloudcode-cli
+        working-directory: apps/cloud-code
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  # Beta npm builds are manual for now: Actions → "Publish to npm" → channel
+  # `beta`. The version is `0.1.0-beta.<short8>` so beta installs never
+  # collide with tagged releases, and `--tag beta` keeps `latest` untouched.
+  publish-beta:
+    if: github.event_name == 'workflow_dispatch' && inputs.channel == 'beta'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Compute beta version
+        run: echo "BETA_VERSION=0.1.0-beta.${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      - name: Set the beta version on the package
+        working-directory: apps/cloud-code
+        run: npm version "$BETA_VERSION" --no-git-tag-version
+
+      - name: Publish @cloud-teahouse/cloudcode-cli (beta)
+        working-directory: apps/cloud-code
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public --tag beta

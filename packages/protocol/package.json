@@ -1,17 +1,17 @@
 {
-  "name": "@moonshot-ai/protocol",
-  "version": "0.5.0",
+  "name": "@cloud-code/protocol",
+  "version": "0.2.1",
   "private": true,
-  "description": "Shared REST + WS protocol schemas (envelope, error codes, pagination, ws-control) for the kimi-code daemon.",
+  "description": "Shared REST + WS protocol schemas (envelope, error codes, pagination, ws-control) for the Cloud Code CLI daemon.",
   "license": "MIT",
   "author": "Moonshot AI",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
     "directory": "packages/protocol"
   },
   "bugs": {
-    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+    "url": "https://github.com/yspbwx2010/cloud-code/issues"
   },
   "type": "module",
   "imports": {

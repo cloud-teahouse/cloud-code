@@ -12,7 +12,7 @@
 // Compaction is a hot path, so these intentionally drive the real
 // Agent/ContextMemory/FullCompaction machinery through the test harness rather
 // than mocking it.
-import type { ContentPart, Message } from '@moonshot-ai/kosong';
+import type { ContentPart, Message } from '@cloud-code/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { AgentOptions, AgentRecord } from '../../../src/agent';
@@ -22,7 +22,6 @@ import {
   InMemoryAgentRecordPersistence,
 } from '../../../src/agent/records';
 import type { ContextMessage } from '../../../src/agent/context';
-import { FLAG_DEFINITIONS, FlagResolver } from '../../../src/flags';
 import { testAgent, type TestAgentContext } from '../harness/agent';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
@@ -53,15 +52,8 @@ function historyTexts(ctx: TestAgentContext): string[] {
   );
 }
 
-function summaryMessageText(ctx: TestAgentContext): string {
-  const summary = ctx.agent.context.history.find(
-    (message) => message.origin?.kind === 'compaction_summary',
-  );
-  return summary?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
-}
-
 describe('compaction — guard tests', () => {
-  it('repeated compaction folds the prior summary into the new one, never stacking two summaries', async () => {
+  it('pins prior summaries verbatim and summarizes only the new range on repeated compaction', async () => {
     const ctx = testAgent();
     ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
     ctx.appendExchange(1, 'user one', 'assistant one', 40);
@@ -70,18 +62,91 @@ describe('compaction — guard tests', () => {
     await ctx.rpc.beginCompaction({});
     await ctx.once('compaction.completed');
 
+    const afterFirst = ctx.agent.context.history;
+    const pinnedLength =
+      afterFirst.findIndex((message) => message.origin?.kind === 'compaction_summary') + 1;
+
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'user two' }]);
+    ctx.appendExchange(2, 'user three', 'assistant three', 40);
     ctx.mockNextResponse({ type: 'text', text: 'Second summary.' });
     await ctx.rpc.beginCompaction({});
     await ctx.once('compaction.completed');
 
+    // Digest pinning: BOTH summaries survive, verbatim and in order — the
+    // first was carried, not re-summarized.
     const summaries = ctx.agent.context.history.filter(
       (message) => message.origin?.kind === 'compaction_summary',
     );
-    // Exactly one summary survives; the first was re-summarized, not carried.
-    expect(summaries).toHaveLength(1);
-    expect(summaryMessageText(ctx)).toContain('Second summary.');
-    expect(historyTexts(ctx).join('\n')).not.toContain('First summary.');
+    expect(summaries).toHaveLength(2);
+    const texts = historyTexts(ctx).join('\n');
+    expect(texts).toContain('First summary.');
+    expect(texts).toContain('Second summary.');
+
+    // The pinned prefix (everything up to and including the first summary) is
+    // byte-identical to the post-first-compaction history — repeated
+    // compaction no longer re-truncates the prefix.
+    const afterSecond = ctx.agent.context.history;
+    expect(afterSecond.slice(0, pinnedLength)).toEqual([...afterFirst.slice(0, pinnedLength)]);
+
+    // The second summarizer input covers only the new range: the first
+    // summary never enters it, while post-summary messages do.
+    const secondInput = ctx.llmCalls[1]!.history.map((message) =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+    );
+    expect(secondInput.join('\n')).not.toContain('First summary.');
+    expect(secondInput.join('\n')).toContain('user two');
+    expect(secondInput.join('\n')).toContain('user three');
+
+    // The second compaction record reports the pinned prefix it carried.
+    const completedEvents = ctx.allEvents.filter((entry) => entry.event === 'compaction.completed');
+    expect(completedEvents.at(-1)?.args).toEqual({
+      result: expect.objectContaining({ pinnedPrefixCount: pinnedLength }),
+    });
+
+    await ctx.expectResumeMatches();
+  });
+
+  it('records exactly one projection drift across two consecutive full compactions', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({
+      persistence,
+      graduatedCompaction: { pinpointClear: { minContentTokens: 1 } },
+    });
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendToolExchange({ key: 'one' });
+    ctx.appendToolExchange({ key: 'two' });
+
+    // Arm the pinpoint-clear layer BEFORE the first request: with no baseline
+    // shape the first request never reports drift, so the arm itself stays
+    // invisible and only the compaction-side rewrite can show up.
+    ctx.agent.graduatedCompaction.restoreLayerApply({ layer: 'pinpoint_clear', cutoff: 4 });
+
+    ctx.mockNextResponse({ type: 'text', text: 'First summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    ctx.appendExchange(2, 'user two', 'assistant two', 40);
+    ctx.mockNextResponse({ type: 'text', text: 'Second summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const requests = persistence.records.filter((record) => record.type === 'llm.request');
+    expect(requests).toHaveLength(2);
+    expect(requests[0]!.prefixDriftReasons).toBeUndefined();
+    // The first compaction reset the armed graduated layers; the second
+    // summarizer request — the next request after that reset — carries the
+    // one and only projection rewrite of the whole sequence. The pinned
+    // digest itself adds no further drift.
+    expect(requests[1]!.prefixDriftReasons).toEqual(['graduated_rewrite']);
+
+    // And the second summarizer input excludes the first summary (digest
+    // pinning: only the new range is summarized).
+    const secondInput = ctx.llmCalls[1]!.history.map((message) =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+    );
+    expect(secondInput.join('\n')).not.toContain('First summary.');
+
+    await ctx.expectResumeMatches();
   });
 
   it('closes a dangling tool_use in the compaction summary request via synthesizeMissing', async () => {
@@ -350,22 +415,13 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
   });
 
   // PROBE #6 — when the summarizer request overflows, historyForModel is shrunk
-  // to a recent suffix but still projected through MicroCompaction.compact()
-  // with the cutoff computed for the FULL history. The absolute cutoff applied
-  // to the shifted suffix can clear recent tool results the summary needs.
-  // SKIPPED: micro-compaction has been disabled and its flag removed, so this
-  // defect no longer exists.
-  it.skip('does not clear recent tool results when projecting a shrunk suffix under an active micro-compaction cutoff', () => {
-    // This defect only exists when micro-compaction is active, so enable the
-    // flag explicitly rather than inheriting the ambient KIMI_CODE_EXPERIMENTAL
-    // master switch — otherwise the probe's pass/fail flips with the runner's
-    // environment (on locally with the master switch, off in CI by default).
-    const ctx = testAgent({
-      experimentalFlags: new FlagResolver(
-        { KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION: '1' },
-        FLAG_DEFINITIONS,
-      ),
-    });
+  // to a recent suffix. The removed MicroCompaction applied an absolute index
+  // cutoff to the shifted suffix, clearing recent tool results the summary
+  // needed. The graduated chain keys armed eligibility by tool_call id instead
+  // of history index, so a shifted (or sliced) projection cannot pull a recent
+  // result into the armed range.
+  it('does not clear recent tool results when projecting a shrunk suffix under an armed pinpoint-clear', () => {
+    const ctx = testAgent();
     ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
 
     const bigToolOutput = 'TOOL-OUTPUT-CONTENT '.repeat(60); // > minContentTokens(100)
@@ -387,9 +443,10 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
         });
       }
     }
+    for (const message of full) ctx.agent.context.appendMessage(message);
 
-    // Cutoff computed for the full history: keep the recent 10 (indices >= 10).
-    ctx.agent.microCompaction.apply(10);
+    // Arm as the live chain would: keep the recent 10 (indices >= 10).
+    ctx.agent.graduatedCompaction.restoreLayerApply({ layer: 'pinpoint_clear', cutoff: 10 });
 
     // In the full history the tool result is at index 15 (>= cutoff) -> kept.
     const projectedFull = ctx.agent.context.project(full);
@@ -399,8 +456,8 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
     expect(fullToolText).toContain('TOOL-OUTPUT-CONTENT');
 
     // After an overflow shrink drops the oldest 10, the SAME tool result sits at
-    // suffix index 5; the unchanged cutoff(10) now covers it. It must still be
-    // preserved (it is a recent result the summary depends on).
+    // suffix index 5. Eligibility is keyed by tool_call id, not position, so it
+    // is still preserved (it is a recent result the summary depends on).
     const shrunkSuffix = full.slice(10);
     const projectedSuffix = ctx.agent.context.project(shrunkSuffix);
     const suffixToolText = projectedSuffix
@@ -487,8 +544,9 @@ describe('compaction — head/tail user-message retention', () => {
 
     const history = ctx.agent.context.history;
     const texts = historyTexts(ctx);
-    // [FIRST, head slice of MIDDLE, marker, tail slice of MIDDLE, LAST, summary]
-    expect(history).toHaveLength(6);
+    // [FIRST, head slice of MIDDLE, marker, tail slice of MIDDLE, LAST, summary,
+    // behavior-rules reminder (default-on post-compaction re-injection)]
+    expect(history).toHaveLength(7);
     expect(texts[0]).toBe(FIRST);
     expect(/^b+$/.test(texts[1]!)).toBe(true);
     expect(MIDDLE.startsWith(texts[1]!)).toBe(true);
@@ -499,6 +557,7 @@ describe('compaction — head/tail user-message retention', () => {
     expect(MIDDLE.endsWith(texts[3]!)).toBe(true);
     expect(texts[4]).toBe(LAST);
     expect(history[5]!.origin?.kind).toBe('compaction_summary');
+    expect(history[6]!.origin).toEqual({ kind: 'injection', variant: 'behavior_reminders' });
 
     const completedEvent = ctx.allEvents.find((entry) => entry.event === 'compaction.completed');
     expect(completedEvent?.args).toEqual({
@@ -511,6 +570,45 @@ describe('compaction — head/tail user-message retention', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('never elides a [[keep]]-marked user message, even inside the dropped middle', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    const MARKED = `PINNED [[keep]] ${'p'.repeat(8_000)}`; // ~2k tokens, mid-pool
+    for (const text of [FIRST, MARKED, MIDDLE, LAST]) {
+      ctx.agent.context.appendUserMessage([{ type: 'text', text }]);
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'Summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const texts = historyTexts(ctx);
+    // The marked message survives verbatim; the unmarked oversized MIDDLE
+    // still elides around it (head slice + marker + tail slice).
+    expect(texts).toContain(MARKED);
+    expect(texts).toContain(FIRST);
+    expect(texts).toContain(LAST);
+    expect(texts.join('\n')).not.toContain(MIDDLE);
+    expect(
+      ctx.agent.context.history.some(
+        (message) =>
+          message.origin?.kind === 'injection' &&
+          message.origin.variant === COMPACTION_ELISION_VARIANT,
+      ),
+    ).toBe(true);
+    // Order is the original one: FIRST, the pinned message, the head slice of
+    // MIDDLE, the marker, the tail slice, LAST, then the summary.
+    const history = ctx.agent.context.history;
+    expect(texts[0]).toBe(FIRST);
+    expect(texts[1]).toBe(MARKED);
+    expect(/^b+$/.test(texts[2]!)).toBe(true);
+    expect(history[3]!.origin).toEqual({ kind: 'injection', variant: COMPACTION_ELISION_VARIANT });
+    expect(/^b+$/.test(texts[4]!)).toBe(true);
+    expect(texts[5]).toBe(LAST);
+    expect(history[6]!.origin?.kind).toBe('compaction_summary');
+
+    await ctx.expectResumeMatches();
+  });
+
   it('does not stack elision markers or re-summarize them across repeated compactions', async () => {
     const ctx = await compactedOversizedPool();
 
@@ -519,15 +617,30 @@ describe('compaction — head/tail user-message retention', () => {
     await ctx.rpc.beginCompaction({});
     await ctx.once('compaction.completed');
 
+    // The first compaction's marker sits inside the pinned digest prefix —
+    // carried verbatim, never re-summarized — and the small new range needs
+    // no marker of its own, so exactly one marker exists.
     const markers = ctx.agent.context.history.filter(
       (message) =>
         message.origin?.kind === 'injection' && message.origin.variant === COMPACTION_ELISION_VARIANT,
     );
     expect(markers).toHaveLength(1);
+    // Digest pinning: both summaries accumulate verbatim.
     const summaries = ctx.agent.context.history.filter(
       (message) => message.origin?.kind === 'compaction_summary',
     );
-    expect(summaries).toHaveLength(1);
+    expect(summaries).toHaveLength(2);
+    const texts = historyTexts(ctx).join('\n');
+    expect(texts).toContain('Summary.');
+    expect(texts).toContain('Second summary.');
+    // The second summarizer input covered only the new range: no elision
+    // marker and no pinned first summary enters it.
+    const secondInput = ctx.llmCalls[1]!.history.map((message) =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+    );
+    expect(secondInput.join('\n')).not.toContain('were omitted here during compaction');
+    expect(secondInput.join('\n')).not.toContain('The conversation so far has been compacted');
+    expect(secondInput.join('\n')).toContain('d'.repeat(100));
   });
 
   it('keeps everything verbatim (no marker) when the user pool fits the budget', async () => {

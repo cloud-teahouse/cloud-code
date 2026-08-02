@@ -62,11 +62,9 @@ describe('stress: empty stream', () => {
 
 describe('stress: large ToolCall arguments (10KB)', () => {
   it('assembles 10KB arguments from multiple ToolCallPart increments correctly', async () => {
-    // Build a 10KB JSON string
     const largeValue = 'x'.repeat(10 * 1024);
     const fullArgs = JSON.stringify({ data: largeValue });
 
-    // Split into ~100-byte chunks to simulate streaming
     const chunkSize = 100;
     const chunks: string[] = [];
     for (let i = 0; i < fullArgs.length; i += chunkSize) {
@@ -96,7 +94,6 @@ describe('stress: large ToolCall arguments (10KB)', () => {
     expect(result.message.toolCalls[0]!.arguments).toBe(fullArgs);
     expect(result.message.toolCalls[0]!.arguments!.length).toBe(fullArgs.length);
 
-    // Verify the JSON is parseable and correct
     const parsed = JSON.parse(result.message.toolCalls[0]!.arguments!) as {
       data: string;
     };
@@ -125,7 +122,6 @@ describe('stress: concurrent tool dispatch', () => {
     const stream = createMockStream([tc1, tc2, tc3]);
     const provider = createMockProvider(stream);
 
-    // Track completion order
     const completionOrder: string[] = [];
 
     const toolset = new SimpleToolset();
@@ -157,7 +153,6 @@ describe('stress: concurrent tool dispatch', () => {
     expect(toolResults[1]!.returnValue.output).toBe('result-2');
     expect(toolResults[2]!.returnValue.output).toBe('result-3');
 
-    // Verify they actually ran concurrently (call-3 should have finished first)
     expect(completionOrder[0]).toBe('call-3');
     expect(completionOrder[1]).toBe('call-2');
     expect(completionOrder[2]).toBe('call-1');
@@ -230,10 +225,8 @@ describe('stress: tool handler throws exception', () => {
     const toolResults = await result.toolResults();
 
     expect(toolResults).toHaveLength(2);
-    // First tool succeeded
     expect(toolResults[0]!.returnValue.isError).toBe(false);
     expect(toolResults[0]!.returnValue.output).toBe('success');
-    // Second tool errored
     expect(toolResults[1]!.returnValue.isError).toBe(true);
     expect(toolResults[1]!.returnValue.message).toBe('Error running tool: tool explosion');
   });
@@ -247,7 +240,6 @@ describe('stress: mergeInPlace edge cases', () => {
     const merged = mergeInPlace(target, source);
 
     expect(merged).toBe(false);
-    // Target should remain unchanged
     expect(target.think).toBe('done thinking');
     expect(target.encrypted).toBe('sig');
   });
@@ -295,22 +287,17 @@ describe('stress: consecutive different type parts', () => {
     const provider = new MockChatProvider(parts);
     const result = await generate(provider, '', [], []);
 
-    // Verify content parts
     expect(result.message.content).toHaveLength(3);
 
-    // First: merged text "Hello world"
     expect(result.message.content[0]).toEqual({ type: 'text', text: 'Hello world' });
 
-    // Second: merged think "Let me think... more thinking"
     expect(result.message.content[1]).toEqual({
       type: 'think',
       think: 'Let me think... more thinking',
     });
 
-    // Third: "After tool call" text
     expect(result.message.content[2]).toEqual({ type: 'text', text: 'After tool call' });
 
-    // Verify tool calls
     expect(result.message.toolCalls).toHaveLength(1);
     expect(result.message.toolCalls[0]).toEqual({
       type: 'function',

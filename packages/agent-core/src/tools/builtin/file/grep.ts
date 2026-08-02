@@ -17,15 +17,14 @@
  *     backend path class.
  */
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@cloud-code/kaos';
 import { normalize } from 'pathe';
 import { z } from 'zod';
 
-import type { BuiltinTool } from '../../../agent/tool';
+import { TOOL_SNIP_HINT_READ_ONLY, type BuiltinTool } from '../../../agent/tool/types';
 import { isAbortError } from '../../../loop/errors';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import { noopTelemetryClient, type TelemetryClient } from '../../../telemetry';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import type { PathClass } from '../../policies/path-access';
 import { isSensitiveFile } from '../../policies/sensitive';
@@ -162,16 +161,13 @@ const CONTENT_LINE_RE = /^(.*?)([:-])(\d+)\2/;
 
 export class GrepTool implements BuiltinTool<GrepInput> {
   readonly name = 'Grep' as const;
+  readonly snipHint = TOOL_SNIP_HINT_READ_ONLY;
   readonly description = GREP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
-  private readonly telemetry: TelemetryClient;
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
-    telemetry: TelemetryClient = noopTelemetryClient,
-  ) {
-    this.telemetry = telemetry;
-  }
+  ) {}
 
   resolveExecution(args: GrepInput): ToolExecution {
     let path: string | undefined;
@@ -209,17 +205,10 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     try {
       const resolution = await ensureRgPath({ signal });
       rgPath = resolution.path;
-      if (resolution.source !== 'system-path') {
-        this.telemetry.track('grep_tool_rg_fallback', {
-          source: resolution.source,
-          outcome: 'resolved',
-        });
-      }
     } catch (error) {
       if (isAbortError(error)) {
         return { isError: true, output: 'Grep aborted' };
       }
-      this.telemetry.track('grep_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 

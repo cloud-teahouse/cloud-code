@@ -1,4 +1,4 @@
-# @moonshot-ai/kaos
+# @cloudcode/kaos
 
 ## 0.1.6
 

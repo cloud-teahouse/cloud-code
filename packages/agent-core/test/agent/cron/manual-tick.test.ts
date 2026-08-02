@@ -1,5 +1,5 @@
 /**
- * Tests for `agent/cron/manager.ts` P1.8 affordances: the
+ * Tests for `agent/cron/manager.ts` manual-tick affordances: the
  * `KIMI_CRON_MANUAL_TICK=1` env disables the auto-tick interval and,
  * in the same gate, binds SIGUSR1 to a no-throw `tick()` for benches.
  */

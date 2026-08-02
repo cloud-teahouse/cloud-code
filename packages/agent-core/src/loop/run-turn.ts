@@ -6,7 +6,7 @@
  * and final `TurnResult` mapping. One-step execution lives in `turn-step.ts`.
  */
 
-import { addUsage, emptyUsage, type TokenUsage } from '@moonshot-ai/kosong';
+import { addUsage, emptyUsage, type RateLimitSnapshot, type TokenUsage } from '@cloud-code/kosong';
 
 import type { Logger } from '#/logging/types';
 
@@ -19,6 +19,7 @@ import {
 } from './errors';
 import type { LoopInterruptReason, LoopEventDispatcher, LoopTurnInterruptedEvent } from './events';
 import type { LLM, LLMRequestTrace } from './llm';
+import type { ForegroundRetryGate } from './retry';
 import { executeLoopStep } from './turn-step';
 import type {
   ExecutableTool,
@@ -80,10 +81,31 @@ export interface RunTurnInput {
   readonly log?: Logger | undefined;
   readonly maxSteps?: number | undefined;
   readonly maxRetryAttempts?: number;
+  /**
+   * Foreground wait gates for every step of this turn (C1 P2): single-wait /
+   * cumulative caps resolved by the host from `loop_control` config; the loop
+   * applies its own defaults when omitted. A breached gate ends the step with
+   * a RateLimitPauseError (auto-resume on) instead of an in-loop sleep.
+   */
+  readonly foregroundRetryGate?: ForegroundRetryGate | undefined;
   readonly recordStepUsage?:
     | ((usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>)
     | undefined;
   readonly onRequestTrace?: (trace: LLMRequestTrace) => void;
+  /**
+   * Failed-attempt rate-limit snapshot channel: the retry loop fires this
+   * with the `x-codex-*` snapshot attached to a failed attempt's status
+   * error (see LLMChatParams.onRateLimit), keeping the host's quota view
+   * fresh while riding out a 429 backoff. Success-path snapshots keep
+   * arriving via the step response / afterStep hook.
+   */
+  readonly onRateLimit?: ((snapshot: RateLimitSnapshot) => void) | undefined;
+  /**
+   * Streaming tool execution: completed read-only tool calls start executing
+   * while the model is still streaming (visibility stays provider-ordered).
+   * Defaults to enabled; pass `false` for pure batch behavior.
+   */
+  readonly streamingToolExecution?: boolean | undefined;
 }
 
 export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
@@ -103,8 +125,11 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     log,
     maxSteps,
     maxRetryAttempts,
+    foregroundRetryGate,
     recordStepUsage: hostRecordStepUsage,
     onRequestTrace,
+    onRateLimit,
+    streamingToolExecution,
   } = input;
   let usage: TokenUsage = emptyUsage();
   let steps = 0;
@@ -173,8 +198,11 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         log,
         currentStep: steps,
         maxRetryAttempts,
+        foregroundRetryGate,
         recordUsage: recordStepUsage,
         onRequestTrace: captureRequestTrace,
+        onRateLimit,
+        streamingToolExecution,
       });
       activeStep = undefined;
       mediaDegradedActive = mediaDegradedActive || stepResult.mediaDegradedResendUsed === true;
@@ -203,7 +231,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     if (isAbortError(error) || signal.aborted) {
       // A deliberate user cancel travels as the signal's reason (and may be the
       // thrown error itself). Report it distinctly from a timeout or other
-      // programmatic abort so telemetry can tell the two apart.
+      // programmatic abort so observers can tell the two apart.
       const interruptReason =
         isUserCancellation(signal.reason) || isUserCancellation(error) ? 'user_cancelled' : 'aborted';
       dispatchEvent(

@@ -1,4 +1,4 @@
-import { ErrorCodes, KimiError } from '#/errors';
+import { CloudCodeError, ErrorCodes } from '#/errors';
 import type { ResolvedAgentProfile, SessionAgentProfileCatalog } from '../profile';
 
 export function resolveMainAgentProfile(
@@ -12,7 +12,7 @@ export function resolveMainAgentProfile(
     .list()
     .map((candidate) => candidate.name)
     .join(', ');
-  throw new KimiError(
+  throw new CloudCodeError(
     ErrorCodes.AGENT_NOT_FOUND,
     `Agent profile "${profileName}" was not found. Available profiles: ${available}`,
   );

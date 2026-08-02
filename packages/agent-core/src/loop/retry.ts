@@ -1,11 +1,11 @@
 import { sleep } from '@antfu/utils';
 
-import { APIStatusError } from '@moonshot-ai/kosong';
+import { APIStatusError } from '@cloud-code/kosong';
 import type { Logger } from '#/logging/types';
 
 import { abortable } from '../utils/abort';
 import type { LoopEventDispatcher } from './events';
-import { isAbortError } from './errors';
+import { isAbortError, RateLimitPauseError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 
 // Default retry budget per step: 10 attempts (9 retries). With the
@@ -24,6 +24,36 @@ const RETRY_FACTOR = 2;
 // Up to 25% jitter on top of the exponential base to avoid herd retries.
 const JITTER_FACTOR = 0.25;
 
+/**
+ * Foreground wait gates (C1 P2): bounds on how long `chatWithRetry` sleeps
+ * inside the turn loop before the wait is moved out of the session — the
+ * turn ends as a rate-limit pause and a session-level timer retries it
+ * (see RateLimitPauseError). Defaults: a single wait may not exceed 60s
+ * (even when the server's `Retry-After` asks for more — such directives are
+ * no longer honored in-loop), and the accumulated backoff of one step may
+ * not exceed 150s.
+ */
+export const DEFAULT_FOREGROUND_MAX_DELAY_MS = 60_000;
+export const DEFAULT_FOREGROUND_MAX_TOTAL_WAIT_MS = 150_000;
+
+export interface ForegroundRetryGate {
+  /** Single-wait cap in ms (default {@link DEFAULT_FOREGROUND_MAX_DELAY_MS}). */
+  readonly maxDelayMs?: number;
+  /**
+   * Cumulative per-step backoff cap in ms (default
+   * {@link DEFAULT_FOREGROUND_MAX_TOTAL_WAIT_MS}): the sum of waits already
+   * slept for this step plus the upcoming one.
+   */
+  readonly maxTotalWaitMs?: number;
+  /**
+   * Default true: a breached gate throws RateLimitPauseError so the turn
+   * parks and auto-resumes. When false the gates degrade to the near-current
+   * behavior — an over-long server `Retry-After` is clipped to `maxDelayMs`
+   * and the loop keeps retrying within the local attempt budget.
+   */
+  readonly autoResume?: boolean;
+}
+
 export interface ChatWithRetryInput {
   readonly llm: LLM;
   readonly params: LLMChatParams;
@@ -32,6 +62,13 @@ export interface ChatWithRetryInput {
   readonly currentStep: number;
   readonly stepUuid: string;
   readonly maxAttempts?: number;
+  /**
+   * Foreground wait gates for this step (C1 P2). Only FOREGROUND request
+   * sources may call `chatWithRetry` at all (`isForegroundRequestKind`);
+   * background sources fail fast instead. Omitting the gate applies the
+   * defaults (60s single wait / 150s cumulative / auto-resume on).
+   */
+  readonly foregroundGate?: ForegroundRetryGate;
   readonly log?: Logger | undefined;
 }
 
@@ -47,12 +84,15 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
       return response;
     } catch (error) {
       captureAttemptTraceId(input, error);
+      captureAttemptRateLimit(input, error);
       logRequestFailure(input, error, 1, effectiveMaxAttempts);
       throw error;
     }
   }
 
   const delays = retryBackoffDelays(maxAttempts);
+  // Backoff actually slept for this step, feeding the cumulative gate.
+  let totalWaitMs = 0;
 
   for (let attempt = 1; ; attempt += 1) {
     input.params.trace?.reset();
@@ -62,16 +102,20 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
       return response;
     } catch (error) {
       captureAttemptTraceId(input, error);
+      captureAttemptRateLimit(input, error);
       if (attempt >= maxAttempts || !input.llm.isRetryableError(error)) {
         logRequestFailure(input, error, attempt, maxAttempts);
         throw error;
       }
 
       // A server `Retry-After` (carried on the error) overrides the computed
-      // backoff. The chosen delay is what gets reported on the
-      // `step.retrying` event via `delayMs` either way.
+      // backoff. The foreground gates may then clip that wait (auto-resume
+      // off) or refuse it entirely (auto-resume on → RateLimitPauseError);
+      // the delay that survives the gates is what gets reported on the
+      // `step.retrying` event via `delayMs`.
       const delayMs = readRetryAfterMs(error) ?? delays[attempt - 1] ?? 0;
       input.params.signal.throwIfAborted();
+      const delayAfterGates = applyForegroundGates(input, error, delayMs, attempt, totalWaitMs);
       input.dispatchEvent({
         type: 'step.retrying',
         turnId: input.turnId,
@@ -80,12 +124,62 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
         failedAttempt: attempt,
         nextAttempt: attempt + 1,
         maxAttempts,
-        delayMs,
+        delayMs: delayAfterGates,
         ...retryErrorFields(error),
       });
-      await sleepForRetry(delayMs, input.params.signal);
+      await sleepForRetry(delayAfterGates, input.params.signal);
+      totalWaitMs += delayAfterGates;
     }
   }
+}
+
+/**
+ * Pass the chosen wait through the two foreground gates (C1 P2): the
+ * single-wait cap and the cumulative per-step cap. Auto-resume ON (default):
+ * a breach throws RateLimitPauseError so the turn parks and a session-level
+ * timer resumes it after the refused wait. Auto-resume OFF: the single gate
+ * degrades to clipping an over-long server `Retry-After` to the cap and the
+ * loop keeps retrying within the local attempt budget (near-current
+ * behavior).
+ */
+function applyForegroundGates(
+  input: ChatWithRetryInput,
+  error: unknown,
+  delayMs: number,
+  attempt: number,
+  totalWaitMs: number,
+): number {
+  const gate = input.foregroundGate;
+  const maxDelayMs = gate?.maxDelayMs ?? DEFAULT_FOREGROUND_MAX_DELAY_MS;
+  const maxTotalWaitMs = gate?.maxTotalWaitMs ?? DEFAULT_FOREGROUND_MAX_TOTAL_WAIT_MS;
+  const autoResume = gate?.autoResume ?? true;
+
+  const singleBreached = delayMs > maxDelayMs;
+  const cumulativeBreached = totalWaitMs + delayMs > maxTotalWaitMs;
+  if (!singleBreached && !cumulativeBreached) return delayMs;
+
+  if (!autoResume) {
+    // Only the single gate survives with auto-resume off: clip the wait
+    // (a server directive longer than the cap is no longer honored verbatim)
+    // and continue within the local budget.
+    return Math.min(delayMs, maxDelayMs);
+  }
+
+  const statusError = findAPIStatusError(error);
+  input.log?.info('rate limit wait exceeds the foreground budget; pausing for auto-resume', {
+    turnStep: `${input.turnId}.${String(input.currentStep)}`,
+    attempt: `${String(attempt)}/${String(input.maxAttempts ?? DEFAULT_MAX_RETRY_ATTEMPTS)}`,
+    delayMs,
+    totalWaitMs: totalWaitMs + delayMs,
+    gate: singleBreached ? 'single' : 'cumulative',
+  });
+  throw new RateLimitPauseError({
+    resumeAfterMs: delayMs,
+    attempts: attempt,
+    totalWaitMs: totalWaitMs + delayMs,
+    requestId: statusError?.requestId,
+    traceId: statusError?.traceId,
+  });
 }
 
 function logRequestFailure(
@@ -108,7 +202,7 @@ function logRequestFailure(
  * as a successful attempt. A status-error response still carried response
  * headers, so its `x-trace-id` is available on the converted error; writing
  * it here (before the failure propagates to the loop's `turn.interrupted`
- * dispatch) lets turn-level telemetry attribute the turn to the failed
+ * dispatch) lets turn-level diagnostics attribute the turn to the failed
  * request rather than the previous successful one. Mid-stream failures were
  * already captured by the attempt's request trace; failures before any
  * response (network errors, local aborts) keep the attempt-start reset.
@@ -129,6 +223,23 @@ export function findAPIStatusError(error: unknown): APIStatusError | undefined {
     current = (current as { cause?: unknown }).cause;
   }
   return undefined;
+}
+
+/**
+ * Surface a failed attempt's rate-limit snapshot through the same
+ * early-capture channel as the trace id. An error response (a 429 above
+ * all) from the Codex backend still carries the `x-codex-*` quota headers
+ * on the converted status error; forwarding the parsed snapshot per attempt
+ * keeps the host's quota view accurate while the retry loop rides out a
+ * rate-limit window, instead of going stale until the next successful
+ * response. Errors without a snapshot (non-Codex backends, transport
+ * failures) fire nothing, leaving the last known snapshot in place.
+ */
+function captureAttemptRateLimit(input: ChatWithRetryInput, error: unknown): void {
+  const rateLimit = findAPIStatusError(error)?.rateLimit;
+  if (rateLimit !== null && rateLimit !== undefined) {
+    input.params.onRateLimit?.(rateLimit);
+  }
 }
 
 function paramsForAttempt(

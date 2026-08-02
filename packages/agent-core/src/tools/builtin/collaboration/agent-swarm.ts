@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { AgentSwarmResultStructured } from '@cloud-code/protocol';
+
 import type { SwarmMode } from '../../../agent/swarm';
 import type { BuiltinTool } from '../../../agent/tool';
 import {
@@ -10,6 +12,7 @@ import {
 import { stripSubagentModelParameter } from '../../../session/subagent-binding';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import { isUserCancellation } from '../../../utils/abort';
 import { toInputJsonSchema } from '../../support/input-schema';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
@@ -33,10 +36,12 @@ export const AgentSwarmToolInputSchema = z
         'Subagent type used for every new subagent spawned from items; defaults to coder when omitted. Resumed subagents always keep their original type, so passing subagent_type together with resume_agent_ids is allowed — it only affects the item-based spawns.',
       ),
     model: z
-      .enum(['primary', 'secondary'])
+      .string()
+      .trim()
+      .min(1)
       .optional()
       .describe(
-        'Model for every new subagent spawned from items: "secondary" uses the configured secondary model (the default when one is set), "primary" uses the model you are running on. Resumed subagents keep their bound model.',
+        'Optional model for the spawned subagents: a model alias, or "secondary" to use the [secondary_model] config (falls back to your model when unconfigured). Your model is used when omitted. A subagent type whose profile pins a model ignores this parameter.',
       ),
     prompt_template: z
       .string()
@@ -142,12 +147,19 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       this.swarmMode.enter('tool');
       const result = await this.runSwarm(args, context.signal, context.toolCallId);
       return {
-        output: result,
+        output: result.output,
+        structured: result.structured,
       };
     } catch (error) {
       return {
         output: error instanceof Error ? error.message : String(error),
         isError: true,
+        // Clients used to match the whole-output cancellation sentence
+        // ('Aborted by the user'); the kind lets them tell a deliberate user
+        // interruption apart from a fault without parsing English.
+        structured: {
+          errorKind: isUserCancellation(error) ? 'user_cancelled' : 'error',
+        },
       };
     }
   }
@@ -156,8 +168,9 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     args: AgentSwarmToolInput,
     signal: AbortSignal,
     toolCallId: string,
-  ): Promise<string> {
+  ): Promise<{ output: string; structured: AgentSwarmResultStructured }> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
+    const model = normalizeOptionalString(args.model);
     const specs = createAgentSwarmSpecs(args, (agentId) => this.subagentHost.getSwarmItem(agentId));
     const tasks = specs.map((spec): QueuedSubagentTask<AgentSwarmSpec> => {
       const descriptionName = spec.kind === 'resume' ? 'resume' : profileName;
@@ -170,9 +183,9 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         swarmIndex: spec.index,
         runInBackground: false,
         swarmItem: spec.item,
+        model,
         signal,
         timeout: this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
-        modelChoice: args.model,
       };
       if (spec.kind === 'resume') {
         return {
@@ -260,7 +273,10 @@ function childDescription(swarmDescription: string, index: number, profileName: 
   return `${swarmDescription} #${String(index)} (${profileName})`;
 }
 
-function renderSwarmResults(results: readonly SwarmRunResult[]): string {
+function renderSwarmResults(results: readonly SwarmRunResult[]): {
+  output: string;
+  structured: AgentSwarmResultStructured;
+} {
   const completed = results.filter((result) => result.status === 'completed').length;
   const failed = results.filter((result) => result.status === 'failed').length;
   const aborted = results.filter((result) => result.status === 'aborted').length;
@@ -278,6 +294,7 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
     );
   }
 
+  const members: AgentSwarmResultStructured['members'] = [];
   for (const result of results) {
     const agentId = result.agentId === undefined ? '' : ` agent_id="${result.agentId}"`;
     const mode = result.spec.kind === 'resume' ? ' mode="resume"' : '';
@@ -287,10 +304,27 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
     lines.push(
       `<subagent${mode}${agentId}${item}${state} outcome="${result.status}">${body}</subagent>`,
     );
+    // The member text stays in the XML body only — it is the subagent's own
+    // content; the structured envelope carries just the machine facts.
+    const member: {
+      outcome: 'completed' | 'failed' | 'aborted';
+      agentId?: string;
+      item?: string;
+      mode?: 'resume';
+      state?: 'started' | 'not_started';
+    } = { outcome: result.status };
+    if (result.agentId !== undefined) member.agentId = result.agentId;
+    if (result.spec.item !== undefined) member.item = result.spec.item;
+    if (result.spec.kind === 'resume') member.mode = 'resume';
+    if (result.state !== undefined) member.state = result.state;
+    members.push(member);
   }
 
   lines.push('</agent_swarm_result>');
-  return lines.join('\n');
+  return {
+    output: lines.join('\n'),
+    structured: { completed, failed, aborted, members },
+  };
 }
 
 function normalizeOptionalString(value: string | undefined): string | undefined {

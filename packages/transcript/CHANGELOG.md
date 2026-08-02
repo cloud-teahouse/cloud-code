@@ -1,4 +1,4 @@
-# @moonshot-ai/transcript
+# @cloudcode/transcript
 
 ## 0.0.1
 

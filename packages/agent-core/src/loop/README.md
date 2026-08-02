@@ -15,7 +15,10 @@ bridging. Those are host-layer responsibilities.
 - `tool-call.ts` owns the tool-call batch lifecycle. Classification is
   pure; preparation dispatches recorded `tool.call` events in provider
   order; terminal `tool.result` events are recorded in provider order before
-  `step.end` seals the step.
+  `step.end` seals the step. Its `StreamingToolCallRunner` may prepare a
+  call — and start read-only executions — while the provider stream is
+  still open, fed by `onToolCallReady` mid-stream completions; only
+  execution start is advanced, never recorded-event visibility.
 - `tool-scheduler.ts` owns stateful tool execution scheduling:
   tasks with non-conflicting resource accesses may overlap, while conflicting
   tasks are serialized at provider-order boundaries.
@@ -55,3 +58,6 @@ The main regression guards live in `test/loop`:
 - `abort.e2e.test.ts`, `error-paths.e2e.test.ts`, and `events.e2e.test.ts`
   cover abort convergence, error propagation, and live event containment.
 - `streaming.e2e.test.ts` covers provider streaming callback wiring.
+- `streaming-tool-execution.e2e.test.ts` covers mid-stream tool-call
+  preparation/execution: early start, provider-order visibility,
+  non-read-only deferral, abort/interrupt semantics, and the opt-out switch.

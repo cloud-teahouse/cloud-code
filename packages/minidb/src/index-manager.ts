@@ -155,35 +155,35 @@ export class IndexManager {
 
     for (const idx of this.indexes.values()) {
       if (!idx.unique) continue;
-      if (idx.type === 'range') {
-        const owner = new Map<number, string>();
-        for (const [pk, vals] of idx.byPk) {
-          if (touched.has(pk)) continue;
-          for (const v of vals) owner.set(v, pk);
-        }
-        for (const [pk, o] of lastOp) {
-          if (o.op === 'del') continue;
+      // Targeted checks instead of rescanning every index entry: a batch value
+      // collides iff the index holds it for a key this batch does not overwrite
+      // (a key the batch touches yields its old value, so swaps stay valid), or
+      // an earlier op of the same batch claimed it for a different key. The
+      // iteration order (indexes, then lastOp, then flattened field values) and
+      // the thrown (index name, value) are unchanged.
+      const claimed = new Map<string | number, string>();
+      for (const [pk, o] of lastOp) {
+        if (o.op === 'del') continue;
+        if (idx.type === 'range') {
           for (const v of flatten(getField(o.doc, idx.field))) {
             if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-            const prev = owner.get(v);
+            if (idx.list.range({ gte: v, lte: v }).some((n) => n.val !== pk && !touched.has(n.val))) {
+              throw new UniqueViolationError(idx.name, v);
+            }
+            const prev = claimed.get(v);
             if (prev !== undefined && prev !== pk) throw new UniqueViolationError(idx.name, v);
-            owner.set(v, pk);
+            claimed.set(v, pk);
           }
-        }
-      } else {
-        const owner = new Map<string, string>();
-        for (const [sk, set] of idx.map) {
-          for (const pk of set) if (!touched.has(pk)) owner.set(sk, pk);
-        }
-        for (const [pk, o] of lastOp) {
-          if (o.op === 'del') continue;
+        } else {
           const value = getField(o.doc, idx.field);
           if (value === undefined && idx.sparse) continue;
           for (const v of flatten(value)) {
             const sk = scalarKey(v);
-            const prev = owner.get(sk);
+            const set = idx.map.get(sk);
+            if (set) for (const pk2 of set) if (pk2 !== pk && !touched.has(pk2)) throw new UniqueViolationError(idx.name, v);
+            const prev = claimed.get(sk);
             if (prev !== undefined && prev !== pk) throw new UniqueViolationError(idx.name, v);
-            owner.set(sk, pk);
+            claimed.set(sk, pk);
           }
         }
       }

@@ -1,7 +1,7 @@
-import type { Kaos, StatResult } from '@moonshot-ai/kaos';
+import type { Kaos, StatResult } from '@cloud-code/kaos';
 import { z } from 'zod';
 
-import type { BuiltinTool } from '../../../agent/tool';
+import { TOOL_SNIP_HINT_READ_ONLY, type BuiltinTool } from '../../../agent/tool/types';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
@@ -233,6 +233,7 @@ const READ_DESCRIPTION = renderPrompt(readDescriptionTemplate, {
 
 export class ReadTool implements BuiltinTool<ReadInput> {
   readonly name = 'Read' as const;
+  readonly snipHint = TOOL_SNIP_HINT_READ_ONLY;
   readonly description = READ_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(

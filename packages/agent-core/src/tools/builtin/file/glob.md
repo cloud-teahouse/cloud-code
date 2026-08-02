@@ -14,3 +14,5 @@ Results are capped at the first 100 matching paths. If a search would return mor
 
 Large-directory caveat — avoid recursing into dependency / build output even with an anchor, especially when `include_ignored` is set:
 - `node_modules/**/*.js`, `.venv/**/*.py`, `__pycache__/**`, `target/**` can produce thousands of results that truncate at the match cap and waste context. Prefer specific subpaths like `node_modules/react/src/**/*.js`.
+
+For open-ended searches that may require multiple rounds of globbing and grepping, use the Agent tool (for example the explore subagent) instead of running many sequential searches yourself.

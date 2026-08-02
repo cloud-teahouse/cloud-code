@@ -12,6 +12,9 @@ interface HookResult {
   stderr?: string;
   timedOut?: boolean;
   structuredOutput?: boolean;
+  permissionDecision?: 'allow' | 'deny' | 'ask';
+  updatedInput?: Record<string, unknown>;
+  additionalContext?: string;
 }
 
 type RunHook = (
@@ -122,5 +125,60 @@ describe('buildHookSpawnOptions (Windows console-window regression)', () => {
     const options = buildHookSpawnOptions({ cwd: '/repo', env: { FOO: 'bar' } });
     expect(options.cwd).toBe('/repo');
     expect(options.env).toMatchObject({ FOO: 'bar' });
+  });
+});
+
+describe('runHook structured output parsing (hooks 四件套)', () => {
+  it('parses permissionDecision=ask as an allow action carrying the ask decision', async () => {
+    const runHook = await importRunHook();
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'ask',permissionDecisionReason:'needs human eyes'}}))\"";
+    const result = await runHook(cmd, { tool_name: 'Bash' }, { timeout: 5 });
+    expect(result.action).toBe('allow');
+    expect(result.permissionDecision).toBe('ask');
+    expect(result.structuredOutput).toBe(true);
+  });
+
+  it('parses permissionDecision=allow without blocking', async () => {
+    const runHook = await importRunHook();
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'allow'}}))\"";
+    const result = await runHook(cmd, { tool_name: 'Bash' }, { timeout: 5 });
+    expect(result.action).toBe('allow');
+    expect(result.permissionDecision).toBe('allow');
+  });
+
+  it('marks a structured deny with permissionDecision=deny', async () => {
+    const runHook = await importRunHook();
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'deny',permissionDecisionReason:'use rg'}}))\"";
+    const result = await runHook(cmd, { tool_name: 'Bash' }, { timeout: 5 });
+    expect(result.action).toBe('block');
+    expect(result.permissionDecision).toBe('deny');
+    expect(result.reason).toBe('use rg');
+  });
+
+  it('parses updatedInput as a record and ignores non-record values', async () => {
+    const runHook = await importRunHook();
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{updatedInput:{command:'ls -la'}}}))\"";
+    const result = await runHook(cmd, { tool_name: 'Bash' }, { timeout: 5 });
+    expect(result.action).toBe('allow');
+    expect(result.updatedInput).toEqual({ command: 'ls -la' });
+
+    const badCmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{updatedInput:'not-a-record'}}))\"";
+    const bad = await runHook(badCmd, { tool_name: 'Bash' }, { timeout: 5 });
+    expect(bad.action).toBe('allow');
+    expect(bad.updatedInput).toBeUndefined();
+  });
+
+  it('parses additionalContext for PostToolUse-style hooks', async () => {
+    const runHook = await importRunHook();
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'PostToolUse',additionalContext:'tsc failed: 2 errors'}}))\"";
+    const result = await runHook(cmd, { tool_name: 'Bash' }, { timeout: 5 });
+    expect(result.action).toBe('allow');
+    expect(result.additionalContext).toBe('tsc failed: 2 errors');
   });
 });

@@ -4,11 +4,14 @@
  * cron cadence (`recurring: true`, the default).
  *
  * Tasks live in `SessionCronStore` and are mirrored to
- * `<sessionDir>/cron/<id>.json` via `CronManager.addTask`, so resuming
- * the same session reloads them and the scheduler
+ * `<sessionDir>/cron/<id>.json` via `CronManager.addTask`, so a
+ * `cloud-code resume` of the same session reloads them and the scheduler
  * picks up where it left off (fires that fell during downtime are
- * collapsed into a single delivery with `coalescedCount`). Tasks do
- * NOT carry over into a brand-new session.
+ * collapsed into a single delivery with `coalescedCount`). Session
+ * tasks do NOT carry over into a brand-new session — `durable: true`
+ * tasks do: they are written to `<project>/.cloud-code/scheduled_tasks.json`
+ * instead and are shared by every session in the project (see the
+ * `durable` parameter and the tool description).
  *
  * The tool itself is pure validation + bookkeeping; the firing /
  * coalesce / jitter logic lives in `CronScheduler` (one layer below)
@@ -18,9 +21,7 @@
  *      session cap, byte-length cap);
  *   2. add it to the manager (which writes through to disk on success);
  *   3. report back the post-jitter `nextFireAt` and a human-readable
- *      schedule for the model's benefit;
- *   4. emit `cron_scheduled` telemetry through the manager (the tool
- *      does **not** reach into `manager.agent.telemetry` directly).
+ *      schedule for the model's benefit.
  */
 
 import { z } from 'zod';
@@ -28,6 +29,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../agent/tool';
 import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
+import type { ToolResultDisplayRef } from '../display';
 import { toInputJsonSchema } from '../support/input-schema';
 import { literalRulePattern } from '../support/rule-match';
 import {
@@ -97,9 +99,16 @@ export const CronCreateInputSchema = z.object({
     .describe(
       'true (default) = fire on every cron match until deleted or auto-expired after 7 days. false = fire once at the next match, then auto-delete. Use false for "remind me at X" one-shot requests with pinned minute/hour/dom/month.',
     ),
+  durable: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      'false (default) = session-scoped: restored only by `cloud-code resume` of THIS session, gone in a new session. true = project-durable: written to <project>/.cloud-code/scheduled_tasks.json and shared by every session in this project, so the task survives new sessions and fires even after this session exits. Use true only when the user explicitly wants the schedule to outlive the current session (e.g. "every morning from now on", "keep checking even if I close this").',
+    ),
 });
 
-export type CronCreateInput = z.Infer<typeof CronCreateInputSchema>;
+export type CronCreateInput = z.input<typeof CronCreateInputSchema>;
 
 // ── Output shape (internal) ─────────────────────────────────────────
 
@@ -108,6 +117,8 @@ interface CronCreateOutput {
   readonly cron: string;
   readonly humanSchedule: string;
   readonly recurring: boolean;
+  readonly durable: boolean;
+  readonly projectFile: string | undefined;
   readonly nextFireAt: number | null;
 }
 
@@ -130,6 +141,20 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       return {
         isError: true,
         output: 'Cron scheduling is disabled (KIMI_DISABLE_CRON=1).',
+      };
+    }
+
+    // 1.5. Durable availability. Project-durable tasks need a local
+    // project workspace (the cross-session lock's PID liveness is a
+    // same-machine concept); on SSH-remote or ephemeral sessions the
+    // manager disables the project layer entirely. Reject here rather
+    // than silently downgrading to session scope — the user asked for
+    // persistence and should hear that it's unavailable.
+    if (args.durable === true && !this.manager.projectCronAvailable) {
+      return {
+        isError: true,
+        output:
+          'durable: true is unavailable in this session (project-durable cron requires a local project workspace). Omit `durable` to schedule a session-scoped task instead.',
       };
     }
 
@@ -203,8 +228,9 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     // `recurring` is defaulted to true upstream; we re-derive the
     // boolean (rather than trusting the post-default arg) to match the
     // canonical "recurring iff not explicitly false" convention used
-    // everywhere else in the cron stack.
+    // everywhere else in the cron stack. Same for `durable`.
     const recurring = args.recurring !== false;
+    const durable = args.durable === true;
 
     // 7. One-shot "rolled to next year" guard. The tool docs recommend
     //    pinning today's dom/month for "remind me at X today"; if
@@ -248,6 +274,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
           cron: normalizedCron,
           prompt: args.prompt,
           recurring,
+          durable,
         }),
       ),
       execute: async () => {
@@ -275,6 +302,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
           cron: normalizedCron,
           prompt: args.prompt,
           recurring,
+          durable,
         });
 
         // Post-jitter next-fire for the response. `computeNextCronRun`
@@ -291,16 +319,13 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
 
         const humanSchedule = cronToHuman(parsed);
 
-        // Telemetry goes through the manager so the tool stays out of
-        // `manager.agent.telemetry`. CronDelete (P1.6) will use the
-        // symmetric `emitDeleted`.
-        this.manager.emitScheduled(task);
-
         const output: CronCreateOutput = {
           id: task.id,
           cron: normalizedCron,
           humanSchedule,
           recurring,
+          durable,
+          projectFile: durable ? this.manager.projectCronTasksPath : undefined,
           nextFireAt,
         };
 
@@ -308,10 +333,34 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
           output: formatOutput(output),
           isError: false,
           message: `Scheduled cron ${task.id}`,
+          display: createdDisplay(output),
         };
       },
     };
   }
+}
+
+/**
+ * Localization pointer for the user-facing rendering of a successful create.
+ * `humanSchedule` is deliberately not a param: it is English prose for the
+ * model (cronToHuman), so the keyed rendering shows the locale-neutral cron
+ * expression plus the next-fire timestamp instead.
+ */
+function createdDisplay(o: CronCreateOutput): ToolResultDisplayRef {
+  const params: Record<string, string | number> = {
+    id: o.id,
+    cron: o.cron,
+    nextFireAt: o.nextFireAt === null ? 'null' : formatLocalIsoWithOffset(o.nextFireAt),
+  };
+  if (o.projectFile !== undefined) params['projectFile'] = o.projectFile;
+  const key = o.recurring
+    ? o.durable
+      ? 'toolResult.cron.createdRecurringProject'
+      : 'toolResult.cron.createdRecurring'
+    : o.durable
+      ? 'toolResult.cron.createdOnceProject'
+      : 'toolResult.cron.createdOnce';
+  return { key, params };
 }
 
 function formatOutput(o: CronCreateOutput): string {
@@ -320,9 +369,15 @@ function formatOutput(o: CronCreateOutput): string {
     `cron: ${o.cron}`,
     `humanSchedule: ${o.humanSchedule}`,
     `recurring: ${String(o.recurring)}`,
+    `durable: ${String(o.durable)}`,
+  ];
+  if (o.projectFile !== undefined) {
+    lines.push(`projectFile: ${o.projectFile}`);
+  }
+  lines.push(
     `nextFireAt: ${
       o.nextFireAt === null ? 'null' : formatLocalIsoWithOffset(o.nextFireAt)
     }`,
-  ];
+  );
   return lines.join('\n');
 }

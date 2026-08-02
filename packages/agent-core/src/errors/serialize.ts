@@ -2,62 +2,64 @@ import {
   APIConnectionError,
   APIEmptyResponseError,
   APIProviderQuotaExhaustedError,
+  APIQuotaExceededError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 
-import { KimiError } from './classes';
-import { ErrorCodes, KIMI_ERROR_INFO, type KimiErrorCode } from './codes';
+import { CloudCodeError } from './classes';
+import { ErrorCodes, CLOUD_CODE_ERROR_INFO, type CloudCodeErrorCode } from './codes';
 
 /**
  * Wire-safe payload of a Kimi error.
  *
  * The structure passed across process / language boundaries (RPC, events,
- * telemetry, SDK wrappers). Class identity does not survive the boundary;
+ * SDK wrappers). Class identity does not survive the boundary;
  * downstream code must branch on `code` rather than `instanceof`.
  *
  * `details` is JSON-serialized. `cause` is intentionally absent -- it is
  * local-only diagnostic state and must not cross the boundary.
  */
-export interface KimiErrorPayload {
-  readonly code: KimiErrorCode;
+export interface CloudCodeErrorPayload {
+  readonly code: CloudCodeErrorCode;
   readonly message: string;
   readonly name?: string;
   readonly details?: Record<string, unknown>;
   readonly retryable: boolean;
 }
 
-/** Type guard for KimiError. */
-export function isKimiError(error: unknown): error is KimiError {
-  return error instanceof KimiError;
+/** Type guard for CloudCodeError. */
+export function isCloudCodeError(error: unknown): error is CloudCodeError {
+  return error instanceof CloudCodeError;
 }
 
 /**
- * Build a KimiErrorPayload directly from a code + message (no Error instance
+ * Build a CloudCodeErrorPayload directly from a code + message (no Error instance
  * needed). Use this for synthetic error events that are signaled, not thrown
  * -- e.g. "turn busy" or "compaction failed". `retryable` is filled from
- * KIMI_ERROR_INFO so callers cannot drift out of sync with the registry.
+ * CLOUD_CODE_ERROR_INFO so callers cannot drift out of sync with the registry.
  */
 export function makeErrorPayload(
-  code: KimiErrorCode,
+  code: CloudCodeErrorCode,
   message: string,
   options?: { readonly details?: Record<string, unknown>; readonly name?: string },
-): KimiErrorPayload {
+): CloudCodeErrorPayload {
   return {
     code,
     message,
     name: options?.name,
     details: options?.details,
-    retryable: KIMI_ERROR_INFO[code].retryable,
+    retryable: CLOUD_CODE_ERROR_INFO[code].retryable,
   };
 }
 
 /**
- * Normalize any value into a KimiErrorPayload.
+ * Normalize any value into a CloudCodeErrorPayload.
  *
  * Recognized errors:
- * - `KimiError`: passthrough.
+ * - `CloudCodeError`: passthrough.
+ * - `APIQuotaExceededError`: quota_exhausted (terminal plan-quota 429).
  * - `APIStatusError`: 429 -> rate_limit, 401 -> auth_error, otherwise -> api_error.
  *   Exception: a quota-exhausted 429 maps to api_error (retryable: false) —
  *   the rate_limit code would re-mint a rate-limit error across the wire
@@ -69,19 +71,40 @@ export function makeErrorPayload(
  * Anything else collapses to `internal`. We never echo `cause` or stack on
  * the wire.
  */
-export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
-  if (isKimiError(error)) {
+export function toCloudCodeErrorPayload(error: unknown): CloudCodeErrorPayload {
+  if (isCloudCodeError(error)) {
     return {
       code: error.code,
       message: error.message,
       name: error.name,
       details: error.details,
-      retryable: KIMI_ERROR_INFO[error.code].retryable,
+      retryable: CLOUD_CODE_ERROR_INFO[error.code].retryable,
+    };
+  }
+
+  if (error instanceof APIQuotaExceededError) {
+    // Quota exhaustion is terminal (retryable: false) and carries the plan,
+    // reset time, and exhausted window as structured details so presenters
+    // (TUI guidance, SDK wrappers) can render them without re-parsing the
+    // message. Checked ahead of the generic APIStatusError branch, which
+    // would map its inherited 429 to the transient provider.rate_limit.
+    return {
+      code: ErrorCodes.PROVIDER_QUOTA_EXHAUSTED,
+      message: sanitizeStatusErrorMessage(error.message),
+      name: error.name,
+      details: {
+        statusCode: error.statusCode,
+        requestId: error.requestId,
+        planType: error.planType,
+        resetsAtMs: error.resetsAtMs,
+        quotaWindow: error.quotaWindow,
+      },
+      retryable: CLOUD_CODE_ERROR_INFO[ErrorCodes.PROVIDER_QUOTA_EXHAUSTED].retryable,
     };
   }
 
   if (error instanceof APIStatusError) {
-    const code: KimiErrorCode =
+    const code: CloudCodeErrorCode =
       error instanceof APIProviderQuotaExhaustedError
         ? ErrorCodes.PROVIDER_API_ERROR
         : error.statusCode === 429
@@ -96,8 +119,9 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       details: {
         statusCode: error.statusCode,
         requestId: error.requestId,
+        ...rateLimitPauseDetails(error),
       },
-      retryable: KIMI_ERROR_INFO[code].retryable,
+      retryable: CLOUD_CODE_ERROR_INFO[code].retryable,
     };
   }
 
@@ -106,7 +130,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
       message: error.message,
       name: error.name,
-      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_CONNECTION_ERROR].retryable,
+      retryable: CLOUD_CODE_ERROR_INFO[ErrorCodes.PROVIDER_CONNECTION_ERROR].retryable,
     };
   }
 
@@ -123,7 +147,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
         finishReason: error.finishReason,
         rawFinishReason: error.rawFinishReason,
       },
-      retryable: KIMI_ERROR_INFO[code].retryable,
+      retryable: CLOUD_CODE_ERROR_INFO[code].retryable,
     };
   }
 
@@ -132,7 +156,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       code: ErrorCodes.PROVIDER_API_ERROR,
       message: error.message,
       name: error.name,
-      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_API_ERROR].retryable,
+      retryable: CLOUD_CODE_ERROR_INFO[ErrorCodes.PROVIDER_API_ERROR].retryable,
     };
   }
 
@@ -141,14 +165,14 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       code: ErrorCodes.INTERNAL,
       message: error.message,
       name: error.name,
-      retryable: KIMI_ERROR_INFO[ErrorCodes.INTERNAL].retryable,
+      retryable: CLOUD_CODE_ERROR_INFO[ErrorCodes.INTERNAL].retryable,
     };
   }
 
   return {
     code: ErrorCodes.INTERNAL,
     message: String(error),
-    retryable: KIMI_ERROR_INFO[ErrorCodes.INTERNAL].retryable,
+    retryable: CLOUD_CODE_ERROR_INFO[ErrorCodes.INTERNAL].retryable,
   };
 }
 
@@ -169,12 +193,25 @@ function sanitizeStatusErrorMessage(message: string): string {
 }
 
 /**
- * Rehydrate a KimiErrorPayload into a KimiError. Used by SDK boundary code
+ * RateLimitPauseError (loop/errors.ts, C1 P2) extras for the wire payload,
+ * read structurally so this module stays free of a loop import cycle: the
+ * pause's resume delay and auto-resume marker let consumers (TUI countdown,
+ * SDK wrappers) present the pause without class identity. Ordinary 429s
+ * carry neither field and keep the plain statusCode/requestId details.
+ */
+function rateLimitPauseDetails(error: APIStatusError): Record<string, unknown> {
+  const carrier = error as { resumeAfterMs?: unknown; autoResume?: unknown };
+  if (typeof carrier.resumeAfterMs !== 'number' || carrier.autoResume !== true) return {};
+  return { resumeAfterMs: carrier.resumeAfterMs, autoResume: true };
+}
+
+/**
+ * Rehydrate a CloudCodeErrorPayload into a CloudCodeError. Used by SDK boundary code
  * receiving errors over RPC to re-surface them with a real class so
  * in-process consumers can still use `instanceof`.
  */
-export function fromKimiErrorPayload(payload: KimiErrorPayload): KimiError {
-  return new KimiError(payload.code, payload.message, {
+export function fromCloudCodeErrorPayload(payload: CloudCodeErrorPayload): CloudCodeError {
+  return new CloudCodeError(payload.code, payload.message, {
     details: payload.details,
   });
 }

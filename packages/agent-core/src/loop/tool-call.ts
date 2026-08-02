@@ -11,9 +11,14 @@
  *
  * These phases are coupled by transcript ordering and abort handling, so they
  * should be reviewed together.
+ *
+ * Streaming tool execution (StreamingToolCallRunner) may run the validation,
+ * hook, and read-only execution phases for a call while the provider stream
+ * is still open. Only execution start is advanced: every recorded event stays
+ * on the post-stream, provider-order drain described above.
  */
 
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
 import type { Logger } from '#/logging/types';
 import {
@@ -26,11 +31,17 @@ import { PathSecurityError } from '../tools/policies/path-access';
 
 import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
-import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
+import type {
+  LoopEvent,
+  LoopEventDispatcher,
+  LoopToolCallEvent,
+  LoopToolProgressEvent,
+} from './events';
 import { parseToolCallArguments } from './tool-args-parse';
 import type { LLM, LLMChatResponse, LLMRequestTrace } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
+import type { ToolResultDisplayRef, ToolResultStructured } from '../tools/display';
 import type {
   AuthorizeToolExecutionResult,
   ExecutableTool,
@@ -135,27 +146,100 @@ export interface ToolCallBatchResult {
   readonly stopTurn: boolean;
 }
 
+/**
+ * Give every tool call in one provider response a unique id, deterministically.
+ *
+ * The loop — and everything downstream of it (transcript uuids, host dedup
+ * registrations, pending-result tracking in history) — assumes per-response id
+ * uniqueness, but kosong deliberately passes duplicate ids from lax providers
+ * through verbatim. A repeated id is fatal twice over: host same-step dedup
+ * mistakes the original call's finalization for its duplicate's and awaits a
+ * deferred only its own finalization could resolve (an ESC-proof deadlock),
+ * and history recording silently drops the second same-id `tool.result`.
+ *
+ * Renaming the Nth occurrence of an id to `<id>_N` at the batch entry fixes
+ * both: the loop-recorded `tool.call` id doubles as the tool_use id persisted
+ * to history, so the rename is fully transparent to the provider. The mapping
+ * preserves provider order and is idempotent — already-unique input passes
+ * through unchanged (same array reference).
+ */
+function uniquifyToolCallIds(
+  step: Pick<ToolCallStepContext, 'log' | 'turnId' | 'currentStep'>,
+  toolCalls: readonly ToolCall[],
+): readonly ToolCall[] {
+  const used = new Set<string>();
+  let renamedCount = 0;
+  const out: ToolCall[] = [];
+  for (const toolCall of toolCalls) {
+    let id = toolCall.id;
+    if (used.has(id)) {
+      let suffix = 2;
+      while (used.has(`${id}_${String(suffix)}`)) suffix += 1;
+      id = `${id}_${String(suffix)}`;
+      renamedCount += 1;
+    }
+    used.add(id);
+    out.push(id === toolCall.id ? toolCall : { ...toolCall, id });
+  }
+  if (renamedCount === 0) return toolCalls;
+  step.log?.warn('renamed duplicate provider tool-call ids', {
+    turnId: step.turnId,
+    step: step.currentStep,
+    renamedCount,
+    callCount: toolCalls.length,
+  });
+  return out;
+}
+
 export async function runToolCallBatch(
   step: ToolCallStepContext,
   response: LLMChatResponse,
+  streaming?: StreamingToolCallRunner,
 ): Promise<ToolCallBatchResult> {
-  if (response.toolCalls.length === 0) return { stopTurn: false };
-  const batchStep: ToolCallBatchContext = { ...step, toolCalls: response.toolCalls };
-  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step, toolCall));
-  const scheduler = new ToolScheduler<PendingToolResult>();
+  if (response.toolCalls.length === 0) {
+    if (streaming === undefined || !streaming.hasEntries) return { stopTurn: false };
+    // The final response carries no tool calls, but a failed earlier attempt
+    // of this step streamed some (retried/resend requests re-stream from
+    // scratch). Settle those orphaned preparations so host hook state unwinds.
+    await streaming.drainOrphanedPreparations({ ...step, toolCalls: [] }, []);
+    return { stopTurn: false };
+  }
+  const toolCalls = uniquifyToolCallIds(step, response.toolCalls);
+  const batchStep: ToolCallBatchContext = { ...step, toolCalls };
+  const scheduler = streaming?.scheduler ?? new ToolScheduler<PendingToolResult>();
   const pendingResults: Array<Promise<PendingToolResult>> = [];
   let stopTurn = false;
 
   try {
-    for (let index = 0; index < calls.length; index += 1) {
-      const call = calls[index]!;
-      const prepared = await prepareToolCall(batchStep, call);
+    if (streaming !== undefined) {
+      // Settle preparations from failed attempts of this step BEFORE draining
+      // the final response: a retried call whose args match an orphan is
+      // classified as a same-step duplicate by host dedup hooks and its
+      // finalization awaits the orphan's result.
+      await streaming.drainOrphanedPreparations(batchStep, toolCalls);
+    }
+
+    for (let index = 0; index < toolCalls.length; index += 1) {
+      const toolCall = toolCalls[index]!;
+      const materialized =
+        streaming === undefined ? undefined : await streaming.materialize(batchStep, toolCall);
+      const prepared =
+        materialized ?? (await prepareToolCall(batchStep, preflightToolCall(step, toolCall)));
       pendingResults.push(scheduler.add(prepared.task));
 
       if (prepared.stopBatchAfterThis === true) {
         stopTurn = true;
-        for (const skippedCall of calls.slice(index + 1)) {
-          const skippedTask = await prepareSkippedToolCall(batchStep, skippedCall);
+        for (const skippedCall of toolCalls.slice(index + 1)) {
+          const skippedEntry =
+            streaming === undefined ? undefined : await streaming.takeEntry(skippedCall.id);
+          // A runner that saw a batch-stopping call marks every later
+          // streamed call 'skipped' without running hooks; any other entry
+          // kind cannot appear past a stop (defensive fallback: plain skip).
+          const skippedPreflight =
+            skippedEntry !== undefined && skippedEntry.kind === 'skipped'
+              ? skippedEntry.preflighted
+              : preflightToolCall(step, skippedCall);
+          const skippedTask = await prepareSkippedToolCall(batchStep, skippedPreflight);
           pendingResults.push(scheduler.add(skippedTask));
         }
         break;
@@ -168,13 +252,7 @@ export async function runToolCallBatch(
     for (const pendingResult of pendingResults) {
       const result = await finalizePendingToolResult(batchStep, await pendingResult);
       if (result.stopTurn === true) stopTurn = true;
-      await step.dispatchEvent({
-        type: 'tool.result',
-        parentUuid: result.toolCall.id,
-        toolCallId: result.toolCall.id,
-        result: result.result,
-        traceId: step.trace.traceId,
-      });
+      await dispatchToolResult(batchStep, result);
     }
   } finally {
     // Preparation or result dispatch can throw after execution has started.
@@ -201,34 +279,97 @@ export async function recordUnexecutedToolCalls(
   response: LLMChatResponse,
 ): Promise<void> {
   for (const toolCall of response.toolCalls) {
-    const parsedArgs = parseToolCallArguments(toolCall.arguments);
-    if (parsedArgs.parseFailed) {
-      step.log?.debug('recording unexecuted tool call with unparseable arguments', {
-        toolName: toolCall.name,
-        toolCallId: toolCall.id,
-        rawLength: toolCall.arguments?.length ?? 0,
-        error: parsedArgs.error,
-      });
+    await recordUnexecutedToolCall(step, toolCall);
+  }
+}
+
+/**
+ * Close a single never-executed call with the synthetic interrupted result.
+ * Shared by the no-streaming path and the interrupted-stream drain, which
+ * applies it to calls the runner never started.
+ */
+async function recordUnexecutedToolCall(
+  step: ToolCallStepContext,
+  toolCall: ToolCall,
+): Promise<void> {
+  const parsedArgs = parseToolCallArguments(toolCall.arguments);
+  if (parsedArgs.parseFailed) {
+    step.log?.debug('recording unexecuted tool call with unparseable arguments', {
+      toolName: toolCall.name,
+      toolCallId: toolCall.id,
+      rawLength: toolCall.arguments?.length ?? 0,
+      error: parsedArgs.error,
+    });
+  }
+  await step.dispatchEvent({
+    type: 'tool.call',
+    uuid: toolCall.id,
+    turnId: step.turnId,
+    step: step.currentStep,
+    stepUuid: step.stepUuid,
+    toolCallId: toolCall.id,
+    name: toolCall.name,
+    args: parsedArgs.data,
+    extras: toolCall.extras,
+    traceId: step.trace.traceId,
+  });
+  await step.dispatchEvent({
+    type: 'tool.result',
+    parentUuid: toolCall.id,
+    toolCallId: toolCall.id,
+    result: { output: UNEXECUTED_TOOL_CALL_OUTPUT, isError: true },
+    traceId: step.trace.traceId,
+  });
+}
+
+/**
+ * Close out a response whose stream broke off (paused / overloaded / token
+ * limit) while streaming execution was active. Calls the runner already
+ * started complete for real — their arguments were provably complete — and
+ * everything else is closed with the synthetic unexecuted result, in strict
+ * provider order, so no `tool_use` is left dangling.
+ */
+export async function drainInterruptedToolCalls(
+  step: ToolCallStepContext,
+  response: LLMChatResponse,
+  streaming: StreamingToolCallRunner,
+): Promise<void> {
+  const toolCalls = uniquifyToolCallIds(step, response.toolCalls);
+  const batchStep: ToolCallBatchContext = { ...step, toolCalls };
+  await streaming.drainOrphanedPreparations(batchStep, toolCalls);
+  for (const toolCall of toolCalls) {
+    const entry = await streaming.takeEntry(toolCall.id);
+    if (entry === undefined || entry.kind === 'skipped') {
+      await recordUnexecutedToolCall(step, toolCall);
+      continue;
     }
-    await step.dispatchEvent({
-      type: 'tool.call',
-      uuid: toolCall.id,
-      turnId: step.turnId,
-      step: step.currentStep,
-      stepUuid: step.stepUuid,
-      toolCallId: toolCall.id,
-      name: toolCall.name,
-      args: parsedArgs.data,
-      extras: toolCall.extras,
-      traceId: step.trace.traceId,
-    });
-    await step.dispatchEvent({
-      type: 'tool.result',
-      parentUuid: toolCall.id,
-      toolCallId: toolCall.id,
-      result: { output: UNEXECUTED_TOOL_CALL_OUTPUT, isError: true },
-      traceId: step.trace.traceId,
-    });
+    switch (entry.kind) {
+      case 'settled': {
+        await entry.announce();
+        await finalizeAndDispatchToolResult(batchStep, entry.result);
+        continue;
+      }
+      case 'started': {
+        await entry.announce();
+        await finalizeAndDispatchToolResult(batchStep, await entry.pending);
+        continue;
+      }
+      case 'deferred': {
+        // Prepared (hooks ran) but never authorized or started: do not begin
+        // new work on a broken stream. Finalize with the unexecuted result so
+        // mid-stream hook registrations (e.g. same-step dedup) still settle.
+        await entry.preparation.announce();
+        await finalizeAndDispatchToolResult(
+          batchStep,
+          makeErrorToolResult(
+            entry.preparation.call,
+            entry.preparation.args,
+            UNEXECUTED_TOOL_CALL_OUTPUT,
+          ),
+        );
+        continue;
+      }
+    }
   }
 }
 
@@ -288,45 +429,117 @@ function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string
   return validateToolArgs(validator, args as JsonType);
 }
 
+interface SettledToolCallPreparation {
+  readonly kind: 'settled';
+  readonly result: PendingToolResult;
+  readonly stopBatchAfterThis?: boolean | undefined;
+  readonly announce: () => Promise<void>;
+}
+
+/**
+ * A call that passed validation, the prepare hook, and execution resolution;
+ * only authorization and scheduling remain. Splitting preparation here lets
+ * streaming execution run the early phases the moment a call's arguments
+ * complete mid-stream, while deferring authorization/scheduling for calls
+ * that are not eligible for an early start.
+ */
+interface RunnableToolCallPreparation {
+  readonly kind: 'runnable';
+  readonly call: RunnableToolCall;
+  readonly args: unknown;
+  readonly execution: RunnableToolExecution;
+  readonly metadata: unknown;
+  readonly displayFields: ToolCallDisplayFields | undefined;
+  readonly announce: () => Promise<void>;
+}
+
+type AuthorizedToolCallPreparation =
+  | SettledToolCallPreparation
+  | {
+      readonly kind: 'authorized';
+      readonly task: ToolCallTask<PendingToolResult>;
+      readonly stopBatchAfterThis?: boolean | undefined;
+      readonly announce: () => Promise<void>;
+    };
+
 async function prepareToolCall(
   step: ToolCallBatchContext,
   call: PreflightedToolCall,
 ): Promise<PreparedToolCallTask> {
-  const settleError = async (
-    args: unknown,
-    output: string,
-    displayFields?: ToolCallDisplayFields,
-  ): Promise<PreparedToolCallTask> => {
-    await dispatchToolCall(step, call, args, displayFields);
-    return { task: makeResolvedToolCallTask(makeErrorToolResult(call, args, output)) };
-  };
-
-  const settleSynthetic = async (
-    args: unknown,
-    result: ExecutableToolResult,
-    displayFields?: ToolCallDisplayFields,
-  ): Promise<PreparedToolCallTask> => {
-    const coerced = coerceToolResult(result, call.toolName);
-    await dispatchToolCall(step, call, args, displayFields);
+  const preparation = await resolveToolCallPreparation(step, call);
+  if (preparation.kind === 'settled') {
+    await preparation.announce();
     return {
-      task: makeResolvedToolCallTask(makeToolResult(call, args, coerced)),
-      stopBatchAfterThis: toolResultStopsTurn(coerced),
+      task: makeResolvedToolCallTask(preparation.result),
+      stopBatchAfterThis: preparation.stopBatchAfterThis,
     };
-  };
+  }
+  const authorized = await authorizeToolCallPreparation(step, preparation);
+  await authorized.announce();
+  if (authorized.kind === 'settled') {
+    return {
+      task: makeResolvedToolCallTask(authorized.result),
+      stopBatchAfterThis: authorized.stopBatchAfterThis,
+    };
+  }
+  return { task: authorized.task, stopBatchAfterThis: authorized.stopBatchAfterThis };
+}
 
-  if (call.kind === 'rejected') return settleError(call.args, call.output);
+function settlePreparationError(
+  step: ToolCallStepContext,
+  call: PreflightedToolCall,
+  args: unknown,
+  output: string,
+  displayFields?: ToolCallDisplayFields,
+): SettledToolCallPreparation {
+  return {
+    kind: 'settled',
+    result: makeErrorToolResult(call, args, output),
+    announce: async () => dispatchToolCall(step, call, args, displayFields),
+  };
+}
+
+function settlePreparationSynthetic(
+  step: ToolCallStepContext,
+  call: PreflightedToolCall,
+  args: unknown,
+  result: ExecutableToolResult,
+  displayFields?: ToolCallDisplayFields,
+): SettledToolCallPreparation {
+  const coerced = coerceToolResult(result, call.toolName);
+  return {
+    kind: 'settled',
+    result: makeToolResult(call, args, coerced),
+    stopBatchAfterThis: toolResultStopsTurn(coerced),
+    announce: async () => dispatchToolCall(step, call, args, displayFields),
+  };
+}
+
+/**
+ * First preparation phase: prepare hook, arg re-validation, and execution
+ * resolution. Runs no authorization and starts no execution. The returned
+ * `announce` performs the `tool.call` dispatch the batch path expects at
+ * preparation time; callers deferring visibility invoke it later.
+ */
+async function resolveToolCallPreparation(
+  step: ToolCallBatchContext,
+  call: PreflightedToolCall,
+): Promise<SettledToolCallPreparation | RunnableToolCallPreparation> {
+  if (call.kind === 'rejected') return settlePreparationError(step, call, call.args, call.output);
 
   const decision = await runPrepareToolExecutionHook(step, call);
   if (decision.kind === 'blocked' || decision.kind === 'hookFailed') {
-    return settleError(decision.args, decision.output);
+    return settlePreparationError(step, call, decision.args, decision.output);
   }
   if (decision.kind === 'synthetic') {
-    return settleSynthetic(decision.args, decision.result);
+    return settlePreparationSynthetic(step, call, decision.args, decision.result);
   }
 
   const validationError = validateExecutableToolArgs(call.tool, decision.args);
   if (validationError !== null) {
-    return settleError(
+    return settlePreparationError(
+      step,
+      call,
       decision.args,
       `Invalid args for tool "${call.toolName}" after prepareToolExecution hook: ${validationError}`,
     );
@@ -348,44 +561,176 @@ async function prepareToolCall(
       error instanceof PathSecurityError
         ? error.message
         : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
-    return settleError(effectiveArgs, output);
+    return settlePreparationError(step, call, effectiveArgs, output);
   }
 
   const displayFields = toolCallDisplayFieldsFromExecution(execution);
-  const settleAborted = (): Promise<PreparedToolCallTask> =>
-    settleError(effectiveArgs, abortedToolOutput(call.toolName, step.signal), displayFields);
 
-  if (step.signal.aborted) return settleAborted();
-
-  if (execution.isError === true) {
-    return settleSynthetic(effectiveArgs, execution, displayFields);
+  if (step.signal.aborted) {
+    return settlePreparationError(
+      step,
+      call,
+      effectiveArgs,
+      abortedToolOutput(call.toolName, step.signal),
+      displayFields,
+    );
   }
 
-  const authorization = await runAuthorizeToolExecutionHook(step, call, effectiveArgs, execution);
-  if (step.signal.aborted) return settleAborted();
+  if (execution.isError === true) {
+    return settlePreparationSynthetic(step, call, effectiveArgs, execution, displayFields);
+  }
+
+  return {
+    kind: 'runnable',
+    call,
+    args: effectiveArgs,
+    execution,
+    metadata: decision.metadata,
+    displayFields,
+    announce: async () => dispatchToolCall(step, call, effectiveArgs, displayFields),
+  };
+}
+
+/**
+ * Second preparation phase: the authorize hook, then either a terminal
+ * settle (blocked / synthetic / aborted) or a scheduler-ready task.
+ */
+async function authorizeToolCallPreparation(
+  step: ToolCallBatchContext,
+  preparation: RunnableToolCallPreparation,
+): Promise<AuthorizedToolCallPreparation> {
+  const { call, displayFields } = preparation;
+  let { args, execution } = preparation;
+  const authorization = await runAuthorizeToolExecutionHook(step, call, args, execution);
+
+  if (step.signal.aborted) {
+    return settlePreparationError(
+      step,
+      call,
+      args,
+      abortedToolOutput(call.toolName, step.signal),
+      displayFields,
+    );
+  }
 
   if (authorization?.block === true) {
-    return settleError(
-      effectiveArgs,
+    return settlePreparationError(
+      step,
+      call,
+      args,
       authorization.reason ?? `Tool call "${call.toolName}" was blocked`,
       displayFields,
     );
   }
 
   if (authorization?.syntheticResult !== undefined) {
-    return settleSynthetic(effectiveArgs, authorization.syntheticResult, displayFields);
+    return settlePreparationSynthetic(
+      step,
+      call,
+      args,
+      authorization.syntheticResult,
+      displayFields,
+    );
   }
 
-  const executionMetadata = authorization?.executionMetadata ?? decision.metadata;
-  await dispatchToolCall(step, call, effectiveArgs, displayFields);
+  let announce = preparation.announce;
+  if (authorization?.updatedArgs !== undefined) {
+    const rewritten = await reResolveUpdatedExecution(
+      step,
+      call,
+      authorization.updatedArgs,
+      displayFields,
+    );
+    if (rewritten.kind === 'settled') return rewritten;
+    args = rewritten.args;
+    execution = rewritten.execution;
+    announce = rewritten.announce;
+  }
+
+  const executionMetadata = authorization?.executionMetadata ?? preparation.metadata;
   return {
+    kind: 'authorized',
     task: {
       accesses: execution.accesses ?? ToolAccesses.all(),
       start: async () => ({
-        result: runRunnableToolCall(step, call, effectiveArgs, executionMetadata, execution),
+        result: runRunnableToolCall(step, call, args, executionMetadata, execution),
       }),
     },
     stopBatchAfterThis: execution.stopBatchAfterThis,
+    announce,
+  };
+}
+
+/**
+ * Re-validate and re-resolve an execution when the authorize hook rewrote the
+ * call's args (e.g. a PreToolUse hook's `updatedInput`). Mirrors the prepare
+ * phase's validation/resolution failure semantics; the announce closure is
+ * rebuilt so the recorded `tool.call` shows the args that actually run.
+ */
+async function reResolveUpdatedExecution(
+  step: ToolCallBatchContext,
+  call: RunnableToolCall,
+  updatedArgs: unknown,
+  displayFields: ToolCallDisplayFields | undefined,
+): Promise<
+  | SettledToolCallPreparation
+  | {
+      readonly kind: 'resolved';
+      readonly args: unknown;
+      readonly execution: RunnableToolExecution;
+      readonly announce: () => Promise<void>;
+    }
+> {
+  const validationError = validateExecutableToolArgs(call.tool, updatedArgs);
+  if (validationError !== null) {
+    return settlePreparationError(
+      step,
+      call,
+      updatedArgs,
+      `Invalid args for tool "${call.toolName}" after authorizeToolExecution hook: ${validationError}`,
+      displayFields,
+    );
+  }
+
+  let execution: ToolExecution;
+  try {
+    execution = await call.tool.resolveExecution(updatedArgs);
+  } catch (error) {
+    if (!(error instanceof PathSecurityError)) {
+      step.log?.warn('tool execution setup failed', {
+        toolName: call.toolName,
+        toolCallId: call.toolCall.id,
+        error,
+      });
+    }
+    const output =
+      error instanceof PathSecurityError
+        ? error.message
+        : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
+    return settlePreparationError(step, call, updatedArgs, output, displayFields);
+  }
+
+  const updatedDisplayFields = toolCallDisplayFieldsFromExecution(execution) ?? displayFields;
+
+  if (step.signal.aborted) {
+    return settlePreparationError(
+      step,
+      call,
+      updatedArgs,
+      abortedToolOutput(call.toolName, step.signal),
+      updatedDisplayFields,
+    );
+  }
+
+  if (execution.isError === true) {
+    return settlePreparationSynthetic(step, call, updatedArgs, execution, updatedDisplayFields);
+  }
+
+  return {
+    kind: 'resolved',
+    args: updatedArgs,
+    execution,
+    announce: async () => dispatchToolCall(step, call, updatedArgs, updatedDisplayFields),
   };
 }
 
@@ -403,6 +748,352 @@ function makeResolvedToolCallTask(result: PendingToolResult): ToolCallTask<Pendi
     accesses: ToolAccesses.none(),
     start: async () => ({ result: Promise.resolve(result) }),
   };
+}
+
+async function dispatchToolResult(
+  step: ToolCallStepContext,
+  result: PendingToolResult,
+): Promise<void> {
+  await step.dispatchEvent({
+    type: 'tool.result',
+    parentUuid: result.toolCall.id,
+    toolCallId: result.toolCall.id,
+    result: result.result,
+    traceId: step.trace.traceId,
+  });
+}
+
+async function finalizeAndDispatchToolResult(
+  step: ToolCallBatchContext,
+  pendingResult: PendingToolResult,
+): Promise<void> {
+  const result = await finalizePendingToolResult(step, pendingResult);
+  await dispatchToolResult(step, result);
+}
+
+/**
+ * Output used when a mid-stream preparation is discarded without execution:
+ * the attempt that produced the call failed and the step's final response
+ * re-streamed without it. The wording mirrors {@link UNEXECUTED_TOOL_CALL_OUTPUT}
+ * — the call never ran and the model must not assume otherwise.
+ */
+const RETRIED_PREPARATION_DISCARD_OUTPUT =
+  'This tool call was not executed: the model request was retried before the response ' +
+  'completed, and this call was not part of the final response. Do not assume the tool ' +
+  'ran — re-issue the call if it is still needed.';
+
+type StreamingToolCallEntry =
+  | {
+      readonly kind: 'settled';
+      readonly result: PendingToolResult;
+      readonly stopBatchAfterThis?: boolean | undefined;
+      readonly announce: () => Promise<void>;
+    }
+  | {
+      readonly kind: 'started';
+      readonly pending: Promise<PendingToolResult>;
+      readonly announce: () => Promise<void>;
+    }
+  | { readonly kind: 'deferred'; readonly preparation: RunnableToolCallPreparation }
+  | { readonly kind: 'skipped'; readonly preflighted: PreflightedToolCall };
+
+/**
+ * True when a resolved execution may start while the provider stream is still
+ * open: its declared resource accesses are exclusively read/search file
+ * accesses, so the tool-access conflict model guarantees it can overlap any
+ * other task without ordering hazards. Calls with side effects, undeclared
+ * accesses (which default to `all`), or batch-stopping executions wait for
+ * the post-stream batch path.
+ */
+function isStreamingEligible(execution: RunnableToolExecution): boolean {
+  if (execution.stopBatchAfterThis === true) return false;
+  const accesses = execution.accesses;
+  if (accesses === undefined) return false;
+  return accesses.every(
+    (access) =>
+      access.kind === 'file' && (access.operation === 'read' || access.operation === 'search'),
+  );
+}
+
+/**
+ * Streaming tool-call runner for one model step.
+ *
+ * While the provider stream is still open, every tool call whose arguments
+ * provably completed (reported via `LLMChatParams.onToolCallReady`) is
+ * validated and prepared here in arrival order — the same phases the batch
+ * path runs after the stream, serialized in the same relative order. A
+ * prepared call starts executing immediately only when
+ * {@link isStreamingEligible} holds; anything else is held for the
+ * post-stream batch path, which authorizes and schedules it unchanged.
+ *
+ * Visibility is NOT advanced: `tool.call` events, buffered `tool.progress`
+ * passthrough, and `tool.result` events are all released by the post-stream
+ * drain in strict provider order.
+ *
+ * Retry/abort notes:
+ * - Retried/resend attempts re-stream fresh call ids, so preparations from a
+ *   failed attempt become orphans. `drainOrphanedPreparations` settles and
+ *   finalizes them without dispatching events, so stateful host hooks (e.g.
+ *   same-step dedup deferreds) cannot wedge on a call that never made the
+ *   final response.
+ * - The turn signal aborts in-flight early executions through the same grace
+ *   path as batch execution; their results are discarded when the step's
+ *   response never completes.
+ */
+export class StreamingToolCallRunner {
+  private readonly step: ToolCallStepContext;
+  /** Step variant whose dispatcher holds `tool.progress` until the owning call is announced. */
+  private readonly gatedStep: ToolCallStepContext;
+  private readonly toolScheduler = new ToolScheduler<PendingToolResult>();
+  private readonly entries = new Map<string, Promise<StreamingToolCallEntry>>();
+  private readonly streamedToolCalls: ToolCall[] = [];
+  private readonly progressBuffers = new Map<string, LoopToolProgressEvent[]>();
+  private readonly announcedCallIds = new Set<string>();
+  private prepareChain: Promise<void> = Promise.resolve();
+  private stopped = false;
+
+  constructor(step: ToolCallStepContext) {
+    this.step = step;
+    this.gatedStep = { ...step, dispatchEvent: this.gateProgressDispatch() };
+  }
+
+  get hasEntries(): boolean {
+    return this.entries.size > 0;
+  }
+
+  get scheduler(): ToolScheduler<PendingToolResult> {
+    return this.toolScheduler;
+  }
+
+  /**
+   * Feed a provably complete streamed tool call. Synchronous and
+   * non-blocking: preparation (hooks included) is appended to a serialized
+   * chain so one slow approval cannot stall the provider stream, and
+   * preparations never overlap each other.
+   */
+  addReady(toolCall: ToolCall): void {
+    if (this.entries.has(toolCall.id)) return;
+    this.streamedToolCalls.push(toolCall);
+    if (this.stopped) {
+      this.entries.set(
+        toolCall.id,
+        Promise.resolve({
+          kind: 'skipped',
+          preflighted: preflightToolCall(this.step, toolCall),
+        }),
+      );
+      return;
+    }
+    const prepared = this.prepareChain.then(() => this.prepareOne(toolCall));
+    this.prepareChain = prepared.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.entries.set(toolCall.id, prepared);
+  }
+
+  /** Take the prepared entry for a response call, awaiting its preparation. */
+  async takeEntry(toolCallId: string): Promise<StreamingToolCallEntry | undefined> {
+    const entryPromise = this.entries.get(toolCallId);
+    if (entryPromise === undefined) return undefined;
+    this.entries.delete(toolCallId);
+    return entryPromise;
+  }
+
+  /**
+   * Resolve the prepared entry for a response call into a schedulable task,
+   * releasing the deferred `tool.call` dispatch. Returns `undefined` when the
+   * call was never streamed (the batch path prepares it from scratch).
+   */
+  async materialize(
+    batchStep: ToolCallBatchContext,
+    toolCall: ToolCall,
+  ): Promise<PreparedToolCallTask | undefined> {
+    const entry = await this.takeEntry(toolCall.id);
+    if (entry === undefined) return undefined;
+    switch (entry.kind) {
+      case 'settled':
+        await entry.announce();
+        return {
+          task: makeResolvedToolCallTask(entry.result),
+          stopBatchAfterThis: entry.stopBatchAfterThis,
+        };
+      case 'started':
+        await entry.announce();
+        // Already scheduled mid-stream; wrap its pending result so the batch
+        // drain handles every call through one uniform path.
+        return {
+          task: {
+            accesses: ToolAccesses.none(),
+            start: async () => ({ result: entry.pending }),
+          },
+        };
+      case 'deferred': {
+        const authorized = await authorizeToolCallPreparation(batchStep, entry.preparation);
+        await authorized.announce();
+        if (authorized.kind === 'settled') {
+          return {
+            task: makeResolvedToolCallTask(authorized.result),
+            stopBatchAfterThis: authorized.stopBatchAfterThis,
+          };
+        }
+        return { task: authorized.task, stopBatchAfterThis: authorized.stopBatchAfterThis };
+      }
+      case 'skipped':
+        return { task: await prepareSkippedToolCall(batchStep, entry.preflighted) };
+    }
+  }
+
+  /**
+   * Settle preparations whose call never made the final response (a failed
+   * attempt of this step streamed them, then a retry/resend re-streamed
+   * without them). Results are awaited and run through result finalization —
+   * without dispatching any event — so host hook state registered during
+   * preparation unwinds instead of leaking into later steps.
+   */
+  async drainOrphanedPreparations(
+    batchStep: ToolCallBatchContext,
+    responseToolCalls: readonly ToolCall[],
+  ): Promise<void> {
+    const liveCallIds = new Set(responseToolCalls.map((toolCall) => toolCall.id));
+    for (const [toolCallId, entryPromise] of this.entries) {
+      if (liveCallIds.has(toolCallId)) continue;
+      this.entries.delete(toolCallId);
+      const entry = await entryPromise;
+      let pending: PendingToolResult | undefined;
+      switch (entry.kind) {
+        case 'started':
+          pending = await entry.pending;
+          break;
+        case 'settled':
+          pending = entry.result;
+          break;
+        case 'deferred':
+          pending = makeErrorToolResult(
+            entry.preparation.call,
+            entry.preparation.args,
+            RETRIED_PREPARATION_DISCARD_OUTPUT,
+          );
+          break;
+        case 'skipped':
+          continue;
+      }
+      await finalizePendingToolResult(batchStep, pending);
+    }
+  }
+
+  private async prepareOne(toolCall: ToolCall): Promise<StreamingToolCallEntry> {
+    const preflighted = preflightToolCall(this.step, toolCall);
+    // Re-check at chain execution time: an earlier call's preparation may
+    // have stopped the batch after this call was queued.
+    if (this.stopped) return { kind: 'skipped', preflighted };
+    try {
+      if (preflighted.kind === 'rejected') {
+        return this.markStoppedOnSettle({
+          kind: 'settled',
+          result: makeErrorToolResult(preflighted, preflighted.args, preflighted.output),
+          announce: this.wrapAnnounce(toolCall.id, async () =>
+            dispatchToolCall(this.gatedStep, preflighted, preflighted.args, undefined),
+          ),
+        });
+      }
+      // Hooks observe the calls completed so far — a provider-order prefix of
+      // the final batch. (The only hook consumer of `toolCalls` that depends
+      // on the full batch, AgentSwarm exclusivity, targets a tool that is
+      // never streaming-eligible and always authorizes post-stream.)
+      const stepForCall: ToolCallBatchContext = {
+        ...this.gatedStep,
+        toolCalls: [...this.streamedToolCalls],
+      };
+      const preparation = await resolveToolCallPreparation(stepForCall, preflighted);
+      if (preparation.kind === 'settled') {
+        return this.markStoppedOnSettle({
+          kind: 'settled',
+          result: preparation.result,
+          stopBatchAfterThis: preparation.stopBatchAfterThis,
+          announce: this.wrapAnnounce(toolCall.id, preparation.announce),
+        });
+      }
+      if (!isStreamingEligible(preparation.execution) || this.step.signal.aborted) {
+        if (preparation.execution.stopBatchAfterThis === true) this.stopped = true;
+        return { kind: 'deferred', preparation };
+      }
+      const authorized = await authorizeToolCallPreparation(stepForCall, preparation);
+      if (authorized.kind === 'settled') {
+        return this.markStoppedOnSettle({
+          kind: 'settled',
+          result: authorized.result,
+          stopBatchAfterThis: authorized.stopBatchAfterThis,
+          announce: this.wrapAnnounce(toolCall.id, authorized.announce),
+        });
+      }
+      const pending = this.toolScheduler.add(authorized.task);
+      return {
+        kind: 'started',
+        pending,
+        announce: this.wrapAnnounce(toolCall.id, authorized.announce),
+      };
+    } catch (error) {
+      // The preparation chain must never die: fall back to a terminal error
+      // for this call and let later calls prepare normally.
+      this.step.log?.warn('streaming tool-call preparation failed', {
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        error,
+      });
+      return {
+        kind: 'settled',
+        result: makeErrorToolResult(
+          preflighted,
+          preflighted.args,
+          `Tool "${toolCall.name}" failed during streaming preparation: ${errorMessage(error)}`,
+        ),
+        announce: this.wrapAnnounce(toolCall.id, async () =>
+          dispatchToolCall(this.gatedStep, preflighted, preflighted.args, undefined),
+        ),
+      };
+    }
+  }
+
+  private markStoppedOnSettle(
+    entry: Extract<StreamingToolCallEntry, { kind: 'settled' }>,
+  ): StreamingToolCallEntry {
+    if (entry.stopBatchAfterThis === true) this.stopped = true;
+    return entry;
+  }
+
+  /**
+   * Defer visibility: the wrapped announce runs the `tool.call` dispatch,
+   * then releases this call's buffered progress and opens its passthrough.
+   */
+  private wrapAnnounce(
+    toolCallId: string,
+    announce: () => Promise<void>,
+  ): () => Promise<void> {
+    return async () => {
+      await announce();
+      this.announcedCallIds.add(toolCallId);
+      const buffered = this.progressBuffers.get(toolCallId);
+      if (buffered !== undefined) {
+        this.progressBuffers.delete(toolCallId);
+        for (const event of buffered) this.step.dispatchEvent(event);
+      }
+    };
+  }
+
+  private gateProgressDispatch(): LoopEventDispatcher {
+    const base = this.step.dispatchEvent;
+    const gated = (event: LoopEvent): Promise<void> | void => {
+      if (event.type === 'tool.progress' && !this.announcedCallIds.has(event.toolCallId)) {
+        const buffer = this.progressBuffers.get(event.toolCallId) ?? [];
+        buffer.push(event);
+        this.progressBuffers.set(event.toolCallId, buffer);
+        return;
+      }
+      return (base as (event: LoopEvent) => Promise<void> | void)(event);
+    };
+    return gated as LoopEventDispatcher;
+  }
 }
 
 /**
@@ -724,19 +1415,93 @@ function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
-  // Rebuild keeps the persisted contract only: `note` rides into the record
-  // (the model reads it at projection), while `stopTurn`/`message` are
-  // loop/UI-local and are dropped here. Tools are arbitrary JS, so this is
-  // also where the note contract (string | undefined) is enforced: a
-  // malformed or empty note is discarded — the tool's actual output is
-  // still valid, and everything downstream trusts the contract.
-  const base: { output: typeof output; note?: string; truncated?: true } = { output };
+  // Rebuild keeps the persisted contract only: `note`, `display`, and
+  // `structured` ride into the record (the model reads the note at
+  // projection; UIs read the display ref for localized rendering and the
+  // structured fields instead of parsing the output), while
+  // `stopTurn`/`message` are loop/UI-local and are dropped here. Tools are
+  // arbitrary JS, so this is also where the note/display/structured
+  // contracts are enforced: a malformed or empty note, a malformed display
+  // ref, and a non-JSON-serializable structured payload are discarded —
+  // the tool's actual output is still valid, and everything downstream
+  // trusts the contract.
+  const base: {
+    output: typeof output;
+    note?: string;
+    truncated?: true;
+    display?: ToolResultDisplayRef;
+    structured?: ToolResultStructured;
+  } = { output };
   if (typeof r.note === 'string' && r.note.length > 0) base.note = r.note;
   if (r.truncated === true) base.truncated = true;
+  const display = normalizeResultDisplay(r.display);
+  if (display !== undefined) base.display = display;
+  const structured = normalizeResultStructured(r.structured);
+  if (structured !== undefined) base.structured = structured;
   if (r.isError === true) {
     return { ...base, isError: true };
   }
   return base;
+}
+
+/**
+ * Enforce the display-ref contract (non-empty key; params a flat
+ * string/number record) so downstream — the record log, the wire schema,
+ * the TUI — never has to re-validate. Returns undefined for anything
+ * malformed.
+ */
+function normalizeResultDisplay(display: unknown): ToolResultDisplayRef | undefined {
+  if (typeof display !== 'object' || display === null) return undefined;
+  const candidate = display as { key?: unknown; params?: unknown };
+  if (typeof candidate.key !== 'string' || candidate.key.length === 0) return undefined;
+  if (candidate.params === undefined) return { key: candidate.key };
+  if (typeof candidate.params !== 'object' || candidate.params === null) return undefined;
+  const params: Record<string, string | number> = {};
+  for (const [name, value] of Object.entries(candidate.params)) {
+    if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+    params[name] = value;
+  }
+  return { key: candidate.key, params };
+}
+
+/**
+ * Enforce the structured-payload contract: a plain JSON-serializable
+ * object. The wire schema and the transcript record only carry JSON, so
+ * anything else (arrays, class instances, cycles, functions, non-finite
+ * numbers) is dropped rather than allowed to break persistence downstream.
+ */
+function normalizeResultStructured(structured: unknown): ToolResultStructured | undefined {
+  if (typeof structured !== 'object' || structured === null || Array.isArray(structured)) {
+    return undefined;
+  }
+  try {
+    // Cycles throw; non-JSON values (functions, undefined, NaN, class
+    // instances with non-JSON leaves) are rejected by the deep check.
+    JSON.stringify(structured);
+  } catch {
+    return undefined;
+  }
+  if (!isJsonValue(structured)) return undefined;
+  return structured as ToolResultStructured;
+}
+
+function isJsonValue(value: unknown): boolean {
+  if (value === null) return true;
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return true;
+    case 'number':
+      return Number.isFinite(value);
+    case 'object': {
+      if (Array.isArray(value)) return value.every(isJsonValue);
+      const proto: unknown = Object.getPrototypeOf(value);
+      if (proto !== null && proto !== Object.prototype) return false;
+      return Object.values(value as Record<string, unknown>).every(isJsonValue);
+    }
+    default:
+      return false;
+  }
 }
 
 function makeToolResult(

@@ -1,4 +1,4 @@
-# @moonshot-ai/protocol
+# @cloudcode/protocol
 
 ## 0.5.0
 

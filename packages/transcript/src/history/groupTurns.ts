@@ -110,6 +110,8 @@ export function groupMessagesIntoSnapshot(
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
   let turn: TurnDraft | undefined;
+  /** Index of the current turn's item — `items` is append-only, so the slot never moves. */
+  let turnItemIndex = -1;
   /** Next turn ordinal — 0-based, matching the engine's live turn numbering. */
   let nextOrdinal = 0;
   let markerCount = 0;
@@ -155,6 +157,7 @@ export function groupMessagesIntoSnapshot(
       const ordinal = nextOrdinal;
       nextOrdinal += 1;
       turn = { turnId: `t${ordinal}`, ordinal, origin, steps: [] };
+      turnItemIndex = items.length;
       items.push(draftToTurnItem(turn));
     }
     return turn;
@@ -164,6 +167,7 @@ export function groupMessagesIntoSnapshot(
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
     turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
+    turnItemIndex = items.length;
     items.push(draftToTurnItem(turn));
     return turn;
   };
@@ -238,7 +242,7 @@ export function groupMessagesIntoSnapshot(
           input: parseArguments(call.arguments),
         });
       }
-      syncTurnItem(items, current);
+      syncTurnItem(items, turnItemIndex, current);
       continue;
     }
 
@@ -253,7 +257,7 @@ export function groupMessagesIntoSnapshot(
           error: message.isError ? output : undefined,
         };
         replaceToolFrame(turn!, message.toolCallId!, patched);
-        syncTurnItem(items, turn!);
+        syncTurnItem(items, turnItemIndex, turn!);
       }
     }
   }
@@ -358,9 +362,8 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
   };
 }
 
-/** Re-project the (mutated) draft into the items array, preserving identity of slots. */
-function syncTurnItem(items: TranscriptItem[], draft: TurnDraft): void {
-  const index = items.findIndex((entry) => entry.kind === 'turn' && entry.turnId === draft.turnId);
+/** Re-project the (mutated) draft into its tracked items slot, preserving identity of slots. */
+function syncTurnItem(items: TranscriptItem[], index: number, draft: TurnDraft): void {
   if (index >= 0) items[index] = draftToTurnItem(draft);
 }
 

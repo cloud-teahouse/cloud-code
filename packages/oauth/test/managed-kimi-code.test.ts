@@ -6,8 +6,8 @@ import {
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
   fetchManagedKimiCodeModels,
-  KIMI_CODE_OAUTH_KEY,
-  KIMI_CODE_PROVIDER_NAME,
+  CLOUD_CODE_OAUTH_KEY,
+  CLOUD_CODE_PROVIDER_NAME,
   ManagedKimiCodeModelsAuthError,
   provisionManagedKimiCodeConfig,
   resolveKimiCodeLoginAuth,
@@ -52,7 +52,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         oauthHost: 'https://auth.kimi.com/',
         baseUrl: 'https://api.kimi.com/coding/v1/',
       }),
-    ).toBe(KIMI_CODE_OAUTH_KEY);
+    ).toBe(CLOUD_CODE_OAUTH_KEY);
   });
 
   it('scopes credential keys for non-default OAuth hosts and API base URLs', () => {
@@ -61,7 +61,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       baseUrl: 'https://api.dev.example.test/coding/v1',
     });
 
-    expect(devKey).not.toBe(KIMI_CODE_OAUTH_KEY);
+    expect(devKey).not.toBe(CLOUD_CODE_OAUTH_KEY);
     expect(devKey).toMatch(/^oauth\/kimi-code-env-[a-f0-9]{16}$/);
     expect(
       resolveKimiCodeOAuthKey({
@@ -79,7 +79,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         oauthHost: 'https://auth.kimi.com/',
         baseUrl: 'https://api.kimi.com/coding/v1/',
       }),
-    ).toEqual({ storage: 'file', key: KIMI_CODE_OAUTH_KEY, oauthHost: undefined });
+    ).toEqual({ storage: 'file', key: CLOUD_CODE_OAUTH_KEY, oauthHost: undefined });
 
     const defaultAuthCustomApiRef = resolveKimiCodeOAuthRef({
       baseUrl: 'https://api.example.test/coding/v1',
@@ -121,8 +121,8 @@ describe('provisionManagedKimiCodeConfig', () => {
       configuredBaseUrl,
       configuredOAuthRef,
       env: {
-        KIMI_CODE_BASE_URL: envBaseUrl,
-        KIMI_CODE_OAUTH_HOST: envOauthHost,
+        CLOUD_CODE_BASE_URL: envBaseUrl,
+        CLOUD_CODE_OAUTH_HOST: envOauthHost,
       },
     });
 
@@ -200,7 +200,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       },
       models: {
         'kimi-code/stale': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'stale',
         },
         'custom-default': {
@@ -224,7 +224,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     });
 
     expect(result).toMatchObject({
-      providerName: KIMI_CODE_PROVIDER_NAME,
+      providerName: CLOUD_CODE_PROVIDER_NAME,
       defaultModel: 'kimi-code/kimi-for-coding',
       defaultThinking: true,
       configPath: '/tmp/config.toml',
@@ -252,14 +252,14 @@ describe('provisionManagedKimiCodeConfig', () => {
     });
     expect(config.models?.['custom-default']?.provider).toBe('custom');
     expect(config.models?.['kimi-code/stale']).toBeUndefined();
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toMatchObject({
       type: 'kimi',
       baseUrl: 'https://api.kimi.com/coding/v1',
       apiKey: '',
       oauth: { storage: 'file', key: 'oauth/kimi-code' },
     });
     expect(config.models?.['kimi-code/kimi-for-coding']).toMatchObject({
-      provider: KIMI_CODE_PROVIDER_NAME,
+      provider: CLOUD_CODE_PROVIDER_NAME,
       model: 'kimi-for-coding',
       maxContextSize: 262144,
       capabilities: ['thinking', 'image_in', 'video_in', 'tool_use'],
@@ -296,7 +296,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       },
     });
 
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toMatchObject({
       baseUrl: 'https://api.dev.example.test/coding/v1',
       oauth: {
         storage: 'file',
@@ -334,7 +334,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       },
     });
 
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toMatchObject({
       baseUrl,
       oauth: {
         storage: 'file',
@@ -352,7 +352,7 @@ describe('provisionManagedKimiCodeConfig', () => {
           apiKey: 'sk-existing',
           baseUrl: 'https://example.test/v1',
         },
-        [KIMI_CODE_PROVIDER_NAME]: {
+        [CLOUD_CODE_PROVIDER_NAME]: {
           type: 'kimi',
           apiKey: '',
         },
@@ -366,7 +366,7 @@ describe('provisionManagedKimiCodeConfig', () => {
           maxContextSize: 1000,
         },
         'kimi-code/stale': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'stale',
           maxContextSize: 1000,
         },
@@ -395,7 +395,7 @@ describe('provisionManagedKimiCodeConfig', () => {
   it('infers default_thinking from fresh managed model capabilities', async () => {
     const config: ManagedKimiConfigShape = {
       providers: {
-        [KIMI_CODE_PROVIDER_NAME]: {
+        [CLOUD_CODE_PROVIDER_NAME]: {
           type: 'kimi',
           apiKey: '',
         },
@@ -403,7 +403,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       defaultModel: 'kimi-code/kimi-for-coding',
       models: {
         'kimi-code/kimi-for-coding': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'kimi-for-coding',
           maxContextSize: 1000,
           capabilities: [],
@@ -569,7 +569,7 @@ describe('provisionManagedKimiCodeConfig', () => {
   it('falls back to the first fetched model when the preserved default was removed', async () => {
     const config: ManagedKimiConfigShape = {
       providers: {
-        [KIMI_CODE_PROVIDER_NAME]: {
+        [CLOUD_CODE_PROVIDER_NAME]: {
           type: 'kimi',
           apiKey: '',
         },
@@ -578,7 +578,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       thinking: { enabled: false },
       models: {
         'kimi-code/stale': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'stale',
           maxContextSize: 1000,
         },
@@ -605,7 +605,7 @@ describe('provisionManagedKimiCodeConfig', () => {
   it('removes managed provider, models, services, and default model on logout', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
-        [KIMI_CODE_PROVIDER_NAME]: {
+        [CLOUD_CODE_PROVIDER_NAME]: {
           type: 'kimi',
           apiKey: '',
         },
@@ -618,7 +618,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       thinking: { enabled: true },
       models: {
         'kimi-code/kimi-for-coding': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'kimi-for-coding',
           maxContextSize: 262144,
         },
@@ -636,12 +636,12 @@ describe('provisionManagedKimiCodeConfig', () => {
       raw: {
         default_model: 'kimi-code/kimi-for-coding',
         providers: {
-          [KIMI_CODE_PROVIDER_NAME]: { type: 'kimi' },
+          [CLOUD_CODE_PROVIDER_NAME]: { type: 'kimi' },
           custom: { type: 'kimi' },
         },
         models: {
           'kimi-code/kimi-for-coding': {
-            provider: KIMI_CODE_PROVIDER_NAME,
+            provider: CLOUD_CODE_PROVIDER_NAME,
             model: 'kimi-for-coding',
           },
           'custom-default': {
@@ -659,7 +659,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     applyManagedKimiCodeLogoutConfig(config);
 
     expect(config.defaultModel).toBeUndefined();
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toBeUndefined();
     expect(config.providers['custom']).toBeDefined();
     expect(config.models?.['kimi-code/kimi-for-coding']).toBeUndefined();
     expect(config.models?.['custom-default']).toBeDefined();
@@ -752,7 +752,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     });
 
     await expect(promise).rejects.toThrow(
-      "Kimi Code models endpoint https://api.dev.example.test/coding/v1 rejected OAuth credentials: We're unable to verify your membership benefits at this time. Please ensure your membership is active.",
+      "Cloud Code models endpoint https://api.dev.example.test/coding/v1 rejected OAuth credentials: We're unable to verify your membership benefits at this time. Please ensure your membership is active.",
     );
     await expect(
       fetchManagedKimiCodeModels({
@@ -781,7 +781,7 @@ describe('provisionManagedKimiCodeConfig', () => {
   it('clears managed provider, models, default model, and services on logout', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
-        [KIMI_CODE_PROVIDER_NAME]: {
+        [CLOUD_CODE_PROVIDER_NAME]: {
           type: 'kimi',
           apiKey: '',
           oauth: { storage: 'file', key: 'oauth/kimi-code' },
@@ -794,7 +794,7 @@ describe('provisionManagedKimiCodeConfig', () => {
       defaultModel: 'kimi-code/kimi-for-coding',
       models: {
         'kimi-code/kimi-for-coding': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'kimi-for-coding',
           maxContextSize: 262144,
         },
@@ -822,13 +822,13 @@ describe('provisionManagedKimiCodeConfig', () => {
     const result = clearManagedKimiCodeConfig(config);
 
     expect(result).toMatchObject({
-      providerName: KIMI_CODE_PROVIDER_NAME,
+      providerName: CLOUD_CODE_PROVIDER_NAME,
       removedProvider: true,
       removedModels: ['kimi-code/kimi-for-coding'],
       defaultModelCleared: true,
       removedServices: ['moonshotSearch', 'moonshotFetch'],
     });
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toBeUndefined();
     expect(config.providers['custom']).toMatchObject({ apiKey: 'sk-existing' });
     expect(config.defaultModel).toBeUndefined();
     expect(config.models?.['kimi-code/kimi-for-coding']).toBeUndefined();
@@ -966,7 +966,7 @@ describe('supports_thinking_type', () => {
   it('forces default thinking on when preserving a thinking-only managed default', async () => {
     const config: ManagedKimiConfigShape = {
       providers: {
-        [KIMI_CODE_PROVIDER_NAME]: {
+        [CLOUD_CODE_PROVIDER_NAME]: {
           type: 'kimi',
           apiKey: '',
         },
@@ -975,7 +975,7 @@ describe('supports_thinking_type', () => {
       thinking: { enabled: false },
       models: {
         'kimi-code/kimi-for-coding': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'kimi-for-coding',
           maxContextSize: 262144,
           capabilities: ['thinking'],
@@ -1002,7 +1002,7 @@ describe('supports_thinking_type', () => {
   it('forces default thinking off when preserving a no-thinking managed default', async () => {
     const config: ManagedKimiConfigShape = {
       providers: {
-        [KIMI_CODE_PROVIDER_NAME]: {
+        [CLOUD_CODE_PROVIDER_NAME]: {
           type: 'kimi',
           apiKey: '',
         },
@@ -1011,7 +1011,7 @@ describe('supports_thinking_type', () => {
       thinking: { enabled: true },
       models: {
         'kimi-code/kimi-plain': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'kimi-plain',
           maxContextSize: 128000,
           capabilities: ['thinking'],
@@ -1268,12 +1268,12 @@ describe('selective merge', () => {
       providers: {},
       models: {
         'kimi-code/kimi-k2': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'kimi-k2',
           maxContextSize: 262144,
         },
         'kimi-code/removed': {
-          provider: KIMI_CODE_PROVIDER_NAME,
+          provider: CLOUD_CODE_PROVIDER_NAME,
           model: 'removed',
           maxContextSize: 128000,
         },
@@ -1433,13 +1433,13 @@ describe('managed protocol routing', () => {
     // The provider stays on the kimi wire + REST base; the anthropic transport
     // is resolved per-model at runtime, not baked into the provider config, so
     // the REST base keeps flowing to OAuth key derivation and plugin env.
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toMatchObject({
       type: 'kimi',
       baseUrl: KIMI_BASE_URL,
       apiKey: '',
     });
     expect(config.models?.['kimi-code/kimi-for-coding']).toMatchObject({
-      provider: KIMI_CODE_PROVIDER_NAME,
+      provider: CLOUD_CODE_PROVIDER_NAME,
       protocol: 'anthropic',
       betaApi: true,
     });
@@ -1452,12 +1452,12 @@ describe('managed protocol routing', () => {
       models: [makeModelInfo('kimi-for-coding')],
     });
 
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toMatchObject({
       type: 'kimi',
       baseUrl: KIMI_BASE_URL,
       apiKey: '',
     });
-    expect(config.models?.['kimi-code/kimi-for-coding']?.provider).toBe(KIMI_CODE_PROVIDER_NAME);
+    expect(config.models?.['kimi-code/kimi-for-coding']?.provider).toBe(CLOUD_CODE_PROVIDER_NAME);
     expect(config.models?.['kimi-code/kimi-for-coding']?.protocol).toBeUndefined();
   });
 
@@ -1475,7 +1475,7 @@ describe('managed protocol routing', () => {
     });
     // The provider never leaves the kimi wire / REST base across refreshes —
     // only the per-model protocol annotation changes.
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]).toMatchObject({
       type: 'kimi',
       baseUrl: KIMI_BASE_URL,
     });

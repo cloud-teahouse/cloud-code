@@ -77,7 +77,7 @@ export function ZipDropOverlay() {
       const file = e.dataTransfer?.files[0];
       if (file === undefined) return;
       if (!isZipFile(file)) {
-        window.alert('Please drop a .zip bundle exported from kimi-code (/export-debug-zip).');
+        window.alert('Please drop a .zip bundle exported from cloud-code (/export-debug-zip).');
         return;
       }
       void importFile(file);
@@ -104,7 +104,7 @@ export function ZipDropOverlay() {
           {importing ? 'importing debug zip…' : 'drop debug zip to import'}
         </div>
         <div className="mt-2 font-mono text-[11px] text-fg-3">
-          from kimi-code /export-debug-zip
+          from cloud-code /export-debug-zip
         </div>
       </div>
     </div>

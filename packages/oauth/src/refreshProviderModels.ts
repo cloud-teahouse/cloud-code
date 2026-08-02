@@ -1,4 +1,11 @@
 import {
+  CHATGPT_ACCOUNT_ID_HEADER,
+  CHATGPT_CODEX_PLATFORM_ID,
+  CHATGPT_CODEX_PROVIDER_NAME,
+  applyChatGptCodexConfig,
+  fetchChatGptCodexModels,
+} from './chatgpt-codex';
+import {
   applyCustomRegistryProvider,
   fetchCustomRegistry,
   removeCustomRegistryProvider,
@@ -8,8 +15,8 @@ import {
   applyManagedApiKeyProviderModels,
   applyManagedKimiCodeConfig,
   fetchManagedKimiCodeModels,
-  KIMI_CODE_PLATFORM_ID,
-  KIMI_CODE_PROVIDER_NAME,
+  CLOUD_CODE_PLATFORM_ID,
+  CLOUD_CODE_PROVIDER_NAME,
   resolveKimiCodeRuntimeAuth,
   type ManagedKimiConfigShape,
   type ManagedKimiModelAlias,
@@ -28,7 +35,7 @@ import { isRecord } from './utils';
 /**
  * Host capabilities the refresh orchestrator needs. Intentionally typed against
  * {@link ManagedKimiConfigShape} (the oauth package's own minimal config shape)
- * rather than the SDK's full `KimiConfig`, so this module has no dependency on
+ * rather than the SDK's full `CloudCodeConfig`, so this module has no dependency on
  * `agent-core` / the SDK and can be reused by both the CLI and the daemon.
  */
 export interface RefreshProviderHost {
@@ -37,8 +44,18 @@ export interface RefreshProviderHost {
   setConfig(patch: ManagedKimiConfigShape): Promise<ManagedKimiConfigShape>;
   resolveOAuthToken(providerName: string, oauthRef?: ManagedKimiOAuthRef): Promise<string>;
   /**
+   * Optional per-request headers an OAuth provider needs alongside the
+   * bearer token (e.g. `ChatGPT-Account-ID` for `managed:chatgpt-codex`).
+   * Hosts without header-capable providers may omit it; providers that
+   * require a header fail the refresh with an explicit reason.
+   */
+  resolveOAuthHeaders?(
+    providerName: string,
+    oauthRef?: ManagedKimiOAuthRef,
+  ): Promise<Record<string, string> | undefined>;
+  /**
    * Product User-Agent sent on custom-registry (api.json) fetches, e.g.
-   * `kimi-code-cli/1.2.3`. When omitted the fetch falls back to the runtime
+   * `cloud-code-cli/1.2.3`. When omitted the fetch falls back to the runtime
    * default (`User-Agent: node`).
    */
   readonly userAgent?: string;
@@ -363,7 +380,7 @@ function pickDefaultModel(
  *  2. Open platforms (moonshot-cn, moonshot-ai, …) — platform catalog fetch.
  *  2.5. Managed-endpoint API-key providers — hand-written `type: 'kimi'`
  *     providers (including a hand-written `managed:kimi-code` without an oauth
- *     ref) whose baseUrl is exactly the managed Kimi Code endpoint; refreshed
+ *     ref) whose baseUrl is exactly the managed Cloud Code endpoint; refreshed
  *     via `GET /models` with the configured API key as Bearer. Only model
  *     aliases are merged; the provider record is user-owned and never
  *     rewritten.
@@ -389,8 +406,8 @@ export async function refreshProviderModels(
   // ---------------------------------------------------------------------------
   // 1. Managed Kimi Code (OAuth)
   // ---------------------------------------------------------------------------
-  const managedProvider = readProvider(config, KIMI_CODE_PROVIDER_NAME);
-  const managedWanted = targetId === undefined || targetId === KIMI_CODE_PROVIDER_NAME;
+  const managedProvider = readProvider(config, CLOUD_CODE_PROVIDER_NAME);
+  const managedWanted = targetId === undefined || targetId === CLOUD_CODE_PROVIDER_NAME;
   if (
     managedWanted &&
     managedProvider !== undefined &&
@@ -402,7 +419,7 @@ export async function refreshProviderModels(
         configuredBaseUrl: managedProvider.baseUrl,
         configuredOAuthRef: managedProvider.oauth,
       });
-      const accessToken = await host.resolveOAuthToken(KIMI_CODE_PROVIDER_NAME, auth.oauthRef);
+      const accessToken = await host.resolveOAuthToken(CLOUD_CODE_PROVIDER_NAME, auth.oauthRef);
       const models = await fetchManagedKimiCodeModels({
         accessToken,
         baseUrl: auth.baseUrl,
@@ -419,25 +436,25 @@ export async function refreshProviderModels(
         const refreshedAliasKeys = providerRefreshAliasKeys(
           config,
           next,
-          KIMI_CODE_PROVIDER_NAME,
-          `${KIMI_CODE_PLATFORM_ID}/`,
+          CLOUD_CODE_PROVIDER_NAME,
+          `${CLOUD_CODE_PLATFORM_ID}/`,
         );
         restoreProviderAliases(
           next,
-          preserveUserProviderAliases(config, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
+          preserveUserProviderAliases(config, CLOUD_CODE_PROVIDER_NAME, refreshedAliasKeys),
         );
         restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
         clampDanglingDefault(next);
         clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
 
-        if (providerModelsEqual(config, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
-          unchanged.push(KIMI_CODE_PROVIDER_NAME);
+        if (providerModelsEqual(config, next, CLOUD_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
+          unchanged.push(CLOUD_CODE_PROVIDER_NAME);
         } else {
           const { added, removed } = computeChanges(
             collectModelIdsForAliases(config, refreshedAliasKeys),
             collectModelIdsForAliases(next, refreshedAliasKeys),
           );
-          await host.removeProvider(KIMI_CODE_PROVIDER_NAME);
+          await host.removeProvider(CLOUD_CODE_PROVIDER_NAME);
           config = await host.setConfig({
             providers: next.providers,
             models: next.models,
@@ -445,8 +462,8 @@ export async function refreshProviderModels(
             thinking: next.thinking,
           });
           changed.push({
-            providerId: KIMI_CODE_PROVIDER_NAME,
-            providerName: 'Kimi Code',
+            providerId: CLOUD_CODE_PROVIDER_NAME,
+            providerName: 'Cloud Code',
             added,
             removed,
           });
@@ -454,7 +471,92 @@ export async function refreshProviderModels(
       }
     } catch (error) {
       failed.push({
-        provider: KIMI_CODE_PROVIDER_NAME,
+        provider: CLOUD_CODE_PROVIDER_NAME,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 1.5. Managed ChatGPT Codex (OAuth)
+  // ---------------------------------------------------------------------------
+  // Same orchestration as the managed Kimi branch, but the Codex backend
+  // contract differs: `{models: [...]}` response shape, and the
+  // `ChatGPT-Account-ID` header must ride alongside the bearer token (the
+  // account id is stored in the credential file at login time).
+  const chatGptProvider = readProvider(config, CHATGPT_CODEX_PROVIDER_NAME);
+  const chatGptWanted = targetId === undefined || targetId === CHATGPT_CODEX_PROVIDER_NAME;
+  if (
+    chatGptWanted &&
+    chatGptProvider !== undefined &&
+    chatGptProvider.type === 'openai_responses' &&
+    chatGptProvider.oauth !== undefined
+  ) {
+    try {
+      const accessToken = await host.resolveOAuthToken(
+        CHATGPT_CODEX_PROVIDER_NAME,
+        chatGptProvider.oauth,
+      );
+      const headers = await host.resolveOAuthHeaders?.(
+        CHATGPT_CODEX_PROVIDER_NAME,
+        chatGptProvider.oauth,
+      );
+      const accountId = headers?.[CHATGPT_ACCOUNT_ID_HEADER];
+      if (accountId === undefined || accountId.length === 0) {
+        throw new Error('ChatGPT account id is not available; run /login to re-authenticate.');
+      }
+      const models = await fetchChatGptCodexModels({
+        accessToken,
+        accountId,
+        baseUrl: chatGptProvider.baseUrl,
+      });
+      if (models.length > 0) {
+        const next = structuredClone(config);
+        applyChatGptCodexConfig(next, {
+          models,
+          baseUrl: chatGptProvider.baseUrl,
+          oauthKey: chatGptProvider.oauth.key,
+          preserveDefaultModel: true,
+        });
+        const refreshedAliasKeys = providerRefreshAliasKeys(
+          config,
+          next,
+          CHATGPT_CODEX_PROVIDER_NAME,
+          `${CHATGPT_CODEX_PLATFORM_ID}/`,
+        );
+        restoreProviderAliases(
+          next,
+          preserveUserProviderAliases(config, CHATGPT_CODEX_PROVIDER_NAME, refreshedAliasKeys),
+        );
+        restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
+        clampDanglingDefault(next);
+        clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+
+        if (providerModelsEqual(config, next, CHATGPT_CODEX_PROVIDER_NAME, refreshedAliasKeys)) {
+          unchanged.push(CHATGPT_CODEX_PROVIDER_NAME);
+        } else {
+          const { added, removed } = computeChanges(
+            collectModelIdsForAliases(config, refreshedAliasKeys),
+            collectModelIdsForAliases(next, refreshedAliasKeys),
+          );
+          await host.removeProvider(CHATGPT_CODEX_PROVIDER_NAME);
+          config = await host.setConfig({
+            providers: next.providers,
+            models: next.models,
+            defaultModel: next.defaultModel,
+            thinking: next.thinking,
+          });
+          changed.push({
+            providerId: CHATGPT_CODEX_PROVIDER_NAME,
+            providerName: 'ChatGPT Codex',
+            added,
+            removed,
+          });
+        }
+      }
+    } catch (error) {
+      failed.push({
+        provider: CHATGPT_CODEX_PROVIDER_NAME,
         reason: error instanceof Error ? error.message : String(error),
       });
     }
@@ -542,7 +644,7 @@ export async function refreshProviderModels(
   // 2.5. Managed-endpoint API-key providers (hand-configured distributed keys)
   // ---------------------------------------------------------------------------
   // A hand-written `type: 'kimi'` provider whose baseUrl is exactly the managed
-  // Kimi Code endpoint, carrying an API key (inline or via `env.KIMI_API_KEY`)
+  // Cloud Code endpoint, carrying an API key (inline or via `env.KIMI_API_KEY`)
   // instead of an oauth ref, gets its model list refreshed from
   // `{baseUrl}/models` just like the OAuth branch. Strict baseUrl matching
   // keeps proxies / gateways with an untrusted `/models` schema out.
@@ -570,7 +672,7 @@ export async function refreshProviderModels(
       // `kimi-code/` alias prefix so the two shapes merge cleanly if the user
       // later logs in via OAuth; ordinary providers use their own id.
       const aliasPrefix =
-        providerId === KIMI_CODE_PROVIDER_NAME ? `${KIMI_CODE_PLATFORM_ID}/` : `${providerId}/`;
+        providerId === CLOUD_CODE_PROVIDER_NAME ? `${CLOUD_CODE_PLATFORM_ID}/` : `${providerId}/`;
       const next = structuredClone(config);
       applyManagedApiKeyProviderModels(next, providerId, models, aliasPrefix);
       const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
@@ -627,7 +729,7 @@ export async function refreshProviderModels(
     }
   >();
   for (const providerId of Object.keys(config.providers)) {
-    if (providerId === KIMI_CODE_PROVIDER_NAME) continue;
+    if (providerId === CLOUD_CODE_PROVIDER_NAME) continue;
     if (isOpenPlatformId(providerId)) continue;
     const provider = readProvider(config, providerId);
     if (provider === undefined) continue;

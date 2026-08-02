@@ -10,15 +10,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { Kaos } from '@moonshot-ai/kaos';
-import { createKimiHarness, KimiHarness } from '#/index';
-import type { KimiError } from '#/index';
+import type { Kaos } from '@cloud-code/kaos';
+import { createCloudCodeHarness, CloudCodeHarness } from '#/index';
+import type { CloudCodeError } from '#/index';
 import type { ResumeSessionInput, ResumedSessionSummary } from '#/types';
 import { SDKRpcClientBase } from '#/rpc';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { waitForAgentWireEvent } from './session-runtime-helpers';
-import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 import { TEST_IDENTITY } from './test-identity';
 
 // node-sdk/agent-core normalize paths to forward slashes (pathe). Mirror that
@@ -59,7 +58,7 @@ max_context_size = 1000
 }
 
 async function writeReviewerAgent(workDir: string): Promise<void> {
-  const agentDir = join(workDir, '.kimi-code', 'agents');
+  const agentDir = join(workDir, '.cloud-code', 'agents');
   await mkdir(agentDir, { recursive: true });
   await writeFile(
     join(agentDir, 'reviewer.md'),
@@ -106,310 +105,12 @@ class StubRpc extends SDKRpcClientBase {
   }
 }
 
-describe('KimiHarness.createSession transport link', () => {
-  it('emits session_started with client attribution when a session is opened', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-      telemetry: recordingTelemetry(records),
-    });
-
-    try {
-      const session = await harness.createSession({
-        id: 'ses_session_started',
-        workDir,
-      });
-      await harness.resumeSession({ id: session.id });
-
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'shell',
-          resumed: false,
-        },
-      });
-      expect(records.filter((record) => record.event === 'session_started')).toHaveLength(1);
-      expect(records).toContainEqual({
-        event: 'session_new',
-        sessionId: session.id,
-        properties: undefined,
-      });
-
-      await session.close();
-      await harness.resumeSession({ id: session.id });
-
-      expect(records.filter((record) => record.event === 'session_started')).toHaveLength(2);
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'shell',
-          resumed: true,
-        },
-      });
-      expect(records).toContainEqual({
-        event: 'session_resume',
-        sessionId: session.id,
-        properties: undefined,
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('uses the configured UI mode for session_started attribution', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-      telemetry: recordingTelemetry(records),
-      uiMode: 'print',
-    });
-
-    try {
-      const session = await harness.createSession({
-        id: 'ses_session_started_print',
-        workDir,
-      });
-
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'print',
-          resumed: false,
-        },
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('merges process-level sessionStartedProperties into session_started', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-      telemetry: recordingTelemetry(records),
-      sessionStartedProperties: { yolo: true, plan: false },
-    });
-
-    try {
-      const session = await harness.createSession({
-        id: 'ses_process_props',
-        workDir,
-      });
-
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'shell',
-          resumed: false,
-          yolo: true,
-          plan: false,
-        },
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('merges session-level sessionStartedProperties and overrides process-level ones', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-      telemetry: recordingTelemetry(records),
-      sessionStartedProperties: { mode: 'process', source: 'process' },
-    });
-
-    try {
-      const session = await harness.createSession({
-        id: 'ses_scoped_props',
-        workDir,
-        sessionStartedProperties: { mode: 'new' },
-      });
-
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'shell',
-          resumed: false,
-          mode: 'new',
-          source: 'process',
-        },
-      });
-
-      await session.close();
-      await harness.resumeSession({
-        id: session.id,
-        sessionStartedProperties: { mode: 'load' },
-      });
-
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'shell',
-          resumed: true,
-          mode: 'load',
-          source: 'process',
-        },
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('does not let sessionStartedProperties override canonical session_started fields', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-      telemetry: recordingTelemetry(records),
-    });
-
-    try {
-      const session = await harness.createSession({
-        id: 'ses_reserved_keys',
-        workDir,
-        sessionStartedProperties: {
-          client_name: 'evil',
-          client_version: 'evil',
-          ui_mode: 'evil',
-          resumed: true,
-          extra: 'kept',
-        },
-      });
-
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'shell',
-          resumed: false,
-          extra: 'kept',
-        },
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('emits session_fork with the forked session context', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-      telemetry: recordingTelemetry(records),
-    });
-
-    try {
-      const source = await harness.createSession({
-        id: 'ses_fork_source',
-        workDir,
-      });
-      const forked = await harness.forkSession({
-        id: source.id,
-        forkId: 'ses_fork_child',
-        title: 'Forked child',
-      });
-
-      expect(forked.id).toBe('ses_fork_child');
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: forked.id,
-        properties: {
-          client_id: null,
-          client_name: 'kimi-code-cli',
-          client_version: '0.0.0-test',
-          ui_mode: 'shell',
-          resumed: true,
-        },
-      });
-      expect(records).toContainEqual({
-        event: 'session_fork',
-        sessionId: forked.id,
-        properties: undefined,
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('does not invent client attribution without host identity', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
-      homeDir,
-      telemetry: recordingTelemetry(records),
-    });
-
-    try {
-      const session = await harness.createSession({
-        id: 'ses_session_started_shell',
-        workDir,
-      });
-
-      expect(records).toContainEqual({
-        event: 'session_started',
-        sessionId: session.id,
-        properties: {
-          client_id: null,
-          client_name: null,
-          client_version: null,
-          ui_mode: 'shell',
-          resumed: false,
-        },
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
+describe('CloudCodeHarness.createSession transport link', () => {
   it('creates metadata and keeps the session active in the harness', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     await writeTestModelConfig(homeDir);
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -479,7 +180,7 @@ effort = "medium"
 `,
       'utf-8',
     );
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -508,7 +209,7 @@ effort = "medium"
   it('does not require provider config or API keys before prompt is implemented', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -525,21 +226,21 @@ effort = "medium"
 
   it('requires a non-empty workDir on createSession', async () => {
     const homeDir = await makeTempDir();
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(
         harness.createSession({ id: 'ses_missing_workdir' } as never),
       ).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.work_dir_required',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
       await expect(
         harness.createSession({ id: 'ses_blank_workdir', workDir: '   ' }),
       ).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.work_dir_required',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -551,7 +252,7 @@ effort = "medium"
     // Project-local mcp.json is intentionally ignored, so plant the malformed
     // file under the user home dir where the loader actually reads from.
     await writeFile(join(homeDir, 'mcp.json'), '{not json}', 'utf-8');
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -560,7 +261,7 @@ effort = "medium"
       await expect(
         harness.createSession({ id: 'ses_bad_mcp_config', workDir }),
       ).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'config.invalid',
       });
       expect(await harness.listSessions({ workDir })).toEqual([]);
@@ -573,7 +274,7 @@ effort = "medium"
   it('does not persist a session record when the requested agent profile is missing', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -586,7 +287,7 @@ effort = "medium"
           agentProfile: 'missing-agent',
         }),
       ).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'agent.not_found',
       });
       expect(await harness.listSessions({ workDir })).toEqual([]);
@@ -599,7 +300,7 @@ effort = "medium"
   it('allows the session ID to be reused after agent profile selection fails', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -627,7 +328,7 @@ effort = "medium"
   it('does not persist a session record when an explicit agent file cannot be loaded', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -650,7 +351,7 @@ effort = "medium"
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     await writeTestModelConfig(homeDir);
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -683,7 +384,7 @@ effort = "medium"
   it('permanently deletes an active session', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -704,13 +405,13 @@ effort = "medium"
 
   it('returns session.not_found when deleteSession targets a missing id', async () => {
     const homeDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await expect(harness.deleteSession('ses_delete_missing')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.not_found',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -719,7 +420,7 @@ effort = "medium"
   it('allows a deleted session id to be created again', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
     const sessionId = 'ses_delete_recreate';
 
     try {
@@ -741,7 +442,7 @@ effort = "medium"
     const legacySourceDir = await makeTempDir();
     const markerPath = join(legacySourceDir, 'legacy-marker.txt');
     await writeFile(markerPath, 'legacy source remains', 'utf-8');
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       const session = await harness.createSession({
@@ -761,7 +462,7 @@ effort = "medium"
   it('applies initial thinking and permission runtime options', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -805,7 +506,7 @@ effort = "medium"
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     await writeFile(join(homeDir, 'config.toml'), 'default_permission_mode = "auto"\n', 'utf-8');
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -841,13 +542,11 @@ effort = "medium"
   });
 
   it('rebinds an active session when resumeSession receives a new Kaos', async () => {
-    const records: TelemetryRecord[] = [];
     const rpc = new StubRpc();
-    const harness = new KimiHarness(rpc, {
+    const harness = new CloudCodeHarness(rpc, {
       homeDir: '/tmp/home',
       configPath: '/tmp/config.toml',
       auth: { status: async () => ({ providers: [] }) } as never,
-      telemetry: recordingTelemetry(records),
       ensureConfigFile: async () => undefined,
       onClose: () => undefined,
     });
@@ -871,7 +570,7 @@ effort = "medium"
     const workDir = await makeTempDir();
     await writeTestModelConfig(homeDir);
     await writeReviewerAgent(workDir);
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       const session = await harness.createSession({
@@ -895,7 +594,7 @@ effort = "medium"
     const workDir = await makeTempDir();
     await writeTestModelConfig(homeDir);
     await writeReviewerAgent(workDir);
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       const session = await harness.createSession({
@@ -917,7 +616,7 @@ effort = "medium"
     const workDir = await makeTempDir();
     await writeTestModelConfig(homeDir);
     await writeReviewerAgent(workDir);
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       const session = await harness.createSession({
@@ -938,7 +637,7 @@ effort = "medium"
   });
 });
 
-function coreSessionIds(harness: KimiHarness): readonly string[] {
+function coreSessionIds(harness: CloudCodeHarness): readonly string[] {
   const core = (
     harness as unknown as {
       readonly rpc: { readonly core: { readonly sessions: ReadonlyMap<string, unknown> } };

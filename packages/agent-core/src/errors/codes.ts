@@ -2,7 +2,7 @@
  * Error codes for Kimi Core's public error protocol.
  *
  * `ErrorCodes` is the source of truth for every code Kimi Core may emit.
- * Downstream consumers (SDK, RPC clients, telemetry, agent-facing docs)
+ * Downstream consumers (SDK, RPC clients, agent-facing docs)
  * should depend on these string values rather than on class identity.
  *
  * Codes follow `domain.reason`. Adding a code is a minor change; renaming
@@ -30,6 +30,7 @@ export const ErrorCodes = {
   SESSION_APPROVAL_HANDLER_ERROR: 'session.approval_handler_error',
   SESSION_QUESTION_HANDLER_ERROR: 'session.question_handler_error',
   SESSION_INIT_FAILED: 'session.init_failed',
+  SESSION_OUTPUT_STYLE_NOT_FOUND: 'session.output_style_not_found',
 
   AGENT_NOT_FOUND: 'agent.not_found',
   TURN_AGENT_BUSY: 'turn.agent_busy',
@@ -51,6 +52,7 @@ export const ErrorCodes = {
   PROVIDER_API_ERROR: 'provider.api_error',
   PROVIDER_FILTERED: 'provider.filtered',
   PROVIDER_RATE_LIMIT: 'provider.rate_limit',
+  PROVIDER_QUOTA_EXHAUSTED: 'provider.quota_exhausted',
   PROVIDER_AUTH_ERROR: 'provider.auth_error',
   PROVIDER_CONNECTION_ERROR: 'provider.connection_error',
 
@@ -81,9 +83,9 @@ export const ErrorCodes = {
   INTERNAL: 'internal',
 } as const;
 
-export type KimiErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+export type CloudCodeErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
 
-export interface KimiErrorInfo {
+export interface CloudCodeErrorInfo {
   readonly title: string;
   readonly retryable: boolean;
   /**
@@ -94,7 +96,7 @@ export interface KimiErrorInfo {
   readonly action?: string;
 }
 
-export const KIMI_ERROR_INFO = {
+export const CLOUD_CODE_ERROR_INFO = {
   'config.invalid': {
     title: 'Invalid configuration',
     retryable: false,
@@ -216,6 +218,12 @@ export const KIMI_ERROR_INFO = {
     public: false,
     action: 'Review the init failure details and try again.',
   },
+  'session.output_style_not_found': {
+    title: 'Output style not found',
+    retryable: false,
+    public: true,
+    action: 'List the available styles with /output-style.',
+  },
 
   'agent.not_found': {
     title: 'Agent not found',
@@ -296,7 +304,8 @@ export const KIMI_ERROR_INFO = {
     title: 'Context window overflow',
     retryable: true,
     public: true,
-    action: 'Compact the conversation or start a new session.',
+    action:
+      'Run /compact to compact manually, start a new session, or switch to a model alias with a larger context window.',
   },
   'loop.max_steps_exceeded': {
     title: 'Turn exceeded max steps',
@@ -321,6 +330,12 @@ export const KIMI_ERROR_INFO = {
     retryable: true,
     public: true,
     action: 'Retry after a delay or reduce request frequency.',
+  },
+  'provider.quota_exhausted': {
+    title: 'Provider quota exhausted',
+    retryable: false,
+    public: true,
+    action: 'Wait for the usage window to reset or switch accounts.',
   },
   'provider.auth_error': {
     title: 'Provider authentication error',
@@ -414,7 +429,7 @@ export const KIMI_ERROR_INFO = {
     title: 'Plugin state failed to load',
     retryable: true,
     public: true,
-    action: 'Fix the installed.json file under $KIMI_CODE_HOME/plugins/ and run /plugins reload.',
+    action: 'Fix the installed.json file under $CLOUD_CODE_HOME/plugins/ and run /plugins reload.',
   },
 
   'request.invalid': {
@@ -455,4 +470,4 @@ export const KIMI_ERROR_INFO = {
     public: true,
     action: 'Inspect logs or report the issue with diagnostics.',
   },
-} as const satisfies Record<KimiErrorCode, KimiErrorInfo>;
+} as const satisfies Record<CloudCodeErrorCode, CloudCodeErrorInfo>;

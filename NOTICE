@@ -1,0 +1,14 @@
+Cloud Code CLI
+==============
+
+This project is derived from kimi-code (https://github.com/MoonshotAI/kimi-code),
+Copyright (c) Moonshot AI, licensed under the MIT License.
+
+Cloud Code CLI is a derivative distribution created by copying a subset of the
+kimi-code monorepo and rebranding it (package names, CLI binary, environment
+variable prefix, and product name). The original MIT license text is retained
+in the LICENSE file at the root of this repository.
+
+Kimi, Moonshot, and related model/provider identifiers that remain in the
+source (provider type literals, model IDs, API endpoints, `KIMI_API_KEY`)
+refer to Moonshot AI's services and are not product names of this project.

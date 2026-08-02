@@ -1,4 +1,4 @@
-import type { KimiConfig } from '@moonshot-ai/agent-core';
+import type { CloudCodeConfig } from '@cloud-code/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -63,12 +63,12 @@ describe('fetchCatalog', () => {
       'https://x/api.json',
       {
         fetchImpl: fetchMock as unknown as typeof fetch,
-        userAgent: 'kimi-code-cli/1.2.3',
+        userAgent: 'cloud-code-cli/1.2.3',
       },
     );
     const withUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const withUaHeaders = withUa[1].headers as Record<string, string>;
-    expect(withUaHeaders['User-Agent']).toBe('kimi-code-cli/1.2.3');
+    expect(withUaHeaders['User-Agent']).toBe('cloud-code-cli/1.2.3');
     expect(withUaHeaders['Accept']).toBe('application/json');
 
     fetchMock.mockClear();
@@ -108,7 +108,7 @@ describe('catalogModelToAlias', () => {
 
 describe('applyCatalogProvider', () => {
   it('writes provider, model aliases, and defaults', () => {
-    const config = { providers: {} } as KimiConfig;
+    const config = { providers: {} } as CloudCodeConfig;
     const result = applyCatalogProvider(config, {
       providerId: 'anthropic',
       wire: 'anthropic',
@@ -145,7 +145,7 @@ describe('applyCatalogProvider', () => {
         },
       },
     });
-    const config = { providers: {} } as KimiConfig;
+    const config = { providers: {} } as CloudCodeConfig;
 
     applyCatalogProvider(config, {
       providerId: 'deepseek',
@@ -183,7 +183,7 @@ describe('applyCatalogProvider', () => {
         },
       },
     });
-    const config = { providers: {} } as KimiConfig;
+    const config = { providers: {} } as CloudCodeConfig;
 
     applyCatalogProvider(config, {
       providerId: 'kimi-for-coding',
@@ -227,7 +227,7 @@ describe('applyCatalogProvider', () => {
         },
       },
     });
-    const config = { providers: {} } as KimiConfig;
+    const config = { providers: {} } as CloudCodeConfig;
 
     applyCatalogProvider(config, {
       providerId: 'gateway',
@@ -269,7 +269,7 @@ describe('applyCatalogProvider', () => {
         },
       },
     });
-    const config = { providers: {} } as KimiConfig;
+    const config = { providers: {} } as CloudCodeConfig;
 
     applyCatalogProvider(config, {
       providerId: 'gateway',
@@ -304,7 +304,7 @@ describe('applyCatalogProvider', () => {
         'anthropic/stale': { provider: 'anthropic', model: 'stale', maxContextSize: 1 },
         'other/keep': { provider: 'other', model: 'keep', maxContextSize: 1 },
       },
-    } as unknown as KimiConfig;
+    } as unknown as CloudCodeConfig;
 
     applyCatalogProvider(config, {
       providerId: 'anthropic',

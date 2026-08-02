@@ -1,7 +1,7 @@
-import type { KimiConfig } from './schema';
+import type { CloudCodeConfig } from './schema';
 
 /**
- * Print-mode (`kimi -p`) defaults for the v1 engine. A headless run should not
+ * Print-mode (`cloud-code -p`) defaults for the v1 engine. A headless run should not
  * be cut short by limits meant for interactive use, so every value here is
  * "effectively unbounded". Explicit user config always wins over these.
  */
@@ -40,7 +40,7 @@ export const PRINT_BASH_TASK_TIMEOUT_S_DEFAULT = 0;
  * `handlePrintMainTurnCompleted`), because `printBackgroundMode`'s fallback
  * must keep honoring the legacy `keep_alive_on_exit` → `'drain'` mapping.
  */
-export function applyPrintModeConfigDefaults(config: KimiConfig): KimiConfig {
+export function applyPrintModeConfigDefaults(config: CloudCodeConfig): CloudCodeConfig {
   return {
     ...config,
     // `0` is already what an unset maxStepsPerTurn means (unlimited); the

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, resolve } from 'pathe';
-import type { Readable, Writable } from 'node:stream';
+import { Readable } from 'node:stream';
+import type { Writable } from 'node:stream';
 
 import * as ssh2 from 'ssh2';
 import type {
@@ -14,9 +15,15 @@ import type {
 
 import type { Environment } from './environment';
 import { KaosError, KaosFileExistsError, KaosValueError } from './errors';
-import { BufferedReadable, decodeTextWithErrors, globPatternToRegex } from './internal';
+import {
+  BufferedReadable,
+  decodeTextWithErrors,
+  globPatternToRegex,
+  ignoreBrokenPipe,
+} from './internal';
 import type { Kaos } from './kaos';
 import type { KaosProcess } from './process';
+import type { KaosPtyProcess, PtyExecOptions } from './pty';
 import type { StatResult } from './types';
 
 // ── stat mode constants ────────────────────────────────────────────────
@@ -28,6 +35,13 @@ const S_IFSOCK = 0o140000;
 const S_IFCHR = 0o020000;
 const S_IFBLK = 0o060000;
 const S_IFIFO = 0o010000;
+
+/**
+ * Fallback bound for {@link SSHKaos.close}: ssh2's `end()` is a no-op on an
+ * already-dead socket and no further 'close' event fires, so the close wait
+ * races this timeout instead of hanging forever.
+ */
+const CLOSE_FALLBACK_TIMEOUT_MS = 2_000;
 
 const DEFAULT_SFTP_STATUS_CODE = {
   BAD_MESSAGE: 5,
@@ -227,6 +241,7 @@ export class SSHProcess implements KaosProcess {
   constructor(channel: ClientChannel) {
     this._channel = channel;
     this.stdin = channel;
+    ignoreBrokenPipe(this.stdin);
     this.stdout = new BufferedReadable(channel as unknown as Readable);
     this.stderr = new BufferedReadable(channel.stderr);
 
@@ -268,6 +283,118 @@ export class SSHProcess implements KaosProcess {
     this._disposed = true;
     this.stdin.destroy();
     this.stdout.destroy();
+    this.stderr.destroy();
+  }
+}
+
+// ── SSH PTY process ────────────────────────────────────────────────────
+
+/**
+ * A {@link KaosPtyProcess} backed by an ssh2 `ClientChannel` opened with a
+ * pseudo-terminal request (RFC 4254 §6.2).
+ *
+ * With a PTY allocated, the server merges the command's stdout and stderr
+ * onto the channel's single data stream (no extended-data stderr packets),
+ * so `output` is the channel stream itself and `stderr` is an already-ended
+ * empty stream to satisfy the {@link KaosProcess} contract. Terminal input is
+ * written via {@link write} (keystrokes, control characters) and the window
+ * size follows {@link resize}.
+ *
+ * Exit semantics differ from {@link SSHProcess} in one deliberate way: a
+ * channel that closes without ever reporting an exit status means the
+ * connection dropped mid-command (a normal remote exit always delivers an
+ * 'exit' event first). `wait()` rejects there — with a readable
+ * connection-lost message — instead of inventing exit code 1, so callers
+ * settling a session task can record *why* the session ended.
+ */
+export class SSHPtyProcess implements KaosPtyProcess {
+  readonly stdin: Writable;
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+  readonly output: Readable;
+  readonly pid: number = -1;
+
+  private _exitCode: number | null = null;
+  private readonly _exitPromise: Promise<number>;
+  private readonly _channel: ClientChannel;
+  private _disposed = false;
+
+  constructor(channel: ClientChannel) {
+    this._channel = channel;
+    this.stdin = channel;
+    ignoreBrokenPipe(this.stdin);
+    this.output = new BufferedReadable(channel as unknown as Readable);
+    this.stdout = this.output;
+    this.stderr = Readable.from([]);
+
+    let sawExit = false;
+    this._exitPromise = new Promise<number>((resolve, reject) => {
+      channel.on('exit', (code: number | null) => {
+        sawExit = true;
+        this._exitCode = code ?? 1;
+      });
+      // Resolve on 'close', not 'exit', so all buffered output is flushed
+      // before wait() settles (same ordering as SSHProcess).
+      channel.on('close', (code: number | null) => {
+        if (sawExit) {
+          resolve(this._exitCode ?? 1);
+          return;
+        }
+        if (typeof code === 'number') {
+          // Some ssh2 backends surface the exit status only on 'close'.
+          this._exitCode = code;
+          resolve(code);
+          return;
+        }
+        reject(
+          new KaosConnectionError(
+            'SSH channel closed before the remote command reported an exit status; ' +
+              'the connection was lost mid-session.',
+          ),
+        );
+      });
+      channel.on('error', (err: Error) => {
+        reject(err);
+      });
+    });
+    // Attach a sink immediately: a dropped connection rejects this promise,
+    // and Node must not flag it as unhandled before the owning session task
+    // attaches its own handler. Awaiting wait() still delivers the rejection.
+    void this._exitPromise.catch(() => {});
+  }
+
+  get exitCode(): number | null {
+    return this._exitCode;
+  }
+
+  async wait(): Promise<number> {
+    return this._exitPromise;
+  }
+
+  write(data: string): void {
+    this._channel.write(data);
+  }
+
+  resize(cols: number, rows: number): void {
+    // ssh2's setWindow takes (rows, cols, ...) — argument order swapped
+    // relative to this interface. Pixel dimensions are left at 0 (unused).
+    this._channel.setWindow(rows, cols, 0, 0);
+  }
+
+  kill(signal?: NodeJS.Signals): Promise<void> {
+    // Same wire encoding as SSHProcess.kill: strip the "SIG" prefix
+    // (RFC 4254 §6.9). ssh2's signal() is a silent no-op on a closed channel.
+    const rawSignal = signal ?? 'SIGTERM';
+    const sshSignal = rawSignal.startsWith('SIG') ? rawSignal.slice(3) : rawSignal;
+    this._channel.signal(sshSignal);
+    return Promise.resolve();
+  }
+
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.stdin.destroy();
+    this.output.destroy();
     this.stderr.destroy();
   }
 }
@@ -415,9 +542,13 @@ function sftpAppendFile(sftp: SFTPWrapper, path: string, data: string | Buffer):
   });
 }
 
-function clientExec(client: Client, command: string): Promise<ClientChannel> {
+function clientExec(
+  client: Client,
+  command: string,
+  options?: { pty?: { term?: string; cols?: number; rows?: number } },
+): Promise<ClientChannel> {
   return new Promise<ClientChannel>((resolve, reject) => {
-    client.exec(command, (err: Error | undefined, channel: ClientChannel) => {
+    client.exec(command, options ?? {}, (err: Error | undefined, channel: ClientChannel) => {
       if (err) {
         reject(err);
       } else {
@@ -440,6 +571,7 @@ export class SSHKaos implements Kaos {
   private _home: string;
   private _cwd: string;
   private readonly _envLayers: readonly Record<string, string>[];
+  private _closePromise: Promise<void> | undefined;
 
   // Stub: real wiring (probing the remote host via `uname` / `$SHELL` over the
   // SSH transport) is deferred.
@@ -928,18 +1060,60 @@ export class SSHKaos implements Kaos {
     return new SSHProcess(channel);
   }
 
+  /**
+   * Spawn a command attached to a remote pseudo-terminal. The command string
+   * is built exactly like `exec`/`execWithEnv` (cd to the kaos cwd, env as
+   * POSIX inline assignments to bypass sshd `AcceptEnv`); the PTY is
+   * requested on the same channel via ssh2's exec options. Sandboxing is not
+   * available on a remote kaos — `sandbox.mode: 'enforce'` is rejected
+   * upstream via the tool's `unavailableReason` path (fail-closed).
+   */
+  async ptyExec(
+    args: string[],
+    env?: Record<string, string>,
+    opts?: PtyExecOptions,
+  ): Promise<KaosPtyProcess> {
+    if (args.length === 0) {
+      throw new KaosValueError(
+        'SSHKaos.ptyExec(): at least one argument (the command to run) is required.',
+      );
+    }
+    const command = SSHKaos._buildExecCommand(args, this._cwd, this._buildExecEnv(env));
+    const channel = await clientExec(this._client, command, {
+      // Undefined fields fall back to ssh2's defaults (vt100 / 80x24).
+      pty: { term: opts?.term, cols: opts?.cols, rows: opts?.rows },
+    });
+    return new SSHPtyProcess(channel);
+  }
+
   // ── SSH lifecycle ──────────────────────────────────────────────────
 
   /**
    * Close the SSH connection. After this, the SSHKaos instance is unusable.
+   *
+   * Idempotent: repeated calls return the same promise. The underlying wait
+   * races a short fallback timeout because ssh2's `end()` is a no-op when the
+   * socket is already dead (e.g. the server dropped first and 'close' already
+   * fired) — without it `await close()` would hang forever on cleanup.
    */
   close(): Promise<void> {
+    this._closePromise ??= this._closeOnce();
+    return this._closePromise;
+  }
+
+  private _closeOnce(): Promise<void> {
     this._sftp.end();
-    return new Promise<void>((resolve) => {
-      this._client.once('close', () => {
-        resolve();
-      });
-      this._client.end();
+    const closed = new Promise<void>((resolve) => {
+      this._client.once('close', resolve);
     });
+    // ssh2's end() is a no-op on an already-dead socket and no 'close' ever
+    // follows, so race a short fallback (unref'd: it must not hold the
+    // process open when 'close' wins).
+    const fallback = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, CLOSE_FALLBACK_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    this._client.end();
+    return Promise.race([closed, fallback]);
   }
 }

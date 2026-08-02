@@ -1,0 +1,79 @@
+name: Dev CI (private repo)
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Dev-channel builds for the private repo: version `<short8>-dev`, channel
+# `dev`, uploaded as Actions artifacts only. dev builds are never published —
+# /update refuses them at runtime and install.sh declines the channel.
+#
+# This file also ships in the public snapshot, where the job below self-skips
+# via the repository gate: the public repo ships beta builds from ci.yml.
+# Channel selection therefore needs no edits during the snapshot export.
+jobs:
+  bun-binary-dev:
+    if: github.repository != 'cloud-teahouse/cloud-code'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: bun-linux-x64, artifact: cloud-code-linux-x64 }
+          - { target: bun-linux-arm64, artifact: cloud-code-linux-arm64 }
+          - { target: bun-darwin-x64, artifact: cloud-code-darwin-x64 }
+          - { target: bun-darwin-arm64, artifact: cloud-code-darwin-arm64 }
+          - { target: bun-windows-x64, artifact: cloud-code-windows-x64.exe }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # See ci.yml: the version comes from package.json `packageManager`.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Compute dev version
+        run: echo "DEV_VERSION=${GITHUB_SHA::8}-dev" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Compile single-file binary
+        run: |
+          bun build apps/cloud-code/dist/main.mjs \
+            --compile \
+            --minify \
+            --define __CLOUD_CODE_VERSION__="\"${DEV_VERSION}\"" \
+            --define __CLOUD_CODE_CHANNEL__="\"dev\"" \
+            --define __CLOUD_CODE_COMMIT__="\"${GITHUB_SHA}\"" \
+            --define __CLOUD_CODE_BUILD_TARGET__="\"${{ matrix.target }}\"" \
+            --target=${{ matrix.target }} \
+            --outfile release/${{ matrix.artifact }}
+
+      - name: Smoke check (native target only)
+        if: matrix.target == 'bun-linux-x64'
+        run: |
+          ./release/${{ matrix.artifact }} --version
+          ./release/${{ matrix.artifact }} --version | grep -Fx "$DEV_VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ env.DEV_VERSION }}
+          path: release/${{ matrix.artifact }}
+          retention-days: 14

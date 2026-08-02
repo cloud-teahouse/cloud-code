@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'tsdown';
 
 import { rawTextPlugin } from '../../build/raw-text-plugin.mjs';
+import { wasmInlinePlugin } from '../../build/wasm-inline-plugin.mjs';
 
 export default defineConfig({
   entry: ['./src/index.ts'],
@@ -10,7 +11,7 @@ export default defineConfig({
   dts: false,
   outDir: 'dist',
   clean: true,
-  plugins: [rawTextPlugin()],
+  plugins: [rawTextPlugin(), wasmInlinePlugin()],
   banner: {
     js: [
       "import { fileURLToPath as __cjsShimFileURLToPath } from 'node:url';",
@@ -20,13 +21,15 @@ export default defineConfig({
     ].join('\n'),
   },
   alias: {
-    '@moonshot-ai/agent-core': fileURLToPath(new URL('../agent-core/src/index.ts', import.meta.url)),
-    '@moonshot-ai/kaos': fileURLToPath(new URL('../kaos/src/index.ts', import.meta.url)),
-    '@moonshot-ai/kimi-code-oauth': fileURLToPath(new URL('../oauth/src/index.ts', import.meta.url)),
-    '@moonshot-ai/kosong': fileURLToPath(new URL('../kosong/src/index.ts', import.meta.url)),
+    '@cloud-code/agent-core': fileURLToPath(new URL('../agent-core/src/index.ts', import.meta.url)),
+    '@cloud-code/kaos': fileURLToPath(new URL('../kaos/src/index.ts', import.meta.url)),
+    '@cloud-code/oauth': fileURLToPath(new URL('../oauth/src/index.ts', import.meta.url)),
+    '@cloud-code/kosong': fileURLToPath(new URL('../kosong/src/index.ts', import.meta.url)),
   },
   deps: {
-    alwaysBundle: [/^@moonshot-ai\//],
-    neverBundle: [],
+    alwaysBundle: [/^@cloud-code\//],
+    // Wasm assets resolve from node_modules at runtime — keep the packages
+    // external and declared as dependencies.
+    neverBundle: ['web-tree-sitter', 'tree-sitter-bash'],
   },
 });

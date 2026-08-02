@@ -8,4 +8,6 @@ Each of these is enforced — a violation is rejected before any subagent starts
 
 Use enough subagents to keep the work focused and parallel. AgentSwarm supports up to 128 subagents, and launches are queued automatically, so it is safe to split large tasks into many clear, independent items.
 
+Spawned subagents inherit your model by default; pass `model` with a model alias to run them on a different model, or `model="secondary"` to use the `[secondary_model]` config (falls back to your model when unconfigured). A subagent type whose profile pins a model ignores `model`.
+
 If `AgentSwarm` is called, that call must be the only tool call in the response.

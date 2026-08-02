@@ -223,8 +223,6 @@ describe('e2e: abort cleanup', () => {
   });
 
   it('a rejected generate() does not leave the toolset / toolResultPromises in an inconsistent state for a fresh step() call', async () => {
-    // First step(): aborts mid-stream.
-    // Second step(): no tool calls, should succeed cleanly.
     const abortParts: StreamedMessagePart[] = [
       { type: 'text', text: 'x' },
       { type: 'text', text: 'y' },
@@ -256,7 +254,6 @@ describe('e2e: abort cleanup', () => {
       ),
     ).rejects.toThrow();
 
-    // Now reuse the toolset in a second, unrelated step().
     const textOnly = new TrackingProvider([{ type: 'text', text: 'ok' }], 0);
     const result = await step(textOnly, '', toolset, []);
     expect(result.toolCalls).toHaveLength(0);

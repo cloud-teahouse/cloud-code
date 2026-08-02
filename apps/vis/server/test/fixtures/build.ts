@@ -2,7 +2,7 @@ import { cp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-/** Copy a fixture session into a temporary KIMI_CODE_HOME. */
+/** Copy a fixture session into a temporary CLOUD_CODE_HOME. */
 export async function buildSessionFixture(name: string): Promise<{
   home: string;
   sessionDir: string;

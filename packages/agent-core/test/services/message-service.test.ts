@@ -1,5 +1,5 @@
 /**
- * `MessageService` (Chain 3 / P1.3, W7.1) unit tests.
+ * `MessageService` unit tests.
  *
  * Hermetic: a fake `ICoreProcessService` returns canned `SessionSummary[]` from
  * `listSessions` and a canned `AgentContextData.history` from `getContext`.

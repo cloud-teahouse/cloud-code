@@ -6,7 +6,7 @@
  * Path access policy is resolved before any Kaos I/O.
  */
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@cloud-code/kaos';
 import { dirname } from 'pathe';
 import { z } from 'zod';
 

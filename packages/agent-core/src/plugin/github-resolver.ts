@@ -137,6 +137,49 @@ function codeloadUrl(owner: string, repo: string, ref: GithubRef): string {
 }
 
 /**
+ * Resolve a git ref to its current commit sha via the GitHub commits API.
+ *
+ * This is the one place we deliberately spend an `api.github.com` call:
+ * `PluginManager.update()` needs a content identity to compare against the
+ * recorded `installedSha`, and codeload URLs alone cannot provide one. Unlike
+ * install's hot path, update is an explicit, low-frequency user action, so
+ * the anonymous-quota concern documented on `resolveGithubSource` does not
+ * apply here.
+ *
+ * `branch: HEAD` resolves through the API's default-branch handling
+ * (`commits/HEAD`). Throws on any non-OK status — an update must fail loudly
+ * rather than guess.
+ */
+export async function resolveGithubRefSha(
+  owner: string,
+  repo: string,
+  ref: PluginGithubRef,
+): Promise<string> {
+  const encoded = ref.value.split('/').map(encodeURIComponent).join('/');
+  const url = `https://api.github.com/repos/${owner}/${repo}/commits/${encoded}`;
+  const resp = await fetch(url, {
+    headers: { accept: 'application/vnd.github+json' },
+  });
+  if (!resp.ok) {
+    throw new Error(
+      `Could not resolve ref "${ref.value}" of \`${owner}/${repo}\` to a commit: ` +
+        `HTTP ${resp.status} ${resp.statusText}.`,
+    );
+  }
+  const body: unknown = await resp.json();
+  const sha =
+    typeof body === 'object' && body !== null
+      ? (body as Record<string, unknown>)['sha']
+      : undefined;
+  if (typeof sha !== 'string' || sha.length === 0) {
+    throw new Error(
+      `GitHub returned an unexpected commits payload for "${ref.value}" of \`${owner}/${repo}\`.`,
+    );
+  }
+  return sha;
+}
+
+/**
  * Percent-encode a ref name for safe interpolation into a codeload URL path.
  *
  * Git permits characters in ref names that have special meaning in URLs.

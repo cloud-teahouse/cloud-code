@@ -3,6 +3,7 @@ import {
   APIContextOverflowError,
   APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
+  APIQuotaExceededError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -133,12 +134,14 @@ describe('convertOpenAIError: provider rate limit', () => {
     expect((result as APIProviderRateLimitError).retryAfterMs).toBe(12_000);
   });
 
-  it('ignores a non-integer (HTTP-date) retry-after header, leaving retryAfterMs null', () => {
+  it('ignores a past HTTP-date retry-after header, leaving retryAfterMs null', () => {
+    // A past date asks for no wait at all, so it is not a backoff directive;
+    // a FUTURE HTTP-date would now be honored (see errors.test.ts).
     const err = new OpenAIAPIError(
       429,
       undefined,
       'Too many requests',
-      new Headers({ 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' }),
+      new Headers({ 'retry-after': 'Wed, 21 Oct 2015 07:28:00 GMT' }),
     );
     const result = convertOpenAIError(err);
     expect(result).toBeInstanceOf(APIProviderRateLimitError);
@@ -175,7 +178,250 @@ describe('convertOpenAIError: provider rate limit', () => {
     expect(result).toBeInstanceOf(APIStatusError);
     expect((result as APIStatusError).traceId).toBeNull();
   });
+
+  it('carries the x-codex-* rate-limit headers from a 429 error response as a snapshot', () => {
+    const err = new OpenAIAPIError(
+      429,
+      undefined,
+      'Too many requests',
+      new Headers({
+        'x-codex-plan-type': 'plus',
+        'x-codex-active-limit': 'premium',
+        'x-codex-primary-used-percent': '99.5',
+        'x-codex-primary-window-minutes': '300',
+        'x-codex-primary-reset-at': '1900000000',
+        'x-codex-secondary-used-percent': '40',
+        'x-codex-secondary-window-minutes': '10080',
+        'x-codex-credits-has-credits': 'true',
+        'x-codex-credits-unlimited': 'false',
+        'x-codex-credits-balance': '25',
+      }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).rateLimit).toMatchObject({
+      planType: 'plus',
+      activeLimit: 'premium',
+      primary: { usedPercent: 99.5, windowMinutes: 300, resetsAt: 1900000000 },
+      secondary: { usedPercent: 40, windowMinutes: 10080, resetsAt: null },
+      credits: { hasCredits: true, unlimited: false, balance: '25' },
+    });
+    expect(typeof (result as APIProviderRateLimitError).rateLimit?.capturedAt).toBe('number');
+  });
+
+  it('carries the x-codex-* snapshot on a non-429 status error too (e.g. 500)', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({
+        'x-codex-plan-type': 'team',
+        'x-codex-primary-used-percent': '12',
+        'x-codex-primary-window-minutes': '300',
+      }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).statusCode).toBe(500);
+    expect((result as APIStatusError).rateLimit).toMatchObject({
+      planType: 'team',
+      primary: { usedPercent: 12, windowMinutes: 300, resetsAt: null },
+    });
+  });
+
+  it('leaves rateLimit null when the error response has no x-codex-* headers', () => {
+    const err = new OpenAIAPIError(429, undefined, 'Too many requests', new Headers());
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).rateLimit).toBeNull();
+  });
+
+  it('leaves rateLimit null when the SDK error carries no headers at all', () => {
+    const err = new OpenAIAPIError(429, undefined, 'Too many requests', undefined);
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).rateLimit).toBeNull();
+  });
 });
+describe('convertOpenAIError: codex quota exhaustion', () => {
+  it('classifies a 429 with a usage_limit_reached body as APIQuotaExceededError', () => {
+    const err = new OpenAIAPIError(
+      429,
+      {
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+          plan_type: 'pro',
+          resets_at: 1_900_000_000,
+        },
+      },
+      'The usage limit has been reached',
+      new Headers(),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIQuotaExceededError);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    const quota = result as APIQuotaExceededError;
+    expect(quota.statusCode).toBe(429);
+    expect(quota.planType).toBe('pro');
+    expect(quota.resetsAtMs).toBe(1_900_000_000_000);
+    expect(isRetryableGenerateError(result)).toBe(false);
+  });
+
+  it('derives the exhausted window from the x-codex-* headers on the same response', () => {
+    const err = new OpenAIAPIError(
+      429,
+      { error: { type: 'usage_limit_reached', message: 'limit reached' } },
+      'limit reached',
+      new Headers({
+        'x-codex-plan-type': 'plus',
+        'x-codex-primary-used-percent': '100',
+        'x-codex-primary-window-minutes': '300',
+        'x-codex-primary-reset-at': '1900000000',
+      }),
+    );
+    const result = convertOpenAIError(err) as APIQuotaExceededError;
+    // Body carried no resets_at: the exhausted primary window's reset-at
+    // (unix seconds) fills in, and the plan type falls back to the snapshot.
+    expect(result.resetsAtMs).toBe(1_900_000_000_000);
+    expect(result.quotaWindow).toBe('5h');
+    expect(result.planType).toBe('plus');
+    expect(result.rateLimit).toMatchObject({
+      primary: { usedPercent: 100, windowMinutes: 300, resetsAt: 1900000000 },
+    });
+  });
+
+  it('leaves window/reset null when the 429 carries no x-codex-* headers', () => {
+    const err = new OpenAIAPIError(
+      429,
+      { error: { type: 'usage_limit_reached', message: 'limit reached' } },
+      'limit reached',
+      new Headers(),
+    );
+    const result = convertOpenAIError(err) as APIQuotaExceededError;
+    expect(result).toBeInstanceOf(APIQuotaExceededError);
+    expect(result.quotaWindow).toBeNull();
+    expect(result.resetsAtMs).toBeNull();
+    expect(result.rateLimit).toBeNull();
+  });
+
+  it('keeps a 429 with a non-quota body on the transient retry path', () => {
+    const err = new OpenAIAPIError(
+      429,
+      { error: { type: 'rate_limit_error', message: 'slow down' } },
+      'slow down',
+      new Headers(),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect(result).not.toBeInstanceOf(APIQuotaExceededError);
+    expect(isRetryableGenerateError(result)).toBe(true);
+  });
+
+  it('keeps a Kimi-style RPM 429 (no body) retryable — kimi parity unchanged', () => {
+    const err = new OpenAIAPIError(
+      429,
+      undefined,
+      'request reached user+model max RPM: 50',
+      new Headers(),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect(result).not.toBeInstanceOf(APIQuotaExceededError);
+    expect(isRetryableGenerateError(result)).toBe(true);
+  });
+});
+
+describe('convertOpenAIError: codex quota exhaustion via the real SDK constructor', () => {
+  // Regression: the OpenAI SDK v6 builds status errors through
+  // `APIError.generate(status, parsedBody, message, headers)`, which UNWRAPS
+  // the body — `error.error` is the inner error object
+  // `{type, message, plan_type, resets_at}`, never `{error: {...}}`. Tests
+  // that hand-construct `new APIError(429, {error: {...}})` exercise a shape
+  // production never produces; these cases go through the SDK's own
+  // constructor exactly as `makeStatusError` calls it.
+  it('classifies the SDK-generated RateLimitError as APIQuotaExceededError', () => {
+    const wireBody = {
+      error: {
+        type: 'usage_limit_reached',
+        message: 'The usage limit has been reached',
+        plan_type: 'pro',
+        resets_at: 1_900_000_000,
+      },
+    };
+    const err = OpenAIAPIError.generate(
+      429,
+      wireBody,
+      undefined,
+      new Headers({
+        'x-codex-plan-type': 'pro',
+        'x-codex-primary-used-percent': '100',
+        'x-codex-primary-window-minutes': '300',
+        'x-codex-primary-reset-at': '1900000000',
+      }),
+    );
+    // Guard the guard: the SDK really did unwrap the body.
+    expect(err.error).toEqual(wireBody.error);
+
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIQuotaExceededError);
+    const quota = result as APIQuotaExceededError;
+    expect(quota.statusCode).toBe(429);
+    expect(quota.planType).toBe('pro');
+    expect(quota.resetsAtMs).toBe(1_900_000_000_000);
+    expect(quota.quotaWindow).toBe('5h');
+    expect(isRetryableGenerateError(result)).toBe(false);
+  });
+
+  it('keeps the SDK-generated transient 429 retryable', () => {
+    const err = OpenAIAPIError.generate(
+      429,
+      { error: { type: 'rate_limit_error', message: 'slow down' } },
+      undefined,
+      new Headers(),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect(result).not.toBeInstanceOf(APIQuotaExceededError);
+    expect(isRetryableGenerateError(result)).toBe(true);
+  });
+
+  it('classifies a 429 with an unparseable body via the message token', () => {
+    // When the body is not JSON (plain text, or an edge proxy relaying the
+    // backend's error as text) the SDK leaves `error.error` undefined and
+    // folds the raw text into the message — the machine token is the only
+    // signal left. Plan/reset then come from the x-codex-* headers.
+    const err = OpenAIAPIError.generate(
+      429,
+      undefined,
+      'usage_limit_reached',
+      new Headers({
+        'x-codex-plan-type': 'plus',
+        'x-codex-secondary-used-percent': '100',
+        'x-codex-secondary-window-minutes': '10080',
+        'x-codex-secondary-reset-at': '1900500000',
+      }),
+    );
+    expect(err.error).toBeUndefined();
+
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIQuotaExceededError);
+    const quota = result as APIQuotaExceededError;
+    expect(quota.planType).toBe('plus');
+    expect(quota.resetsAtMs).toBe(1_900_500_000_000);
+    expect(quota.quotaWindow).toBe('weekly');
+    expect(isRetryableGenerateError(result)).toBe(false);
+  });
+
+  it('keeps a plain-text transient 429 (no token) retryable', () => {
+    const err = OpenAIAPIError.generate(429, undefined, 'Too Many Requests', new Headers());
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect(result).not.toBeInstanceOf(APIQuotaExceededError);
+    expect(isRetryableGenerateError(result)).toBe(true);
+  });
+});
+
 describe('convertOpenAIError: subclass errors still match first', () => {
   it('APIConnectionError matches its own case', () => {
     const connErr = new OpenAIConnectionError({ message: 'Connection error.' });
@@ -264,7 +510,6 @@ describe('OpenAI streaming error propagation', () => {
       }
     }).rejects.toThrow(APIConnectionError);
 
-    // Verify the message is preserved
     await expect(async () => {
       async function* failingStream2(): AsyncGenerator<never> {
         throw new OpenAIAPIError(undefined, undefined, 'Network connection lost.', undefined);
@@ -407,7 +652,7 @@ describe('normalizeAPIStatusError thinking effort guidance', () => {
 
     expect(error.message).toContain('Non-Kimi providers receive effort strings');
     expect(error.message).toContain(
-      'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking',
+      'https://github.com/cloud-teahouse/cloud-code#readme',
     );
   });
 });

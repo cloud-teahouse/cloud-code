@@ -40,7 +40,7 @@
  *
  *                   meanwhile, the background facade.login() polls...
  *
- *           ┌─ resolves with KimiAuthLoginResult  →  flow status = 'authenticated'
+ *           ┌─ resolves with CloudCodeAuthLoginResult  →  flow status = 'authenticated'
  *           │                                        +  config.toml provisioned
  *           │                                        +  token saved to credentials
  *           │
@@ -68,7 +68,7 @@ import type {
   OAuthFlowStart,
   OAuthLoginCancelResponse,
   OAuthLogoutResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 export interface IOAuthService {
   readonly _serviceBrand: undefined;

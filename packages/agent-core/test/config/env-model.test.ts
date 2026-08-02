@@ -10,7 +10,7 @@ import {
   stripEnvModelConfig,
 } from '../../src/config/env-model';
 import { getDefaultConfig, loadRuntimeConfig, readConfigFile, writeConfigFile } from '../../src/config';
-import { KimiError } from '../../src/errors';
+import { CloudCodeError } from '../../src/errors';
 
 function apply(env: Record<string, string | undefined>) {
   return applyEnvModelConfig(getDefaultConfig(), env);
@@ -20,8 +20,8 @@ function expectConfigInvalid(fn: () => unknown): void {
   try {
     fn();
   } catch (error) {
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe('config.invalid');
+    expect(error).toBeInstanceOf(CloudCodeError);
+    expect((error as CloudCodeError).code).toBe('config.invalid');
     return;
   }
   throw new Error('expected function to throw');

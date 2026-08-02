@@ -8,7 +8,7 @@
 
 import { z } from 'zod';
 
-import type { BuiltinTool } from '../../../agent/tool';
+import { TOOL_SNIP_HINT_READ_ONLY, type BuiltinTool } from '../../../agent/tool/types';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
@@ -42,6 +42,7 @@ export type WebSearchInput = z.Infer<typeof WebSearchInputSchema>;
 
 export class WebSearchTool implements BuiltinTool<WebSearchInput> {
   readonly name = 'WebSearch' as const;
+  readonly snipHint = TOOL_SNIP_HINT_READ_ONLY;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WebSearchInputSchema);
   constructor(private readonly provider: WebSearchProvider) {}

@@ -126,6 +126,11 @@ export class SseMcpClient implements MCPClient {
     return result.tools.map(toMcpToolDefinition);
   }
 
+  /** Instructions advertised by the server in the `initialize` handshake, when any. */
+  getInstructions(): string | undefined {
+    return this.client.getInstructions();
+  }
+
   async callTool(
     name: string,
     args: Record<string, unknown>,

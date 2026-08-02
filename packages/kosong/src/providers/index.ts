@@ -8,14 +8,14 @@ import {
   getOpenAIResponsesModelCapability,
 } from './capability-registry';
 import { GoogleGenAIChatProvider, type GoogleGenAIOptions } from './google-genai';
-import { KimiChatProvider, type KimiOptions } from './kimi';
+import { KimiChatProvider, type CloudCodeOptions } from './kimi';
 import { OpenAILegacyChatProvider, type OpenAILegacyOptions } from './openai-legacy';
 import { OpenAIResponsesChatProvider, type OpenAIResponsesOptions } from './openai-responses';
 
 export type ProviderConfig =
   | ({ type: 'anthropic' } & AnthropicOptions)
   | ({ type: 'openai' } & OpenAILegacyOptions)
-  | ({ type: 'kimi' } & KimiOptions)
+  | ({ type: 'kimi' } & CloudCodeOptions)
   | ({ type: 'google-genai' } & GoogleGenAIOptions)
   | ({ type: 'openai_responses' } & OpenAIResponsesOptions)
   | ({ type: 'vertexai' } & GoogleGenAIOptions);

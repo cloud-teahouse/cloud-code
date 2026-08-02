@@ -1,0 +1,90 @@
+name: Bug Report
+description: Report a problem with Cloud Code CLI
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much of
+        this form as you can — it saves a round-trip of follow-up questions.
+
+  - type: input
+    id: version
+    attributes:
+      label: Cloud Code CLI version
+      description: Output of `cloudcode --version`.
+      placeholder: e.g. 0.2.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal emulator
+      description: Which terminal you ran the CLI in.
+      placeholder: e.g. WezTerm, iTerm2, Windows Terminal, GNOME Terminal
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Model provider
+      description: The provider configured for the session where the bug occurred.
+      placeholder: e.g. kimi, anthropic, openai, openai_responses
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal, numbered list of steps that reliably triggers the bug.
+      placeholder: |
+        1. Run `cloudcode` in a project with ...
+        2. Ask it to ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened. Include the exact error text if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Relevant excerpts from the logs under `~/.cloud-code/`.
+
+        **Warning: redact before pasting.** Logs can contain API keys, OAuth
+        tokens, file contents, and other credentials or private data. Remove
+        anything sensitive before attaching.
+      render: shell
+    validations:
+      required: false

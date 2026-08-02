@@ -1,16 +1,29 @@
 import { formatTaskList } from '#/tools/background/task-list';
 
 import type { Agent } from '..';
+import { BehaviorRemindersInjector } from './behavior-reminders';
 import { GoalInjector } from './goal';
 import type { DynamicInjector } from './injector';
 import { PermissionModeInjector } from './permission-mode';
 import { PluginSessionStartInjector } from './plugin-session-start';
 import { PlanModeInjector } from './plan-mode';
+import { renderReminder } from './reminder';
+import { SkillActivationInjector } from './skill-activation';
 import { TodoListReminderInjector } from './todo-list';
 import { ToolsDiffInjector } from './tools-diff';
 
-const ACTIVE_BACKGROUND_TASK_GUIDANCE =
-  'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before. Do not start duplicates. Use TaskList to list them, TaskOutput for a non-blocking status/output snapshot, and TaskStop to cancel one — completion arrives via automatic notification.';
+// Standard tier, prohibition last (recency): the guidance comes first, the
+// "do not" closes the prose; the task table rides after it as a data
+// attachment (see injection/reminder.ts).
+const ACTIVE_BACKGROUND_TASK_REMINDER = renderReminder({
+  authority: 'standard',
+  body:
+    'The conversation was compacted, so the earlier messages that started these background ' +
+    'tasks are gone — but the tasks are still running from before. Use TaskList to list them, ' +
+    'TaskOutput for a non-blocking status/output snapshot, and TaskStop to cancel one — ' +
+    'completion arrives via automatic notification.',
+  prohibition: 'Do not start duplicates.',
+});
 
 export class InjectionManager {
   private readonly injectors: DynamicInjector[];
@@ -23,6 +36,13 @@ export class InjectionManager {
   // Same boundary cadence, but NOT main-only: subagents announce their own
   // loadable tool set. See ToolsDiffInjector for why it also diverges on origin.
   private readonly toolsDiffInjector: ToolsDiffInjector;
+  // `paths`-gated skill activation: immediate announcements on tool results
+  // plus boundary catch-up. Also not main-only — a subagent's touch activates
+  // skills in the session-shared registry.
+  private readonly skillActivationInjector: SkillActivationInjector;
+  // Long-conversation behavioral-rule re-injection: turn-boundary (interval)
+  // plus forced post-compaction. See BehaviorRemindersInjector.
+  private readonly behaviorRemindersInjector: BehaviorRemindersInjector;
 
   constructor(protected readonly agent: Agent) {
     this.injectors = [
@@ -33,6 +53,8 @@ export class InjectionManager {
     ];
     this.goalInjector = agent.type === 'main' ? new GoalInjector(agent) : null;
     this.toolsDiffInjector = new ToolsDiffInjector(agent);
+    this.skillActivationInjector = new SkillActivationInjector(agent);
+    this.behaviorRemindersInjector = new BehaviorRemindersInjector(agent);
   }
 
   async inject(): Promise<void> {
@@ -59,11 +81,41 @@ export class InjectionManager {
     this.toolsDiffInjector.inject();
   }
 
+  /**
+   * Tool-result hook for `paths`-gated skills: activate any whose patterns
+   * match the touched paths and announce them at the message-stream tail.
+   * No-op when no conditional skills are pending or nothing new matched.
+   */
+  activatePathSkillsForToolResult(toolName: string, args: unknown): void {
+    this.skillActivationInjector.activateForToolResult(toolName, args);
+  }
+
+  /**
+   * Boundary catch-up for skill activations (turn start + post-compaction):
+   * heals undo/compaction/resume/sibling-agent gaps. See SkillActivationInjector.
+   */
+  injectSkillActivation(): void {
+    this.skillActivationInjector.inject();
+  }
+
+  /**
+   * Long-conversation behavioral-rule re-injection, boundary cadence (turn
+   * start). Append-only, interval-gated, no-op when `[behavior_reminders]`
+   * is disabled. See BehaviorRemindersInjector.
+   */
+  injectBehaviorReminders(): void {
+    this.behaviorRemindersInjector.injectAtTurnBoundary();
+  }
+
   async injectAfterCompaction(): Promise<void> {
     await this.injectGoal();
     this.injectToolsDiff();
+    this.injectSkillActivation();
     this.injectActiveBackgroundTasks();
     await this.inject();
+    // Forced post-compaction re-injection: the behavioral rules anchor lands
+    // last so it closes the re-injected tail (recency position).
+    this.behaviorRemindersInjector.injectAfterCompaction();
   }
 
   /**
@@ -79,7 +131,7 @@ export class InjectionManager {
     const tasks = this.agent.background.list(true);
     if (tasks.length === 0) return;
     this.agent.context.appendSystemReminder(
-      `${ACTIVE_BACKGROUND_TASK_GUIDANCE}\n\n${formatTaskList(tasks, true)}`,
+      `${ACTIVE_BACKGROUND_TASK_REMINDER}\n\n${formatTaskList(tasks, true)}`,
       { kind: 'injection', variant: 'background_task_status' },
     );
   }

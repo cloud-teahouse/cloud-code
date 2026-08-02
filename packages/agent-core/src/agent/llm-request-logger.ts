@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { Logger } from '#/logging/types';
-import type { ChatProvider, GenerateOptions, Message, Tool } from '@moonshot-ai/kosong';
+import { canonicalizeToolSchema, type ChatProvider, type GenerateOptions, type Message, type Tool } from '@cloud-code/kosong';
 
 import type { LLMRequestLogFields } from '../loop';
 
@@ -69,7 +69,15 @@ export function splitGenerateOptions(options: GenerateOptionsWithRequestLogField
 }
 
 export function toolSignature(tools: readonly Tool[]) {
-  return tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
+  // Canonical form: the hash input (and the durable `llm.tools_snapshot`
+  // payload) must be byte-stable across logically identical schemas — MCP
+  // servers may re-send the same schema with different key order after a
+  // reconnect, which must not read as a tool-table change.
+  return tools.map(({ name, description, parameters }) => ({
+    name,
+    description,
+    parameters: canonicalizeToolSchema(parameters),
+  }));
 }
 
 export function fingerprint(content: string): string {

@@ -12,7 +12,7 @@ import { join } from 'pathe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { testKaos } from '../fixtures/test-kaos';
-import type { ProviderConfig } from '@moonshot-ai/kosong';
+import type { ProviderConfig } from '@cloud-code/kosong';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -286,7 +286,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeAgent(join(brandHome, 'agents'), 'user-agent.md', agentFileText({ description: 'User agent.' }));
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'project-agent.md',
       agentFileText({ description: 'Project agent.' }),
     );
@@ -304,7 +304,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeAgent(join(brandHome, 'agents'), 'shared.md', agentFileText({ description: 'From user.' }));
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'shared.md',
       agentFileText({ description: 'From project.' }),
     );
@@ -336,7 +336,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     const warnings: string[] = [];
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'coder.md',
       agentFileText({ description: 'Rogue coder.' }),
     );
@@ -347,7 +347,7 @@ describe('SessionAgentProfileCatalog', () => {
     expect(warnings.some((w) => w.includes('override: true'))).toBe(true);
 
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'coder.md',
       agentFileText({ description: 'Rogue coder.', override: true }, 'Rogue prompt.'),
     );
@@ -376,7 +376,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeFile(join(brandHome, 'SYSTEM.md'), 'Custom system.', 'utf-8');
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'reviewer.md',
       agentFileText({ description: 'Reviews code.' }),
     );
@@ -408,7 +408,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeFile(join(brandHome, 'SYSTEM.md'), 'From SYSTEM.md', 'utf-8');
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'agent.md',
       agentFileText({ description: 'Project default.', override: true }, 'From project agent.md'),
     );
@@ -475,7 +475,7 @@ describe('SessionAgentProfileCatalog', () => {
   it('extends the default delegation set with file-defined agents', async () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'reviewer.md',
       agentFileText({ description: 'Reviews code.' }),
     );
@@ -493,12 +493,12 @@ describe('SessionAgentProfileCatalog', () => {
   it('links a file profile subagents allowlist, unrestricted when omitted', async () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'leader.md',
       agentFileText({ description: 'Leads.', subagents: ['explore'] }),
     );
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'worker.md',
       agentFileText({ description: 'Works.' }),
     );
@@ -514,7 +514,7 @@ describe('SessionAgentProfileCatalog', () => {
   it('renders a file profile prompt through the builtin base prompt', async () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'reviewer.md',
       agentFileText({ description: 'd' }, 'Custom.\n${base_prompt}'),
     );
@@ -531,7 +531,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeFile(join(brandHome, 'SYSTEM.md'), 'Org default on ${os}.', 'utf-8');
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'reviewer.md',
       agentFileText({ description: 'd' }, '[${base_prompt}]'),
     );
@@ -547,7 +547,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeFile(join(brandHome, 'SYSTEM.md'), 'Org layer.\n${base_prompt}', 'utf-8');
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'reviewer.md',
       agentFileText({ description: 'd' }, 'File layer.\n${base_prompt}'),
     );
@@ -564,7 +564,7 @@ describe('SessionAgentProfileCatalog', () => {
   it('never recurses when a file overrides the default and references ${base_prompt}', async () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'agent.md',
       agentFileText({ description: 'Override default.', override: true }, 'Override.\n${base_prompt}'),
     );
@@ -582,7 +582,7 @@ describe('SessionAgentProfileCatalog', () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     const warnings: string[] = [];
     await writeAgent(
-      join(workDir, '.kimi-code', 'agents'),
+      join(workDir, '.cloud-code', 'agents'),
       'reviewer.md',
       agentFileText({
         description: 'd',
@@ -636,9 +636,9 @@ describe('Session agentfile wiring', () => {
     const sessionDir = await makeTempDir();
     const brandHome = await makeTempDir();
     const osHome = await makeTempDir();
-    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await mkdir(join(workDir, '.cloud-code', 'agents'), { recursive: true });
     await writeFile(
-      join(workDir, '.kimi-code', 'agents', 'reviewer.md'),
+      join(workDir, '.cloud-code', 'agents', 'reviewer.md'),
       agentFileText({ description: 'Reviews code.' }, 'You review code in ${cwd}.'),
       'utf-8',
     );
@@ -647,7 +647,7 @@ describe('Session agentfile wiring', () => {
       id: 'test-agentfile-main',
       kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
-      kimiHomeDir: brandHome,
+      cloudCodeHomeDir: brandHome,
       rpc: createSessionRpc(),
       providerManager: testProviderManager(),
       agents: { userHomeDir: osHome, profileName: 'reviewer' },
@@ -671,7 +671,7 @@ describe('Session agentfile wiring', () => {
       id: 'test-agentfile-unknown',
       kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
-      kimiHomeDir: brandHome,
+      cloudCodeHomeDir: brandHome,
       rpc: createSessionRpc(),
       providerManager: testProviderManager(),
       agents: { userHomeDir: brandHome, profileName: 'nope' },
@@ -691,7 +691,7 @@ describe('Session agentfile wiring', () => {
       id: 'test-agentfile-fatal',
       kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
-      kimiHomeDir: brandHome,
+      cloudCodeHomeDir: brandHome,
       rpc: createSessionRpc(),
       providerManager: testProviderManager(),
       agents: { userHomeDir: brandHome, explicitFiles: [join(workDir, 'missing.md')] },
@@ -736,7 +736,7 @@ describe('Session agentfile wiring', () => {
       id: 'test-agentfile-delegation-resume',
       kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
-      kimiHomeDir: brandHome,
+      cloudCodeHomeDir: brandHome,
       rpc: createSessionRpc(),
       providerManager: testProviderManager(),
       agents: {

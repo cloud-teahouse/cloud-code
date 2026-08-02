@@ -8,7 +8,9 @@ import {
   type StreamedMessagePart,
   type ToolCall,
 } from './message';
+import { normalizeMessagesForWire } from './normalize';
 import type { ChatProvider, FinishReason, GenerateOptions, StreamedMessage } from './provider';
+import type { RateLimitSnapshot } from './rate-limit';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
@@ -44,6 +46,12 @@ export interface GenerateResult {
    * (Kimi/KFC only), or `null` when the provider does not report one.
    */
   readonly traceId?: string | null;
+  /**
+   * Account rate-limit snapshot from the `x-codex-*` response headers
+   * (ChatGPT Codex backend only). Absent for providers that never report
+   * quota headers; `null` when the backend sent none.
+   */
+  readonly rateLimit?: RateLimitSnapshot | null;
 }
 
 export interface GenerateCallbacks {
@@ -58,6 +66,26 @@ export interface GenerateCallbacks {
    * would dispatch a tool with half-parsed arguments and trigger toolParseError.
    */
   onToolCall?: (toolCall: ToolCall) => void | Promise<void>;
+  /**
+   * Fires the moment a tool call leaves the pending slot at a merge boundary
+   * MID-STREAM — a subsequent non-merging part proved its arguments complete.
+   * Lets hosts start executing completed calls while the model is still
+   * streaming (streaming tool execution).
+   *
+   * The last pending call never fires here: it flushes only at stream end,
+   * where a stream that broke off mid-arguments is indistinguishable from a
+   * complete one until the finish reason is known. Final calls are reported
+   * exclusively through {@link GenerateCallbacks.onToolCall} and the returned
+   * message.
+   *
+   * The callback receives a snapshot taken at flush time. Completion uses the
+   * same merge-boundary inference that finalizes calls into
+   * `message.toolCalls`; a provider that interleaves argument deltas across
+   * parallel calls (non-conforming, see `onToolCall`) could fire this before
+   * late-routed deltas land. Sequential-conforming providers (Anthropic,
+   * OpenAI, Kimi, Gemini) are exact.
+   */
+  onToolCallReady?: (toolCall: ToolCall) => void | Promise<void>;
 }
 
 /**
@@ -116,8 +144,16 @@ export async function generate(
     ? tools.filter((tool) => tool.deferred !== true)
     : tools;
 
+  // Defensive wire layer: guarantee message-internal wire legality (parseable
+  // tool-call arguments, non-empty tool names, paired tool exchanges) before
+  // any provider converter can hard-throw on malformed history. Healthy
+  // history is returned as the same reference at zero cost.
+  const wireHistory = normalizeMessagesForWire(history, {
+    onRepair: options?.onNormalizeRepair,
+  });
+
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  const stream = await provider.generate(systemPrompt, wireTools, wireHistory, options);
   // Early capture: the trace id arrives with the response headers, before the
   // stream body — and before any mid-stream abort — so hosts can attribute
   // even a cancelled stream to its server-side request.
@@ -191,6 +227,13 @@ export async function generate(
         // while a previous ToolCall is still pending; the flush finalizes the
         // previous tool call into `message.toolCalls`.
         flushPart(message, pendingPart, toolCallIndexMap);
+        if (isToolCall(pendingPart) && callbacks?.onToolCallReady !== undefined) {
+          // The merge boundary proves this call's arguments are complete (the
+          // stream moved on to a new part). Report a snapshot so hosts can
+          // start executing while the model keeps streaming. The final pending
+          // call is NOT reported here — see onToolCallReady's contract.
+          await callbacks.onToolCallReady(snapshotFlushedToolCall(pendingPart));
+        }
         pendingPart = part;
       }
     } finally {
@@ -259,10 +302,14 @@ export async function generate(
     finishReason: stream.finishReason,
     rawFinishReason: stream.rawFinishReason,
   };
+  const extras: { traceId?: string | null; rateLimit?: RateLimitSnapshot | null } = {};
   if (stream.traceId !== undefined) {
-    return { ...result, traceId: stream.traceId };
+    extras.traceId = stream.traceId;
   }
-  return result;
+  if (stream.rateLimit !== undefined) {
+    extras.rateLimit = stream.rateLimit;
+  }
+  return { ...result, ...extras };
 }
 
 type CancelableStream = StreamedMessage & {
@@ -341,6 +388,23 @@ function flushPart(
   // ToolCallPart: orphaned delta — silently ignore.
 }
 
+/**
+ * Snapshot a ToolCall at its mid-stream completion boundary for
+ * `onToolCallReady`, in the same stored shape {@link flushPart} produces
+ * (without the internal `_streamIndex` routing field). `extras` is cloned so
+ * later stream processing cannot alias-mutate the snapshot.
+ */
+function snapshotFlushedToolCall(part: ToolCall): ToolCall {
+  const stored: StoredToolCall = {
+    type: 'function',
+    id: part.id,
+    name: part.name,
+    arguments: part.arguments,
+    ...(part.extras !== undefined ? { extras: structuredClone(part.extras) } : {}),
+  };
+  return stored as ToolCall;
+}
+
 function formatFinishReasonHint(stream: StreamedMessage): string {
   if (stream.finishReason === null && stream.rawFinishReason === null) return '';
 
@@ -355,11 +419,28 @@ function formatFinishReasonHint(stream: StreamedMessage): string {
 }
 
 /**
- * Produce a shallow-ish copy of a StreamedMessagePart.
+ * Produce an isolating copy of a StreamedMessagePart for the raw-part
+ * callback, so later in-place merges (`mergeInPlace`, argument routing)
+ * cannot alias-mutate what the host already saw.
  *
- * This is intentionally minimal: we only need isolation for the mutable
- * string fields that `mergeInPlace` mutates (text, think, arguments).
+ * `text`, `think`, `tool_call_part`, and `function` parts without `extras`
+ * own only primitive fields (strings/numbers, which are immutable), so a
+ * shallow spread is observably identical to `structuredClone` for them.
+ * `function` parts with `extras` and the media parts
+ * (`image_url`/`audio_url`/`video_url`) own nested objects and keep the
+ * deep clone.
  */
 function deepCopyPart(part: StreamedMessagePart): StreamedMessagePart {
-  return structuredClone(part);
+  switch (part.type) {
+    case 'text':
+    case 'think':
+    case 'tool_call_part':
+      return { ...part };
+    case 'function':
+      return part.extras === undefined ? { ...part } : structuredClone(part);
+    case 'image_url':
+    case 'audio_url':
+    case 'video_url':
+      return structuredClone(part);
+  }
 }

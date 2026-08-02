@@ -55,6 +55,24 @@ export class ReplayBuilder {
     this.removeMessagesFrom(this.records, removedMessages);
   }
 
+  /**
+   * Swap a restored replay message for its repaired counterpart (04i late
+   * tool-result re-attachment): the context replaces the synthetic
+   * interrupted placeholder in history with the late real output; the replay
+   * must carry the same swap or the resumed transcript view and the model
+   * context would diverge.
+   */
+  replaceMessage(previous: ContextMessage, next: ContextMessage): void {
+    if (this.frozen) return;
+    for (let i = this.records.length - 1; i >= 0; i--) {
+      const record = this.records[i]!;
+      if (record.type === 'message' && record.message === previous) {
+        this.records[i] = { ...record, message: next };
+        return;
+      }
+    }
+  }
+
   finishRestoringRecord(type: string): boolean {
     const range = this.options.range;
     if (range === undefined) return false;

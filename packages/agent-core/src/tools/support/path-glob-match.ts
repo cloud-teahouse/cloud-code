@@ -1,7 +1,6 @@
 import { isAbsolute, join, parse } from 'pathe';
 
-import picomatch from 'picomatch';
-
+import { cachedGlobIsMatch, cachedRegExp } from '../../utils/glob-cache';
 import { canonicalizePath, type PathClass } from '../policies/path-access';
 
 export interface PermissionPathMatchOptions {
@@ -16,16 +15,74 @@ interface PathMatchSemantics {
 }
 
 /**
- * Match ordinary string fields, like command text or search patterns.
- * `*` and `**` work as wildcards, but the value is not treated as a file path.
+ * Match with picomatch's path-glob semantics: `*` stops at `/`, `**` crosses
+ * whole segments. This is the right reading for file paths — it is what
+ * {@link pathGlobMatch} builds on. For non-path text use
+ * {@link textGlobMatch}.
  */
 export function globMatch(value: string, pattern: string, options?: { nocase?: boolean }): boolean {
-  if (picomatch.isMatch(value, pattern, options)) return true;
+  if (cachedGlobIsMatch(value, pattern, options)) return true;
 
   const normalizedValue = stripLeadingDotSlash(value);
   const normalizedPattern = stripLeadingDotSlash(pattern);
   if (normalizedValue === value && normalizedPattern === pattern) return false;
-  return picomatch.isMatch(normalizedValue, normalizedPattern, options);
+  return cachedGlobIsMatch(normalizedValue, normalizedPattern, options);
+}
+
+/**
+ * Match ordinary string fields — command text, URLs, search patterns — where
+ * the value is NOT a file path and `*` must cross `/` like any other
+ * character.
+ *
+ * Under plain picomatch semantics `deny Bash(rm *)` silently failed to match
+ * `rm -rf /tmp/x` (the `/` in the argument stopped the `*`), so deny/ask
+ * rules whose subject contains a path or URL were fail-open, and allow rules
+ * like `FetchUrl(https://docs.example.com/*)` covered exactly one path
+ * segment. The picomatch attempt is kept and the loose interpretation is a
+ * widening union: every pattern that matched before still matches (brace
+ * sets, character classes and `**` keep their picomatch meaning), and `*`/`?`
+ * additionally match across `/`.
+ */
+export function textGlobMatch(
+  value: string,
+  pattern: string,
+  options?: { nocase?: boolean },
+): boolean {
+  if (globMatch(value, pattern, options)) return true;
+  const nocase = options?.nocase === true;
+  return cachedRegExp(`loose-text-glob\n${nocase ? 'i' : 's'}\n${pattern}`, () =>
+    looseTextGlobToRegExp(pattern, nocase),
+  ).test(value);
+}
+
+/**
+ * Compile a glob into a RegExp where `*`/`?` match any character (newlines
+ * and `/` included). Backslash escapes make the next character literal —
+ * matching the escaping applied by `escapeRuleSubjectLiteral` — and every
+ * other character is literal. Deliberately no braces/classes here: those
+ * still work through the picomatch arm of {@link textGlobMatch}.
+ */
+function looseTextGlobToRegExp(pattern: string, nocase: boolean): RegExp {
+  let source = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern.charAt(i);
+    if (ch === '\\' && i + 1 < pattern.length) {
+      source += escapeRegExpChar(pattern.charAt(i + 1));
+      i += 1;
+    } else if (ch === '*') {
+      source += '[\\s\\S]*';
+    } else if (ch === '?') {
+      source += '[\\s\\S]';
+    } else {
+      source += escapeRegExpChar(ch);
+    }
+  }
+  source += '$';
+  return new RegExp(source, nocase ? 'i' : '');
+}
+
+function escapeRegExpChar(ch: string): string {
+  return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
 }
 
 function stripLeadingDotSlash(value: string): string {

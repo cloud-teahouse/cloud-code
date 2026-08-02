@@ -1,7 +1,7 @@
 /**
  * `IAuthSummaryService` — daemon-facing readiness probe.
  *
- * Single権威 readiness signal source:
+ * Single authoritative readiness signal source:
  *   - `get()` produces the `AuthSummary` payload for `GET /v1/auth`.
  *   - `ensureReady(modelOverride?)` is the synchronous gate invoked by entry
  *     points that can't proceed without provider credentials — currently
@@ -21,14 +21,14 @@
  * differentiate them.
  *
  * **Implementation** (`AuthSummaryService`): Reads the live config via
- * `ICoreProcessService.rpc.getKimiConfig({})` and the managed-OAuth credential
+ * `ICoreProcessService.rpc.getCloudCodeConfig({})` and the managed-OAuth credential
  * state via a cached-token lookup. Both are cheap (in-process RPC +
  * a token-file existence probe), so we run them on every call instead of
  * caching — keeps the staleness window at zero.
  */
 
 import { createDecorator } from '../../di';
-import type { AuthSummary } from '@moonshot-ai/protocol';
+import type { AuthSummary } from '@cloud-code/protocol';
 
 export interface IAuthSummaryService {
   readonly _serviceBrand: undefined;

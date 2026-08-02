@@ -1,25 +1,29 @@
 import { uniq } from '@antfu/utils';
-import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
-import picomatch from 'picomatch';
+import { SandboxedKaos, type Kaos } from '@cloud-code/kaos';
+import { canonicalizeToolSchema, type ChatProvider, type Tool } from '@cloud-code/kosong';
+import { backgroundTaskStructuredSchema } from '@cloud-code/protocol';
 
 import type { Agent } from '..';
 import {
   collectLoadedDynamicToolNames,
 } from '../context/dynamic-tools';
+import { resolveCloudCodeHome } from '../../config/path';
 import type { ContextMessage } from '../context/types';
 import { makeErrorPayload } from '../../errors';
-import type { ExecutableTool, ToolUpdate } from '../../loop';
+import type { ExecutableTool, ExecutableToolResult, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
+import { cachedGlobIsMatch } from '../../utils/glob-cache';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
-import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
+import { isAlwaysLoadMcpTool, isMcpSessionExpiredError, type MCPClient, type MCPToolDefinition, type MCPToolResult } from '../../mcp/types';
 import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
 import { buildSubagentModelDescriptions } from '../../session/subagent-binding';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
+import { collectControlPlaneGuardPaths } from './control-plane-paths';
 import type {
   BuiltinTool,
   McpServerRegistrationResult,
@@ -71,6 +75,14 @@ export class ToolManager {
    * undo/compaction/resume never need to roll this back.
    */
   private readonly pendingLoadedDynamicTools = new Set<string>();
+  /**
+   * Qualified names of MCP tools whose `_meta` declares
+   * `anthropic/alwaysLoad`: they skip the deferred pool entirely — present in
+   * the top-level `tools[]` from the start (no select_tools round-trip), and
+   * never announced as loadable. The check runs before every other disclosure
+   * rule, mirroring Claude Code's `isDeferredTool`.
+   */
+  private readonly alwaysLoadMcpTools = new Set<string>();
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
   /**
@@ -189,14 +201,17 @@ export class ToolManager {
       // Detached to background (ctrl+b): the BashTool returns the background
       // metadata (task_id / status / output path) — the same payload a normal
       // foreground Bash call returns as its tool result when backgrounded.
-      // Inject it as a user-invisible message and immediately send it to the
-      // model (mirrors the background-task completion notification, but hidden).
-      if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
-        this.agent.context.injectAndNotify(result.output, {
+      // New results mark the detach in the structured payload; older builds
+      // only had the `task_id: ` output prefix. Inject it as a user-invisible
+      // message and immediately send it to the model (mirrors the
+      // background-task completion notification, but hidden).
+      const backgroundedOutput = backgroundedShellResultOutput(result);
+      if (backgroundedOutput !== undefined) {
+        this.agent.context.injectAndNotify(backgroundedOutput, {
           kind: 'injection',
           variant: 'shell_command_backgrounded',
         });
-        return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
+        return { stdout: backgroundedOutput, stderr: '', isError: false, backgrounded: true };
       }
 
       // When the command fails with no captured stdout/stderr, the failure
@@ -289,6 +304,7 @@ export class ToolManager {
     client: MCPClient,
     tools: readonly Tool[],
     enabledTools?: ReadonlySet<string>,
+    alwaysLoadTools?: ReadonlySet<string>,
   ): McpServerRegistrationResult {
     this.unregisterMcpServer(serverName);
     const qualifiedNames: string[] = [];
@@ -316,10 +332,18 @@ export class ToolManager {
         continue;
       }
       seenInThisCall.set(qualified, tool.name);
+      if (alwaysLoadTools?.has(tool.name) === true) {
+        this.alwaysLoadMcpTools.add(qualified);
+      }
       const wrapped: ExecutableTool = {
         name: qualified,
         description: tool.description,
-        parameters: tool.parameters,
+        // Canonicalize once at registration (Registry.Add pattern): the
+        // schema bytes stay stable across MCP reconnects / server-side key
+        // reordering, so the request toolsHash and the prompt-cache prefix
+        // do not drift. Provider converters canonicalize again at the wire —
+        // idempotent, and covers non-agent-core hosts.
+        parameters: canonicalizeToolSchema(tool.parameters),
         resolveExecution: (args) => {
           return {
             approvalRule: qualified,
@@ -327,17 +351,25 @@ export class ToolManager {
               // `args` has already been JSON-parsed and schema-validated by
               // the loop's preflight (`loop/tool-call.ts`), so the MCP
               // client gets a plain object directly.
-              const result = await client.callTool(
-                tool.name,
-                (args ?? {}) as Record<string, unknown>,
-                context.signal,
-              );
-              return mcpResultToExecutableOutput(result, qualified, {
-                originalsDir: this.agent.mediaOriginalsDir,
-                telemetry: this.agent.telemetry,
-                // Resolved per call so a config reload applies immediately.
-                maxImageEdgePx: this.agent.imageLimits?.maxEdgePx(),
-              });
+              const callArgs = (args ?? {}) as Record<string, unknown>;
+              const convert = (result: MCPToolResult) =>
+                mcpResultToExecutableOutput(result, qualified, {
+                  originalsDir: this.agent.mediaOriginalsDir,
+                  // Resolved per call so a config reload applies immediately.
+                  maxImageEdgePx: this.agent.imageLimits?.maxEdgePx(),
+                });
+              try {
+                return await convert(await client.callTool(tool.name, callArgs, context.signal));
+              } catch (error) {
+                // MCP session expiry (HTTP 404 + JSON-RPC -32001): the
+                // server forgot our session id — rebuild the
+                // connection through the manager's existing reconnect path
+                // and retry the call exactly once on the fresh client.
+                if (!(error instanceof Error) || !isMcpSessionExpiredError(error)) throw error;
+                const fresh = await this.reconnectExpiredMcpSession(serverName);
+                if (fresh === undefined) throw error;
+                return convert(await fresh.callTool(tool.name, callArgs, context.signal));
+              }
             },
           };
         },
@@ -354,9 +386,54 @@ export class ToolManager {
     if (existing === undefined) return false;
     for (const qualified of existing) {
       this.mcpTools.delete(qualified);
+      this.alwaysLoadMcpTools.delete(qualified);
     }
     this.mcpToolsByServer.delete(serverName);
     return true;
+  }
+
+  /**
+   * In-flight session-expiry reconnects, deduped per server: N concurrent
+   * tool calls that all hit HTTP 404 + JSON-RPC -32001 share one reconnect
+   * instead of stampeding the handshake with parallel re-initializations.
+   */
+  private readonly mcpSessionReconnects = new Map<string, Promise<MCPClient | undefined>>();
+
+  /**
+   * Rebuild a server connection after an MCP session-expiry error and return
+   * the fresh client, or `undefined` when a retry is pointless (no manager,
+   * server no longer connected, reconnect failed). The reconnect flows
+   * through the manager's existing `reconnect()` (attempt-id guarded), whose
+   * status events re-register this server's tools with the new client — so
+   * calls after the retry already land on the fresh connection.
+   */
+  private reconnectExpiredMcpSession(serverName: string): Promise<MCPClient | undefined> {
+    let pending = this.mcpSessionReconnects.get(serverName);
+    if (pending === undefined) {
+      pending = (async () => {
+        const mcp = this.agent.mcp;
+        if (mcp === undefined) return undefined;
+        if (mcp.get(serverName)?.status !== 'connected') return undefined;
+        try {
+          await mcp.reconnect(serverName);
+          // Inside the try: a resolved() throw must degrade to "no retry"
+          // (the caller rethrows the ORIGINAL session-expired error), never
+          // escape as an unhandled rejection of its own.
+          return mcp.resolved(serverName)?.client;
+        } catch {
+          return undefined;
+        }
+      })();
+      this.mcpSessionReconnects.set(serverName, pending);
+      void pending.finally(() => {
+        // Delete only if this is still the current attempt — a newer
+        // reconnect may have replaced the entry already.
+        if (this.mcpSessionReconnects.get(serverName) === pending) {
+          this.mcpSessionReconnects.delete(serverName);
+        }
+      });
+    }
+    return pending;
   }
 
   private handleMcpServerStatusChange(mcp: McpConnectionManager, entry: McpServerEntry): void {
@@ -423,11 +500,15 @@ export class ToolManager {
   private registerConnectedMcpServer(mcp: McpConnectionManager, entry: McpServerEntry): void {
     const resolved = mcp.resolved(entry.name);
     if (resolved === undefined) return;
+    const alwaysLoadTools = new Set(
+      resolved.rawTools.filter(isAlwaysLoadMcpTool).map((tool) => tool.name),
+    );
     const result = this.registerMcpServer(
       entry.name,
       resolved.client,
       resolved.tools,
       resolved.enabledNames,
+      alwaysLoadTools,
     );
     this.recordMcpToolsDiscovered(
       entry.name,
@@ -558,8 +639,8 @@ export class ToolManager {
 
   private isMcpToolEnabled(name: string): boolean {
     return (
-      this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern)) &&
-      !this.mcpDenyPatterns.some((pattern) => picomatch.isMatch(name, pattern))
+      this.mcpAccessPatterns.some((pattern) => cachedGlobIsMatch(name, pattern)) &&
+      !this.mcpDenyPatterns.some((pattern) => cachedGlobIsMatch(name, pattern))
     );
   }
 
@@ -582,11 +663,14 @@ export class ToolManager {
    * profile's `mcp__*` access patterns, plus active user tools that explicitly
    * opt into deferred disclosure, sorted for byte-stable announcements.
    * In disclosure mode the patterns keep their permission-filter role but stop
-   * feeding the top-level `tools[]`.
+   * feeding the top-level `tools[]`. `alwaysLoad` tools are excluded — they
+   * sit in the top-level `tools[]` already, so there is nothing to select.
    */
   loadableDynamicToolNames(): string[] {
     const names = new Set(
-      [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name)),
+      [...this.mcpTools.keys()].filter(
+        (name) => this.isMcpToolEnabled(name) && !this.alwaysLoadMcpTools.has(name),
+      ),
     );
     for (const name of this.deferredUserTools) {
       if (this.userTools.has(name) && this.isExactToolEnabled(name)) names.add(name);
@@ -792,30 +876,50 @@ export class ToolManager {
       this.isExactToolEnabled('TaskOutput') &&
       this.isExactToolEnabled('TaskStop');
     const goalToolsEnabled = this.agent.type === 'main';
+    // F1: decorate the Bash tool's kaos with the OS sandbox per config.
+    // Other kaos consumers (run-rg, git-context, MCP stdio) keep the raw
+    // handle — only model-driven shell commands are sandboxed.
+    const { kaos: bashKaos, sandboxOptions: bashSandboxOptions } = this.resolveBashSandbox(
+      kaos,
+      cwd,
+    );
+    // ExecSession shares Bash's decorated kaos and sandbox options, but its
+    // escalation prompt must say the approval creates a *persistent
+    // unsandboxed session*, not a one-shot retry (RFC unified-exec-pty §3.4).
+    const execSessionSandboxOptions = this.resolveExecSessionSandboxOptions(bashSandboxOptions);
     this.builtinTools = new Map(
       [
         new b.ReadTool(kaos, workspace),
         new b.WriteTool(kaos, workspace),
         new b.EditTool(kaos, workspace),
-        new b.GrepTool(kaos, workspace, this.agent.telemetry),
-        new b.GlobTool(kaos, workspace, this.agent.telemetry),
-        new b.BashTool(kaos, cwd, background, {
+        new b.GrepTool(kaos, workspace),
+        new b.GlobTool(kaos, workspace),
+        new b.BashTool(bashKaos, cwd, background, {
           allowBackground,
           autoBackgroundOnTimeout:
             this.agent.kimiConfig?.background?.bashAutoBackgroundOnTimeout ?? true,
           backgroundTimeoutS: this.agent.kimiConfig?.background?.bashTaskTimeoutS,
+          sandbox: bashSandboxOptions,
+          wrapperStripping: this.agent.kimiConfig?.permission?.wrapperStripping ?? true,
         }),
+        new b.ExecSessionTool(bashKaos, cwd, this.agent.shellSessions, {
+          allowBackground,
+          sandbox: execSessionSandboxOptions,
+          wrapperStripping: this.agent.kimiConfig?.permission?.wrapperStripping ?? true,
+        }),
+        new b.WriteStdinTool(this.agent.shellSessions, { allowBackground }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
           new b.ReadMediaFileTool(
             kaos,
             workspace,
             modelCapabilities,
             videoUploader,
-            this.agent.telemetry,
             this.agent.imageLimits,
           ),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
+        new b.EnterWorktreeTool(this.agent),
+        new b.ExitWorktreeTool(this.agent),
         // Registered unconditionally: the tool-select flag can flip at runtime
         // (config reload calls setConfigOverrides) without this method
         // re-running, so registration must not depend on the gate — exposure
@@ -829,14 +933,19 @@ export class ToolManager {
         goalToolsEnabled && new b.SetGoalBudgetTool(this.agent),
         goalToolsEnabled && new b.UpdateGoalTool(this.agent),
         this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
-        new b.TodoListTool(this.toolStore),
+        new b.TodoListTool(this.toolStore, this.agent.hooks),
+        new b.SaveMemoryTool(kaos, this.agent.brandHomeDir ?? resolveCloudCodeHome()),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),
         new b.TaskStopTool(background),
         this.agent.cron && new b.CronCreateTool(this.agent.cron),
         this.agent.cron && new b.CronListTool(this.agent.cron),
         this.agent.cron && new b.CronDeleteTool(this.agent.cron),
-        this.agent.skills?.registry.listInvocableSkills().length &&
+        (this.agent.skills?.registry.listInvocableSkills().length ||
+          // `paths`-gated skills are invisible until activated, but the Skill
+          // tool must exist beforehand or an activated skill could never be
+          // invoked in an all-conditional registry.
+          this.agent.skills?.registry.hasPendingConditionalSkills()) &&
           new b.SkillTool(this.agent),
         this.agent.subagentHost &&
           new b.AgentTool(
@@ -847,11 +956,12 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
-              showModelPreferences: this.agent.experimentalFlags.enabled('secondary-model'),
-              modelChoiceEnabled: this.agent.experimentalFlags.enabled('secondary-model'),
+              // Cloud Code's secondary model is a stable feature (no
+              // experiment flag): the `model` parameter is always advertised.
+              showModelPreferences: true,
+              modelChoiceEnabled: true,
               subagentModelDescription: buildSubagentModelDescriptions(
                 this.agent.kimiConfig,
-                this.agent.experimentalFlags,
                 this.agent.config.modelAlias,
               ),
             },
@@ -863,11 +973,18 @@ export class ToolManager {
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
             buildSubagentModelDescriptions(
               this.agent.kimiConfig,
-              this.agent.experimentalFlags,
               this.agent.config.modelAlias,
             ),
-            this.agent.experimentalFlags.enabled('secondary-model'),
+            true,
           ),
+        // Team task list tools: session-shared store; unregistered for
+        // standalone agents that have none.
+        this.agent.teamStore && new b.TeamTaskCreateTool(this.agent.teamStore, this.agent.mailbox ?? undefined),
+        this.agent.teamStore && new b.TeamTaskListTool(this.agent.teamStore),
+        this.agent.teamStore && new b.TeamTaskUpdateTool(this.agent.teamStore),
+        this.agent.teamStore && new b.TeamTaskClaimTool(this.agent.teamStore),
+        // Team mailbox: leader↔teammate messaging + shutdown protocol.
+        this.agent.mailbox && new b.SendMessageTool(this.agent.mailbox),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]
@@ -878,6 +995,112 @@ export class ToolManager {
 
   refreshBuiltinTools(): void {
     this.initializeBuiltinTools();
+  }
+
+  /**
+   * F1: derive the Bash tool's kaos and sandbox options from the `[sandbox]`
+   * config section. Only the Bash tool is decorated — internal kaos
+   * consumers (run-rg, git-context, MCP stdio) keep the raw handle. Remote
+   * (SSH) kaos cannot be decorated: `enforce` fails closed via
+   * `unavailableReason`, `auto` warns once per session and passes through.
+   */
+  private resolveBashSandbox(
+    kaos: Kaos,
+    cwd: string,
+  ): { kaos: Kaos; sandboxOptions: b.BashSandboxOptions | undefined } {
+    const sandboxConfig = this.agent.kimiConfig?.sandbox;
+    const mode = sandboxConfig?.mode ?? 'auto';
+    if (mode === 'off') return { kaos, sandboxOptions: undefined };
+
+    if (kaos.name !== 'local') {
+      if (mode === 'enforce') {
+        return {
+          kaos,
+          sandboxOptions: {
+            unavailableReason:
+              `sandbox.mode is "enforce" but the execution environment is not local ` +
+              `(kaos: "${kaos.name}"); bubblewrap sandboxing requires a local environment. ` +
+              'Set sandbox.mode to "auto" or "off" to allow unsandboxed execution.',
+          },
+        };
+      }
+      this.agent.sandbox.warnOnce(
+        'sandbox-non-local-kaos',
+        `sandbox: execution environment "${kaos.name}" is not local; ` +
+          'commands run without the OS sandbox (mode: "auto").',
+      );
+      return { kaos, sandboxOptions: undefined };
+    }
+
+    const sandboxedKaos = new SandboxedKaos(
+      kaos,
+      this.agent.sandbox,
+      {
+        mode,
+        network: sandboxConfig?.network ?? 'allow',
+        workspaceCwd: cwd,
+        writableRoots: sandboxConfig?.writableRoots ?? [],
+        // Mask the brand home (~/.cloud-code): config.toml and credential
+        // stores live there and sandboxed commands have no business reading
+        // them. User-configured `deny_read` entries merge on top.
+        denyReadPaths: [this.agent.homedir ?? resolveCloudCodeHome(), ...(sandboxConfig?.denyRead ?? [])],
+      },
+      undefined,
+      {
+        // Control-plane self-protection: auto-loaded
+        // high-privilege surfaces — skills dirs, agent definitions, MCP
+        // configs, the brand home — are re-bound read-only when they exist
+        // and scrubbed from the host when a sandboxed command plants them.
+        ...collectControlPlaneGuardPaths({
+          cwd,
+          brandHomeDir: this.agent.brandHomeDir ?? resolveCloudCodeHome(),
+          userHomeDir: kaos.gethome(),
+          skillRoots: this.agent.skills?.registry.getSkillRoots() ?? [],
+        }),
+        onScrub: (paths) =>
+          // Log-only for now: the model is NOT told its outputs were
+          // scrubbed (guard.ts "SILENT SCRUB") — a reminder re-injection
+          // channel is a deliberate follow-up.
+          this.agent.log.warn('sandbox: scrubbed files planted by a sandboxed command', {
+            paths: [...paths],
+          }),
+      },
+    );
+    return {
+      kaos: sandboxedKaos,
+      sandboxOptions: {
+        unsandboxedKaos: kaos,
+        escalation: sandboxConfig?.escalation ?? 'ask',
+        requestEscalation: (info) => this.agent.permission.requestSandboxEscalation(info),
+        wasSandboxed: (proc) => sandboxedKaos.wasSandboxed(proc),
+      },
+    };
+  }
+
+  /**
+   * Wrap the Bash sandbox options for ExecSession: identical kaos /
+   * escalation posture, but the approval prompt wording is specific to
+   * persistent sessions — approving means everything later written to the
+   * session via WriteStdin also runs unsandboxed.
+   */
+  private resolveExecSessionSandboxOptions(
+    bashSandboxOptions: b.BashSandboxOptions | undefined,
+  ): b.BashSandboxOptions | undefined {
+    if (bashSandboxOptions === undefined) return undefined;
+    if (bashSandboxOptions.requestEscalation === undefined) return bashSandboxOptions;
+    return {
+      ...bashSandboxOptions,
+      requestEscalation: (info) =>
+        this.agent.permission.requestSandboxEscalation({
+          ...info,
+          toolName: 'ExecSession',
+          action:
+            `The session command was denied by the OS sandbox (${info.reason}). ` +
+            'Approve creating a persistent UNSANDBOXED shell session for it? ' +
+            'The session stays alive across calls, and everything later written ' +
+            'to it via WriteStdin also runs without the sandbox.',
+        }),
+    };
   }
 
   /**
@@ -898,7 +1121,6 @@ export class ToolManager {
     const withAuth = this.agent.modelProvider?.resolveAuth?.(modelAlias, {
       log: this.agent.log,
     });
-    const baseProps = this.videoUploadTelemetryProps(modelAlias);
     const upload =
       withAuth === undefined
         ? (input: b.VideoUploadInput, signal?: AbortSignal) => uploadVideo(input, { signal })
@@ -906,50 +1128,32 @@ export class ToolManager {
             withAuth((auth) => uploadVideo(input, { auth, signal }));
 
     return async (input, options) => {
-      const startedAt = Date.now();
-      const base = {
-        ...baseProps,
-        mime_type: input.mimeType,
-        size_bytes: input.data.length,
-      };
-      const track = (props: Record<string, string | number | boolean | undefined>): void => {
-        try {
-          this.agent.telemetry.track('video_upload', props);
-        } catch {
-          // Telemetry must never affect the upload outcome.
-        }
-      };
-      try {
-        const part = await upload(input, options?.signal);
-        track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
-        return part;
-      } catch (error) {
-        track({
-          ...base,
-          outcome: 'error',
-          duration_ms: Date.now() - startedAt,
-          error_type: error instanceof Error ? error.name : 'Unknown',
-        });
-        throw error;
-      }
+      return upload(input, options?.signal);
     };
   }
 
-  private videoUploadTelemetryProps(modelAlias: string): {
-    provider_type?: string;
-    protocol?: string;
-    model: string;
-  } {
-    try {
-      const resolved = this.agent.modelProvider?.resolveProviderConfig(modelAlias);
-      if (resolved === undefined) return { model: modelAlias };
-      return {
-        model: modelAlias,
-        provider_type: resolved.type,
-        protocol: resolved.protocol ?? resolved.type,
-      };
-    } catch {
-      return { model: modelAlias };
+  /**
+   * Look up a builtin tool by name for non-dispatch consumers (the graduated
+   * compaction budget layer reads a tool's `snipHint` through here). MCP and
+   * user tools carry no `snipHint` contract, so they deliberately resolve to
+   * undefined. Shares `loopTools`' lazy self-heal so a replayed
+   * graduated-compaction record — which re-derives previews during restore —
+   * sees the same table the live session wrote them from.
+   */
+  getBuiltinTool(name: string): BuiltinTool | undefined {
+    this.ensureBuiltinTools();
+    return this.builtinTools.get(name);
+  }
+
+  private ensureBuiltinTools(): void {
+    if (this.builtinTools.size === 0 && this.agent.config.hasProvider) {
+      try {
+        this.initializeBuiltinTools();
+      } catch (error) {
+        this.agent.log.warn('lazy initializeBuiltinTools failed; will retry on next read', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -963,15 +1167,7 @@ export class ToolManager {
     // loopTools is re-read before every step, so the table is populated on the
     // first step after the provider resolves. Steady state short-circuits on
     // `builtinTools.size === 0`, so hasProvider is not evaluated per read.
-    if (this.builtinTools.size === 0 && this.agent.config.hasProvider) {
-      try {
-        this.initializeBuiltinTools();
-      } catch (error) {
-        this.agent.log.warn('lazy initializeBuiltinTools failed; will retry on next read', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    this.ensureBuiltinTools();
     const disclosure = this.progressiveDisclosure;
     const enabledMcpNames = [...this.mcpTools.keys()].filter((name) =>
       this.isMcpToolEnabled(name),
@@ -994,7 +1190,11 @@ export class ToolManager {
     const mcpNames =
       loadedSet === undefined
         ? enabledMcpNames
-        : enabledMcpNames.filter((name) => loadedSet.has(name));
+        : enabledMcpNames.filter(
+            // alwaysLoad tools join the top-level tools[] unconditionally —
+            // that is the entire point of their `_meta` declaration.
+            (name) => this.alwaysLoadMcpTools.has(name) || loadedSet.has(name),
+          );
     // The disclosure gate decides exposure, but the denylist still wins: a
     // profile disallowedTools entry naming select_tools keeps it out of the
     // table (mirrors agent-core-v2 isToolActiveForDisclosure, which applies
@@ -1017,11 +1217,34 @@ export class ToolManager {
           this.builtinTools.get(name);
         if (tool === undefined) return undefined;
         const deferred =
-          disclosure && (this.mcpTools.has(name) || this.deferredUserTools.has(name));
+          disclosure &&
+          // alwaysLoad tools are the exception: they ARE the top-level
+          // tools[], so stripping them from the wire would make them
+          // uncallable.
+          (this.deferredUserTools.has(name) ||
+            (this.mcpTools.has(name) && !this.alwaysLoadMcpTools.has(name)));
         // Dynamic entries are plain object literals, so the spread keeps the
         // execution closure intact while adding the wire-strip marker.
         return deferred ? { ...tool, deferred: true as const } : tool;
       })
       .filter((tool) => !!tool);
   }
+}
+
+/**
+ * The shell-command detach check: did this Bash result background the
+ * command (ctrl+b)? New results say so in the structured payload
+ * (`backgrounded: true`); results from older builds only had the
+ * `task_id: ` output prefix. Returns the string output to inject, or
+ * undefined when the result is not a background detach. Results that
+ * merely reference a task id (a truncated-output pointer) carry the
+ * payload without `backgrounded` and correctly fail the check.
+ */
+function backgroundedShellResultOutput(result: ExecutableToolResult): string | undefined {
+  if (typeof result.output !== 'string') return undefined;
+  const structured = backgroundTaskStructuredSchema.safeParse(result.structured);
+  if (structured.success) {
+    return structured.data.backgrounded === true ? result.output : undefined;
+  }
+  return result.output.startsWith('task_id: ') ? result.output : undefined;
 }

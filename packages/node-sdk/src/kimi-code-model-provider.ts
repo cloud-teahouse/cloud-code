@@ -1,31 +1,31 @@
 import {
   ErrorCodes,
-  KimiError,
-  resolveKimiHome,
+  CloudCodeError,
+  resolveCloudCodeHome,
   type Logger,
   type ModelProvider,
   type ResolvedRuntimeProvider,
-} from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
 import {
   createKimiDefaultHeaders,
-  KIMI_CODE_FLOW_CONFIG,
-  KIMI_CODE_PROVIDER_NAME,
-  KimiOAuthToolkit,
+  CLOUD_CODE_FLOW_CONFIG,
+  CLOUD_CODE_PROVIDER_NAME,
+  CloudCodeOAuthToolkit,
   kimiCodeBaseUrl,
   parseKimiCodeCustomHeaders,
   resolveKimiCodeOAuthRef,
-  type KimiHostIdentity,
+  type CloudCodeHostIdentity,
   type ManagedKimiOAuthRef,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/oauth';
 import type {
   ProviderConfig as KosongProviderConfig,
   ProviderRequestAuth,
-} from '@moonshot-ai/kosong';
-import { APIStatusError, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
+import { APIStatusError, UNKNOWN_CAPABILITY } from '@cloud-code/kosong';
 
 import { mapOAuthTokenError } from '#/oauth-error';
 
-export interface KimiForCodingProviderOptions extends KimiHostIdentity {
+export interface CloudCodeForCodingProviderOptions extends CloudCodeHostIdentity {
   readonly homeDir?: string;
   readonly model?: string;
   readonly baseUrl?: string;
@@ -38,28 +38,28 @@ export class KimiForCodingProvider implements ModelProvider {
   private readonly baseUrl: string;
   private readonly promptCacheKey: string | undefined;
   private readonly defaultHeaders: Record<string, string> | undefined;
-  private readonly toolkit: KimiOAuthToolkit;
+  private readonly toolkit: CloudCodeOAuthToolkit;
   private readonly homeDir: string;
-  private readonly identity: KimiHostIdentity;
+  private readonly identity: CloudCodeHostIdentity;
   private readonly oauthRef: ManagedKimiOAuthRef;
 
-  constructor(options: KimiForCodingProviderOptions) {
+  constructor(options: CloudCodeForCodingProviderOptions) {
     this.model = options.model ?? 'kimi-for-coding';
     this.baseUrl = options.baseUrl ?? kimiCodeBaseUrl();
     this.promptCacheKey = options.promptCacheKey;
     this.defaultHeaders = options.defaultHeaders;
-    this.homeDir = resolveKimiHome(options.homeDir);
+    this.homeDir = resolveCloudCodeHome(options.homeDir);
     this.identity = {
-      productName: options.productName,
+      userAgentProduct: options.userAgentProduct,
       version: options.version,
       platform: options.platform,
       userAgentSuffix: options.userAgentSuffix,
     };
     this.oauthRef = resolveKimiCodeOAuthRef({
-      oauthHost: KIMI_CODE_FLOW_CONFIG.oauthHost,
+      oauthHost: CLOUD_CODE_FLOW_CONFIG.oauthHost,
       baseUrl: this.baseUrl,
     });
-    this.toolkit = new KimiOAuthToolkit({
+    this.toolkit = new CloudCodeOAuthToolkit({
       homeDir: this.homeDir,
       identity: this.identity,
     });
@@ -71,7 +71,7 @@ export class KimiForCodingProvider implements ModelProvider {
 
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {
     if (model !== this.model) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" is not supported by KimiForCodingProvider.`,
       );
@@ -113,7 +113,7 @@ export class KimiForCodingProvider implements ModelProvider {
           const is401 = error instanceof APIStatusError && error.statusCode === 401;
           if (!is401) throw error;
           if (refreshed) {
-            throw new KimiError(
+            throw new CloudCodeError(
               ErrorCodes.AUTH_LOGIN_REQUIRED,
               'OAuth token was rejected after refresh. Run /login to re-authenticate.',
               { cause: error },
@@ -127,17 +127,17 @@ export class KimiForCodingProvider implements ModelProvider {
 
   private async buildAuth(force: boolean): Promise<ProviderRequestAuth> {
     try {
-      const apiKey = await this.toolkit.ensureFresh(KIMI_CODE_PROVIDER_NAME, {
+      const apiKey = await this.toolkit.ensureFresh(CLOUD_CODE_PROVIDER_NAME, {
         force,
         oauthRef: this.oauthRef,
       });
       return { apiKey };
     } catch (error) {
-      // Classify OAuth token failures into the public KimiError protocol so the
+      // Classify OAuth token failures into the public CloudCodeError protocol so the
       // turn surfaces `auth.login_required` / `provider.connection_error`
       // instead of collapsing everything to `internal`. Unrecognized errors are
       // rethrown raw (see mapOAuthTokenError).
-      throw mapOAuthTokenError(error, KIMI_CODE_PROVIDER_NAME) ?? error;
+      throw mapOAuthTokenError(error, CLOUD_CODE_PROVIDER_NAME) ?? error;
     }
   }
 }

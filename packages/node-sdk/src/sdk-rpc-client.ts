@@ -2,27 +2,26 @@ import {
   createRPC,
   ensureConfigFile,
   getRootLogger,
-  KimiCore,
-  noopTelemetryClient,
+  CloudCodeCore,
   resolveConfigPath,
-  resolveKimiHome,
+  resolveCloudCodeHome,
   resolveLoggingConfig,
   type CoreAPI,
   type OAuthTokenProviderResolver,
   type RPCMethods,
   type SDKAPI,
-  type TelemetryClient,
-} from '@moonshot-ai/agent-core';
-import type { Kaos } from '@moonshot-ai/kaos';
-import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/agent-core';
+import type { Kaos } from '@cloud-code/kaos';
+import { assertCloudCodeHostIdentity, createKimiDefaultHeaders } from '@cloud-code/oauth';
 
-import { KimiAuthFacade } from '#/auth';
-import { KimiHarness } from '#/kimi-harness';
+import { CloudCodeAuthFacade } from '#/auth';
+import { CloudCodeHarness } from '#/cloud-code-harness';
+import { RemoteRpcClient } from '#/remote-rpc-client';
 import { ClientAPI, SDKRpcClientBase } from '#/rpc';
 import type {
   CreateSessionOptions,
-  KimiHarnessOptions,
-  KimiHostIdentity,
+  CloudCodeHarnessOptions,
+  CloudCodeHostIdentity,
   OAuthRefreshOutcome,
   ResumeSessionInput,
   ResumedSessionSummary,
@@ -32,13 +31,12 @@ import type {
 export interface SDKRpcClientOptions {
   readonly homeDir?: string;
   readonly configPath?: string;
-  readonly identity?: KimiHostIdentity;
+  readonly identity?: CloudCodeHostIdentity;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly skillDirs?: readonly string[];
-  readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
   /**
-   * Host UI mode (`'print'` for `kimi -p`, `'cli'` for the TUI, ...). Forwarded
+   * Host UI mode (`'print'` for `cloud-code -p`, `'cli'` for the TUI, ...). Forwarded
    * to the v1 core, which applies print-mode config defaults when it is
    * `'print'`.
    */
@@ -48,24 +46,22 @@ export interface SDKRpcClientOptions {
 export class SDKRpcClient extends SDKRpcClientBase {
   readonly homeDir: string;
   readonly configPath: string;
-  readonly identity: KimiHostIdentity | undefined;
-  readonly telemetry: TelemetryClient;
-  readonly auth: KimiAuthFacade;
-  readonly core: KimiCore;
+  readonly identity: CloudCodeHostIdentity | undefined;
+  readonly auth: CloudCodeAuthFacade;
+  readonly core: CloudCodeCore;
 
   private readonly ready: Promise<RPCMethods<CoreAPI>>;
 
   constructor(options: SDKRpcClientOptions = {}) {
     super();
     this.identity =
-      options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
-    this.homeDir = resolveKimiHome(options.homeDir);
+      options.identity === undefined ? undefined : assertCloudCodeHostIdentity(options.identity);
+    this.homeDir = resolveCloudCodeHome(options.homeDir);
     this.configPath = resolveConfigPath({
       homeDir: this.homeDir,
       configPath: options.configPath,
     });
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
-    this.auth = new KimiAuthFacade({
+    this.auth = new CloudCodeAuthFacade({
       homeDir: this.homeDir,
       configPath: this.configPath,
       identity: this.identity,
@@ -75,14 +71,13 @@ export class SDKRpcClient extends SDKRpcClientBase {
     void getRootLogger().configure(resolveLoggingConfig({ homeDir: this.homeDir }));
 
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    this.core = new KimiCore(coreRpc, {
+    this.core = new CloudCodeCore(coreRpc, {
       homeDir: options.homeDir,
       configPath: this.configPath,
-      kimiRequestHeaders: this.createKimiRequestHeaders(),
+      kimiRequestHeaders: this.createCloudCodeRequestHeaders(),
       resolveOAuthTokenProvider:
         options.resolveOAuthTokenProvider ?? this.auth.resolveOAuthTokenProvider,
       skillDirs: options.skillDirs,
-      telemetry: this.telemetry,
       appVersion: this.identity?.version,
       uiMode: options.uiMode,
     });
@@ -126,7 +121,7 @@ export class SDKRpcClient extends SDKRpcClientBase {
     );
   }
 
-  private createKimiRequestHeaders(): Record<string, string> | undefined {
+  private createCloudCodeRequestHeaders(): Record<string, string> | undefined {
     if (this.identity === undefined) return undefined;
     return createKimiDefaultHeaders({
       homeDir: this.homeDir,
@@ -135,18 +130,44 @@ export class SDKRpcClient extends SDKRpcClientBase {
   }
 }
 
-export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
+export function createCloudCodeHarness(options: CloudCodeHarnessOptions): CloudCodeHarness {
+  if (options.transport !== undefined && options.transport !== 'local') {
+    return createRemoteCloudCodeHarness(options);
+  }
   const rpc = new SDKRpcClient(options);
-  return new KimiHarness(rpc, {
+  return new CloudCodeHarness(rpc, {
     identity: rpc.identity,
-    uiMode: options.uiMode,
     homeDir: rpc.homeDir,
     configPath: rpc.configPath,
     auth: rpc.auth,
-    telemetry: rpc.telemetry,
     ensureConfigFile: () => rpc.ensureConfigFile(),
     onClose: () => rpc.close(),
     imageLimits: rpc.core.imageLimits,
-    sessionStartedProperties: options.sessionStartedProperties,
+  });
+}
+
+/**
+ * Remote-transport harness (stdio spawn or ws attach). Identical harness API;
+ * only the RPC transport differs. `imageLimits` stays undefined on
+ * daemon-client hosts, as `CloudCodeHarnessRuntimeOptions.imageLimits` documents.
+ */
+function createRemoteCloudCodeHarness(options: CloudCodeHarnessOptions): CloudCodeHarness {
+  const transport = options.transport;
+  if (
+    transport === undefined ||
+    transport === 'local' ||
+    (transport.type !== 'stdio' && transport.type !== 'ws')
+  ) {
+    throw new Error(`Unsupported harness transport: ${JSON.stringify(transport)}`);
+  }
+  const rpc = new RemoteRpcClient({ ...options, transport });
+  return new CloudCodeHarness(rpc, {
+    identity: rpc.identity,
+    homeDir: rpc.homeDir,
+    configPath: rpc.configPath,
+    auth: rpc.auth,
+    ensureConfigFile: () => rpc.ensureConfigFile(),
+    onClose: () => rpc.close(),
+    imageLimits: undefined,
   });
 }

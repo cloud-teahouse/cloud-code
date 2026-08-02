@@ -20,7 +20,7 @@ import {
   type Message,
   type ProviderConfig,
   type StreamedMessagePart,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
@@ -210,7 +210,7 @@ const DRAIN_FINAL_TEXT =
 async function createCoderSession(
   generate: AgentOptions['generate'],
 ): Promise<{ session: Session; mainAgent: Agent }> {
-  const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-coder-tools-e2e-'));
+  const sessionDir = await mkdtemp(join(tmpdir(), 'cloud-code-coder-tools-e2e-'));
   tempDirs.push(sessionDir);
   const rpc: SDKSessionRPC = {
     emitEvent: vi.fn(async () => {}),
@@ -252,7 +252,7 @@ async function createCoderSession(
 
 describe('coder subagent aligned tools (real Session e2e)', () => {
   it('runs every newly aligned tool to success inside a real coder subagent', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-coder-tools-e2e-'));
+    const sessionDir = await mkdtemp(join(tmpdir(), 'cloud-code-coder-tools-e2e-'));
     tempDirs.push(sessionDir);
 
     const rpc: SDKSessionRPC = {

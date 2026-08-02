@@ -1,3 +1,7 @@
+import path from 'pathe';
+
+import ignore from 'ignore';
+
 import { expandSkillParameters, skillArgumentNames } from './parser';
 import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
@@ -26,6 +30,19 @@ export interface SkillRegistryOptions {
 export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly byName = new Map<string, SkillDefinition>();
   private readonly byPluginAndName = new Map<string, SkillDefinition>();
+  /**
+   * Conditional (`paths` frontmatter) skills not yet activated: kept out of
+   * every listing and lookup so the model cannot see or invoke them.
+   */
+  private readonly pendingConditional = new Map<string, SkillDefinition>();
+  /**
+   * Conditional skills activated by touched paths this session. Lookup goes
+   * through here (the model may invoke them), but they deliberately stay out
+   * of `byName` so `listSkills()`/`getModelSkillListing()` — and therefore the
+   * system-prompt prefix — do not change mid-session. Activation is announced
+   * at the message-stream tail instead (see agent/injection/skill-activation).
+   */
+  private readonly activatedConditional = new Map<string, SkillDefinition>();
   private readonly roots: string[] = [];
   private readonly skipped: SkippedSkill[] = [];
   private readonly discoverImpl: typeof discoverSkills;
@@ -53,7 +70,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     } satisfies DiscoverSkillsOptions);
 
     for (const skill of skills) {
-      this.byName.set(normalizeSkillName(skill.name), skill);
+      this.index(skill);
     }
   }
 
@@ -63,18 +80,123 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
 
   register(skill: SkillDefinition, options: { readonly replace?: boolean } = {}): void {
     const key = normalizeSkillName(skill.name);
+    if (this.isConditional(skill)) {
+      if (options.replace === true || !this.pendingConditional.has(key)) {
+        this.pendingConditional.set(key, skill);
+      }
+      return;
+    }
     if (options.replace === true || !this.byName.has(key)) {
       this.byName.set(key, skill);
     }
     this.indexPluginSkill(skill, options);
   }
 
+  private index(skill: SkillDefinition): void {
+    const key = normalizeSkillName(skill.name);
+    if (this.isConditional(skill)) {
+      this.pendingConditional.set(key, skill);
+      return;
+    }
+    this.byName.set(key, skill);
+  }
+
+  /**
+   * A skill is conditional when it declares `paths` frontmatter on an inline
+   * type. `paths` on a non-inline type (flow/reference) is inert — the skill
+   * loads normally and a warning tells the author the gate does not apply.
+   */
+  private isConditional(skill: SkillDefinition): boolean {
+    const paths = skill.metadata.paths;
+    if (paths === undefined || paths.length === 0) return false;
+    if (!isInlineSkillType(skill.metadata.type)) {
+      this.onWarning(
+        `Skill "${skill.name}" declares "paths" but type "${skill.metadata.type ?? ''}" is not inline; the paths gate is ignored.`,
+      );
+      return false;
+    }
+    return true;
+  }
+
   getSkill(name: string): SkillDefinition | undefined {
-    return this.byName.get(normalizeSkillName(name));
+    const key = normalizeSkillName(name);
+    return this.byName.get(key) ?? this.activatedConditional.get(key);
   }
 
   getPluginSkill(pluginId: string, name: string): SkillDefinition | undefined {
     return this.byPluginAndName.get(pluginSkillKey(pluginId, name));
+  }
+
+  hasPendingConditionalSkills(): boolean {
+    return this.pendingConditional.size > 0;
+  }
+
+  listActivatedConditionalSkills(): readonly SkillDefinition[] {
+    return [...this.activatedConditional.values()].toSorted((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+  }
+
+  /**
+   * Activate pending conditional skills whose `paths` patterns match any of
+   * the touched file paths. Matching is gitignore-style (the `ignore`
+   * package), paths are matched relative to `cwd`; absolute paths outside
+   * `cwd` can never match, mirroring Claude Code's
+   * `activateConditionalSkillsForPaths`. Returns the newly activated skills,
+   * sorted by name for byte-stable announcements.
+   */
+  activateSkillsForPaths(
+    paths: readonly string[],
+    cwd: string,
+  ): readonly SkillDefinition[] {
+    if (this.pendingConditional.size === 0 || paths.length === 0) return [];
+    const activated: SkillDefinition[] = [];
+    for (const [key, skill] of this.pendingConditional) {
+      const patterns = skill.metadata.paths;
+      if (patterns === undefined || patterns.length === 0) continue;
+      let matcher: ReturnType<typeof ignore>;
+      try {
+        matcher = ignore().add([...patterns]);
+      } catch (error) {
+        this.onWarning(`Skill "${skill.name}" has invalid "paths" patterns; skipping it`, error);
+        continue;
+      }
+      for (const touched of paths) {
+        const relativePath = path.isAbsolute(touched) ? path.relative(cwd, touched) : touched;
+        // ignore() throws on empty strings, paths escaping the base (../),
+        // and absolute leftovers; files outside cwd cannot match cwd-relative
+        // patterns anyway.
+        if (relativePath === '' || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+          continue;
+        }
+        if (matcher.ignores(relativePath)) {
+          this.pendingConditional.delete(key);
+          this.activatedConditional.set(key, skill);
+          this.indexPluginSkill(skill);
+          activated.push(skill);
+          break;
+        }
+      }
+    }
+    return activated.toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Re-activate one pending conditional skill by name without a path match.
+   * Used on resume: the rebuilt registry starts every conditional skill as
+   * pending, while the replayed history still carries earlier activation
+   * announcements — the ledger in the history wins (same philosophy as the
+   * loadable-tools announcements) so the model never sees an announcement for
+   * a skill the registry would refuse to invoke.
+   */
+  activatePendingConditionalSkill(name: string): SkillDefinition | undefined {
+    const key = normalizeSkillName(name);
+    const skill = this.pendingConditional.get(key);
+    if (skill === undefined) return undefined;
+    this.pendingConditional.delete(key);
+    this.activatedConditional.set(key, skill);
+    this.indexPluginSkill(skill);
+    return skill;
   }
 
   private indexPluginSkill(
@@ -125,7 +247,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     return [...this.skipped];
   }
 
-  getKimiSkillsDescription(): string {
+  getCloudCodeSkillsDescription(): string {
     const rendered = renderGroupedSkills(this.listSkills(), formatFullSkill);
     return rendered.length === 0 ? 'No skills' : rendered;
   }

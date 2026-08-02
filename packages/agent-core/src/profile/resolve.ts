@@ -19,7 +19,9 @@ interface MergedAgentProfile {
   readonly systemPromptTemplate: string;
   readonly promptVars: Record<string, string>;
   readonly tools: string[];
+  readonly model?: string | undefined;
   readonly whenToUse?: string | undefined;
+  readonly omitAgentsMd: boolean;
   readonly subagents?: Record<string, RawSubagentProfile> | undefined;
   readonly modelPreference?: AgentModelPreference;
 }
@@ -105,7 +107,9 @@ function resolveMergedProfile(
       ...profile.promptVars,
     },
     tools: profile.tools !== undefined ? [...profile.tools] : [...(parent?.tools ?? [])],
+    model: profile.model ?? parent?.model,
     whenToUse: profile.whenToUse ?? parent?.whenToUse,
+    omitAgentsMd: profile.omitAgentsMd ?? parent?.omitAgentsMd ?? false,
     subagents: cloneSubagents(profile.subagents),
     modelPreference: profile.modelPreference ?? parent?.modelPreference,
   };
@@ -120,6 +124,7 @@ function toResolvedProfile(merged: MergedAgentProfile): ResolvedAgentProfile {
     description: merged.description,
     systemPrompt: createSystemPromptRenderer(merged),
     tools: [...merged.tools],
+    model: merged.model,
     whenToUse: merged.whenToUse,
     modelPreference: merged.modelPreference,
   };
@@ -128,11 +133,11 @@ function toResolvedProfile(merged: MergedAgentProfile): ResolvedAgentProfile {
 /**
  * Build a renderer that captures the merged template and prompt vars.
  * The runtime SystemPromptContext is mapped to the template variables
- * (KIMI_OS, KIMI_AGENTS_MD, ...) at render time.
+ * (CLOUD_CODE_OS, CLOUD_CODE_AGENTS_MD, ...) at render time.
  */
 function createSystemPromptRenderer(merged: MergedAgentProfile): SystemPromptRenderer {
   return (context: SystemPromptContext): string => {
-    const vars = buildTemplateVars(context, merged.promptVars, merged.tools);
+    const vars = buildTemplateVars(context, merged.promptVars, merged.tools, merged.omitAgentsMd);
     try {
       return renderPrompt(merged.systemPromptTemplate, vars);
     } catch (error) {
@@ -150,6 +155,7 @@ function buildTemplateVars(
   context: SystemPromptContext,
   promptVars: Record<string, string>,
   tools: readonly string[],
+  omitAgentsMd: boolean,
 ): Record<string, string> {
   const skills =
     typeof context.skills === 'string'
@@ -162,20 +168,33 @@ function buildTemplateVars(
 
   return {
     ...promptVars,
-    KIMI_OS: context.osEnv.osKind,
-    KIMI_SHELL: `${context.osEnv.shellName} (\`${context.osEnv.shellPath}\`)`,
-    KIMI_NOW: now,
-    KIMI_WORK_DIR: context.cwd,
-    KIMI_WORK_DIR_LS: context.cwdListing ?? '',
-    KIMI_AGENTS_MD: context.agentsMd ?? '',
-    KIMI_SKILLS: tools.includes('Skill') ? skills : '',
-    KIMI_PLUGIN_SECTIONS: context.pluginSections ?? '',
-    KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
+    CLOUD_CODE_OS: context.osEnv.osKind,
+    CLOUD_CODE_SHELL: `${context.osEnv.shellName} (\`${context.osEnv.shellPath}\`)`,
+    CLOUD_CODE_NOW: now,
+    CLOUD_CODE_WORK_DIR: context.cwd,
+    CLOUD_CODE_WORK_DIR_LS: context.cwdListing ?? '',
+    // Profiles with `omitAgentsMd` (read-only subagents) drop the merged
+    // AGENTS.md content; the template's `{% if CLOUD_CODE_AGENTS_MD %}` gate then
+    // elides the whole injected block.
+    CLOUD_CODE_AGENTS_MD: omitAgentsMd ? '' : (context.agentsMd ?? ''),
+    // Memory rides the same availability gate as skills: profiles without the
+    // SaveMemory tool (read-only explore/plan) never see the `# Memory`
+    // section, so the shared template can name the tool inside it.
+    CLOUD_CODE_MEMORY: tools.includes('SaveMemory') ? (context.memory ?? '') : '',
+    CLOUD_CODE_SKILLS: tools.includes('Skill') ? skills : '',
+    CLOUD_CODE_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
+    CLOUD_CODE_GIT_STATUS: context.gitStatus ?? '',
+    CLOUD_CODE_MCP_INSTRUCTIONS: context.mcpInstructions ?? '',
+    // Empty when the user made no explicit UI-language choice: the
+    // template's `{% if CLOUD_CODE_USER_LANGUAGE %}` gate then renders exactly
+    // the historical infer-from-message section.
+    CLOUD_CODE_USER_LANGUAGE: context.userLanguage ?? '',
+    CLOUD_CODE_PLUGIN_SECTIONS: context.pluginSections ?? '',
     // Shared prose sections (single source: profile/prompt-sections.ts) so the
     // builtin template and the agent-file renderer can never drift apart.
-    KIMI_WINDOWS_NOTES: WINDOWS_NOTES,
-    KIMI_ADDITIONAL_DIRS_SECTION_PROSE: ADDITIONAL_DIRS_SECTION_PROSE,
-    KIMI_SKILLS_SECTION_PROSE: SKILLS_SECTION_PROSE,
+    CLOUD_CODE_WINDOWS_NOTES: WINDOWS_NOTES,
+    CLOUD_CODE_ADDITIONAL_DIRS_SECTION_PROSE: ADDITIONAL_DIRS_SECTION_PROSE,
+    CLOUD_CODE_SKILLS_SECTION_PROSE: SKILLS_SECTION_PROSE,
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',
   };

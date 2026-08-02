@@ -74,7 +74,7 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
             </span>
           ) : null}
           {session.imported && session.importMeta?.manifest?.kimiCodeVersion ? (
-            <span className="tabular text-fg-3" title="kimi-code version that produced this bundle">
+            <span className="tabular text-fg-3" title="cloud-code version that produced this bundle">
               v{session.importMeta.manifest.kimiCodeVersion}
             </span>
           ) : null}

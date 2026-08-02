@@ -134,13 +134,13 @@ describe('fetchCustomRegistry', () => {
       KOKUB_SOURCE,
       {
         fetchImpl: fetchMock as unknown as typeof fetch,
-        userAgent: 'kimi-code-cli/1.2.3',
+        userAgent: 'cloud-code-cli/1.2.3',
       },
     );
 
     const withUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((withUa[1].headers as Record<string, string>)['User-Agent']).toBe(
-      'kimi-code-cli/1.2.3',
+      'cloud-code-cli/1.2.3',
     );
 
     fetchMock.mockClear();

@@ -1,10 +1,10 @@
 import {
   ErrorCodes,
-  KimiError,
+  CloudCodeError,
   type AgentContextData,
-  type KimiErrorCode,
+  type CloudCodeErrorCode,
   type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
@@ -19,7 +19,6 @@ import type {
   GoalToolResult,
   JsonObject,
   McpServerInfo,
-  McpStartupMetrics,
   PermissionMode,
   PluginInfo,
   PluginSummary,
@@ -28,11 +27,15 @@ import type {
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
+  RewindFilesResult,
+  SandboxStatusData,
   SessionPlan,
   SessionStatus,
   SessionSummary,
   SessionUsage,
+  ServiceTier,
   SkillSummary,
+  OutputStyleSummary,
   PluginCommandDef,
   ThinkingEffort,
   Unsubscribe,
@@ -182,9 +185,12 @@ export class Session {
     return this.rpc.startBtw({ sessionId: this.id });
   }
 
-  async cancel(): Promise<void> {
+  async cancel(options?: { readonly withdrawInput?: boolean }): Promise<void> {
     this.ensureOpen();
-    await this.rpc.cancel({ sessionId: this.id });
+    await this.rpc.cancel({
+      sessionId: this.id,
+      withdrawInput: options?.withdrawInput === true,
+    });
   }
 
   async setModel(model: string): Promise<void> {
@@ -208,8 +214,24 @@ export class Session {
   }
 
   /**
+   * Toggle the fast service tier (`/fast`). `'priority'` enables it, `null`
+   * restores the default tier. Only effective for ChatGPT Codex (OpenAI
+   * Responses) providers; the caller is responsible for gating.
+   */
+  async setServiceTier(serviceTier: ServiceTier | null): Promise<void> {
+    this.ensureOpen();
+    if (serviceTier !== null && serviceTier !== 'priority') {
+      throw new CloudCodeError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session service tier must be "priority" or null',
+      );
+    }
+    await this.rpc.setServiceTier({ sessionId: this.id, serviceTier });
+  }
+
+  /**
    * Live-apply the persisted `[secondary_model]` recipe to this session
-   * (subagent model binding). Persist the recipe via `KimiHarness.setConfig`
+   * (subagent model binding). Persist the recipe via `CloudCodeHarness.setConfig`
    * first; this reloads the complete recipe and its synthesized derived entry
    * before updating the session snapshot — mirroring the `/secondary_model`
    * flow.
@@ -222,7 +244,7 @@ export class Session {
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.SESSION_PERMISSION_MODE_INVALID,
         'Session permission mode must be yolo, manual, or auto',
       );
@@ -234,7 +256,7 @@ export class Session {
   async updateMetadata(patch: JsonObject): Promise<void> {
     this.ensureOpen();
     if (Object.hasOwn(patch, 'goal')) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.GOAL_METADATA_RESERVED,
         'Session metadata key "goal" is reserved for the goal lifecycle',
       );
@@ -257,7 +279,7 @@ export class Session {
   async setPlanMode(enabled: boolean): Promise<void> {
     this.ensureOpen();
     if (typeof enabled !== 'boolean') {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.SESSION_PLAN_MODE_INVALID,
         'Session plan mode must be a boolean',
       );
@@ -268,7 +290,7 @@ export class Session {
   async setSwarmMode(enabled: boolean, trigger: SwarmModeTrigger): Promise<void> {
     this.ensureOpen();
     if (typeof enabled !== 'boolean') {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.REQUEST_INVALID,
         'Session swarm mode must be a boolean',
       );
@@ -278,6 +300,17 @@ export class Session {
     } else {
       await this.rpc.setSwarmMode({ sessionId: this.id, enabled: false });
     }
+  }
+
+  async setCoordinatorMode(enabled: boolean): Promise<void> {
+    this.ensureOpen();
+    if (typeof enabled !== 'boolean') {
+      throw new CloudCodeError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session coordinator mode must be a boolean',
+      );
+    }
+    await this.rpc.setCoordinatorMode({ sessionId: this.id, enabled });
   }
 
   async getPlan(): Promise<SessionPlan> {
@@ -307,6 +340,17 @@ export class Session {
   async undoHistory(count: number = 1): Promise<void> {
     this.ensureOpen();
     await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
+  /**
+   * Roll the files the agent changed back to the state at the start of the
+   * Nth-from-last user prompt's turn. Pure file-system effect — the
+   * conversation is untouched; combine with {@link undoHistory} for a full
+   * rewind. Throws when file snapshots are unavailable (no git / disabled).
+   */
+  async rewindFiles(count: number = 1): Promise<RewindFilesResult> {
+    this.ensureOpen();
+    return this.rpc.rewindFiles({ sessionId: this.id, count });
   }
 
   /** Clear this session's model context without creating a new session. */
@@ -339,6 +383,24 @@ export class Session {
   async listSkills(): Promise<readonly SkillSummary[]> {
     this.ensureOpen();
     return this.rpc.listSkills({ sessionId: this.id });
+  }
+
+  /**
+   * Output styles available in this session (builtin + user/project/plugin
+   * dirs), for the `/output-style` picker.
+   */
+  async listOutputStyles(): Promise<readonly OutputStyleSummary[]> {
+    this.ensureOpen();
+    return this.rpc.listOutputStyles({ sessionId: this.id });
+  }
+
+  /**
+   * Live-switch this session's output style (one-time prompt re-render per
+   * agent). Live-only — persist the choice via `setConfig({ outputStyle })`.
+   */
+  async setOutputStyle(style: string): Promise<void> {
+    this.ensureOpen();
+    return this.rpc.setOutputStyle({ sessionId: this.id, style });
   }
 
   async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
@@ -429,7 +491,7 @@ export class Session {
 
   /**
    * Block until every still-running background task (across all agents in this
-   * session) reaches a terminal state. Used by `kimi -p` after the main agent's
+   * session) reaches a terminal state. Used by `cloud-code -p` after the main agent's
    * turn finishes when the resolved print background mode is `'drain'`
    * (`print_background_mode = "drain"`, or the legacy `keep_alive_on_exit = true`
    * fallback), so background subagents get a chance to complete before the process
@@ -441,7 +503,7 @@ export class Session {
   }
 
   /**
-   * Used by `kimi -p` after the main agent's turn ends with `reason ===
+   * Used by `cloud-code -p` after the main agent's turn ends with `reason ===
    * 'completed'`. Returns `'finish'` when the run may exit, or `'continue'` when
    * the caller must keep the session alive so a background-task completion can
    * steer the main agent into a new turn. Policy is selected by
@@ -486,7 +548,7 @@ export class Session {
 
   /**
    * Enumerate the cron tasks scheduled in this session. Hosts running a
-   * bounded session lifetime (e.g. `kimi -p`) poll this to decide whether
+   * bounded session lifetime (e.g. `cloud-code -p`) poll this to decide whether
    * pending scheduled work still needs the process alive.
    */
   async getCronTasks(): Promise<GetCronTasksResult> {
@@ -499,9 +561,14 @@ export class Session {
     return this.rpc.listMcpServers({ sessionId: this.id });
   }
 
-  async getMcpStartupMetrics(): Promise<McpStartupMetrics> {
+  /**
+   * Snapshot of the OS command sandbox (mode, backend probe, policy, config
+   * origin) for the `/sandbox` status panel. Resolved agent-side so the
+   * report reflects the execution environment, not the SDK host.
+   */
+  async getSandboxStatus(): Promise<SandboxStatusData> {
     this.ensureOpen();
-    return this.rpc.getMcpStartupMetrics({ sessionId: this.id });
+    return this.rpc.getSandboxStatus({ sessionId: this.id });
   }
 
   async reconnectMcpServer(name: string): Promise<void> {
@@ -519,9 +586,13 @@ export class Session {
     return this.rpc.installPlugin(source);
   }
 
-  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+  async setPluginEnabled(
+    id: string,
+    enabled: boolean,
+    options?: { readonly scope?: 'user' | 'project'; readonly workDir?: string },
+  ): Promise<void> {
     this.ensureOpen();
-    await this.rpc.setPluginEnabled(id, enabled);
+    await this.rpc.setPluginEnabled(id, enabled, options);
   }
 
   async setPluginMcpServerEnabled(
@@ -572,7 +643,7 @@ export class Session {
     const normalizedPluginId = pluginId.trim();
     const normalizedCommandName = commandName.trim();
     if (normalizedPluginId.length === 0 || normalizedCommandName.length === 0) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.REQUEST_INVALID,
         'Plugin id and command name cannot be empty',
       );
@@ -614,13 +685,13 @@ export class Session {
 
   private ensureOpen(): void {
     if (this.closed) {
-      throw new KimiError(ErrorCodes.SESSION_CLOSED, 'Session is closed');
+      throw new CloudCodeError(ErrorCodes.SESSION_CLOSED, 'Session is closed');
     }
   }
 
   private requireSummary(): SessionSummary {
     if (this.summary === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, 'Session summary is unavailable');
+      throw new CloudCodeError(ErrorCodes.SESSION_STATE_INVALID, 'Session summary is unavailable');
     }
     return this.summary;
   }
@@ -629,20 +700,20 @@ export class Session {
 function normalizePromptInput(input: string | PromptInput): PromptInput {
   if (typeof input === 'string') {
     if (input.trim().length === 0) {
-      throw new KimiError(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY, 'Prompt input cannot be empty');
+      throw new CloudCodeError(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY, 'Prompt input cannot be empty');
     }
     return [{ type: 'text', text: input }];
   }
 
   if (input.length === 0) {
-    throw new KimiError(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY, 'Prompt input cannot be empty');
+    throw new CloudCodeError(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY, 'Prompt input cannot be empty');
   }
 
   for (const part of input) {
     switch (part.type) {
       case 'text':
         if (part.text.trim().length === 0) {
-          throw new KimiError(
+          throw new CloudCodeError(
             ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY,
             'Prompt input cannot contain empty text parts',
           );
@@ -650,7 +721,7 @@ function normalizePromptInput(input: string | PromptInput): PromptInput {
         break;
       case 'image_url':
         if (part.imageUrl.url.trim().length === 0) {
-          throw new KimiError(
+          throw new CloudCodeError(
             ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY,
             'Prompt input cannot contain empty image URLs',
           );
@@ -658,7 +729,7 @@ function normalizePromptInput(input: string | PromptInput): PromptInput {
         break;
       case 'video_url':
         if (part.videoUrl.url.trim().length === 0) {
-          throw new KimiError(
+          throw new CloudCodeError(
             ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY,
             'Prompt input cannot contain empty video URLs',
           );
@@ -672,11 +743,11 @@ function normalizePromptInput(input: string | PromptInput): PromptInput {
 function normalizeRequiredString(
   value: string,
   message: string,
-  code: KimiErrorCode,
+  code: CloudCodeErrorCode,
 ): string {
   const normalized = value.trim();
   if (normalized.length === 0) {
-    throw new KimiError(code, message);
+    throw new CloudCodeError(code, message);
   }
   return normalized;
 }

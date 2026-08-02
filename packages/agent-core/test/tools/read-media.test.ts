@@ -2,11 +2,11 @@
  * ReadMediaFileTool public execution contract: capability and path gating,
  * model-safe media delivery, compression/crop behavior, and actionable
  * failures. Real codecs are used; Kaos is the only stubbed I/O boundary.
- * Run with: pnpm --filter @moonshot-ai/agent-core test -- read-media.test.ts
+ * Run with: pnpm --filter @cloud-code/agent-core test -- read-media.test.ts
  */
 
-import type { Kaos } from '@moonshot-ai/kaos';
-import type { ContentPart, ModelCapability } from '@moonshot-ai/kosong';
+import type { Kaos } from '@cloud-code/kaos';
+import type { ContentPart, ModelCapability } from '@cloud-code/kosong';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,7 +19,6 @@ import {
 import { MAX_IMAGE_DECODE_BYTES } from '../../src/tools/support/image-compress';
 import { ImageLimits } from '../../src/tools/support/image-limits';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
-import type { TelemetryClient } from '../../src/telemetry';
 import { createFakeKaos, FAKE_OS_ENV, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -93,7 +92,6 @@ function makeReadMediaTool(
     readonly stat?: Kaos['stat'] | undefined;
     readonly readBytes?: Kaos['readBytes'] | undefined;
     readonly modelCapabilities?: ModelCapability | undefined;
-    readonly telemetry?: TelemetryClient | undefined;
     readonly imageLimits?: ImageLimits | undefined;
   } = {},
 ): ReadMediaFileTool {
@@ -106,7 +104,6 @@ function makeReadMediaTool(
     PERMISSIVE_WORKSPACE,
     input.modelCapabilities ?? capabilities(),
     undefined,
-    input.telemetry,
     input.imageLimits,
   );
 }
@@ -869,43 +866,6 @@ describe('ReadMediaFileTool', () => {
     const systemText = noteText(result);
     expect(systemText).toContain('Original dimensions: 80x120');
     expect(systemText).not.toMatch(/downsampled/i);
-  });
-
-  it('emits image_compress and image_crop telemetry tagged read_media', async () => {
-    const events: { event: string; props: Record<string, unknown> }[] = [];
-    const telemetry: TelemetryClient = {
-      track: (event, props) => events.push({ event, props: props ?? {} }),
-    };
-    const big = Buffer.from(
-      await new Jimp({ width: 2200, height: 1100, color: 0x3366ccff }).getBuffer('image/png'),
-    );
-    const tool = makeReadMediaTool({
-      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
-      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(big),
-      telemetry,
-    });
-
-    await executeTool(tool, {
-      turnId: 't1',
-      toolCallId: 'c_tele_read',
-      args: { path: '/workspace/big.png' },
-      signal,
-    });
-    expect(events).toHaveLength(1);
-    expect(events[0]!.event).toBe('image_compress');
-    expect(events[0]!.props['source']).toBe('read_media');
-    expect(events[0]!.props['outcome']).toBe('compressed');
-
-    await executeTool(tool, {
-      turnId: 't1',
-      toolCallId: 'c_tele_crop',
-      args: { path: '/workspace/big.png', region: { x: 0, y: 0, width: 100, height: 100 } },
-      signal,
-    });
-    expect(events).toHaveLength(2);
-    expect(events[1]!.event).toBe('image_crop');
-    expect(events[1]!.props['source']).toBe('read_media');
-    expect(events[1]!.props['ok']).toBe(true);
   });
 
   describe('region and full_resolution', () => {

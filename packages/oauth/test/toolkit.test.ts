@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   applyManagedKimiCodeConfig,
-  KIMI_CODE_PROVIDER_NAME,
-  KimiOAuthToolkit,
+  CLOUD_CODE_PROVIDER_NAME,
+  CloudCodeOAuthToolkit,
   resolveKimiCodeOAuthKey,
   resolveKimiTokenStorageName,
   type ManagedKimiConfigShape,
@@ -45,7 +45,7 @@ function token(accessToken: string): TokenInfo {
 }
 
 const TEST_IDENTITY = {
-  productName: 'kimi-code-cli',
+  userAgentProduct: 'cloud-code-cli',
   version: '0.0.0-test',
   platform: 'kimi_code_cli',
 } as const;
@@ -81,7 +81,7 @@ describe('resolveKimiTokenStorageName', () => {
   it('maps config oauth keys to the file storage token name', () => {
     expect(
       resolveKimiTokenStorageName({
-        providerName: KIMI_CODE_PROVIDER_NAME,
+        providerName: CLOUD_CODE_PROVIDER_NAME,
         oauthKey: 'oauth/kimi-code',
       }),
     ).toBe('kimi-code');
@@ -105,11 +105,11 @@ describe('resolveKimiTokenStorageName', () => {
   });
 });
 
-describe('KimiOAuthToolkit', () => {
+describe('CloudCodeOAuthToolkit', () => {
   it('can be constructed without host identity', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       storage,
       now: () => 100,
@@ -121,7 +121,7 @@ describe('KimiOAuthToolkit', () => {
   it('reports status and exposes a bearer token provider', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -129,7 +129,7 @@ describe('KimiOAuthToolkit', () => {
     });
 
     await expect(toolkit.status()).resolves.toEqual({
-      providers: [{ providerName: KIMI_CODE_PROVIDER_NAME, hasToken: true }],
+      providers: [{ providerName: CLOUD_CODE_PROVIDER_NAME, hasToken: true }],
     });
     await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('access-1');
   });
@@ -137,7 +137,7 @@ describe('KimiOAuthToolkit', () => {
   it('resolves bearer token providers using the configured oauth key', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('custom-kimi-code', token('custom-access'));
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -146,7 +146,7 @@ describe('KimiOAuthToolkit', () => {
 
     await expect(
       toolkit
-        .tokenProvider(KIMI_CODE_PROVIDER_NAME, { key: 'oauth/custom-kimi-code' })
+        .tokenProvider(CLOUD_CODE_PROVIDER_NAME, { key: 'oauth/custom-kimi-code' })
         .getAccessToken(),
     ).resolves.toBe('custom-access');
   });
@@ -178,7 +178,7 @@ describe('KimiOAuthToolkit', () => {
       );
     });
     vi.stubGlobal('fetch', fetchImpl);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -192,7 +192,7 @@ describe('KimiOAuthToolkit', () => {
 
     await expect(
       toolkit
-        .tokenProvider(KIMI_CODE_PROVIDER_NAME, { key: oauthKey, oauthHost })
+        .tokenProvider(CLOUD_CODE_PROVIDER_NAME, { key: oauthKey, oauthHost })
         .getAccessToken(),
     ).resolves.toBe('rotated-dev-access');
   });
@@ -218,7 +218,7 @@ describe('KimiOAuthToolkit', () => {
       );
     });
     vi.stubGlobal('fetch', fetchImpl);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -232,7 +232,7 @@ describe('KimiOAuthToolkit', () => {
 
     await expect(
       toolkit
-        .tokenProvider(KIMI_CODE_PROVIDER_NAME, {
+        .tokenProvider(CLOUD_CODE_PROVIDER_NAME, {
           key: 'oauth/custom-kimi-code',
           oauthHost: 'https://auth.one.test/',
         })
@@ -240,7 +240,7 @@ describe('KimiOAuthToolkit', () => {
     ).resolves.toBe('rotated-1');
     await expect(
       toolkit
-        .tokenProvider(KIMI_CODE_PROVIDER_NAME, {
+        .tokenProvider(CLOUD_CODE_PROVIDER_NAME, {
           key: 'oauth/custom-kimi-code',
           oauthHost: 'https://auth.two.test',
         })
@@ -259,7 +259,7 @@ describe('KimiOAuthToolkit', () => {
       ...token('cached-access'),
       expiresAt: 1,
     });
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -272,7 +272,7 @@ describe('KimiOAuthToolkit', () => {
   it('resolves cached access tokens using the configured oauth key', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('custom-kimi-code', token('custom-cached-access'));
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -280,12 +280,12 @@ describe('KimiOAuthToolkit', () => {
     });
 
     await expect(
-      toolkit.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME, { key: 'oauth/custom-kimi-code' }),
+      toolkit.getCachedAccessToken(CLOUD_CODE_PROVIDER_NAME, { key: 'oauth/custom-kimi-code' }),
     ).resolves.toBe('custom-cached-access');
   });
 
   it('returns undefined when no cached access token exists', async () => {
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage: new MemoryTokenStorage(),
@@ -300,7 +300,7 @@ describe('KimiOAuthToolkit', () => {
     const write = vi.fn();
     const fetchImpl = vi.fn(async () => managedModelsResponse()) as unknown as typeof fetch;
     const config = { providers: {} };
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -310,7 +310,7 @@ describe('KimiOAuthToolkit', () => {
         read: () => config,
         write,
         apply: (target, input) => {
-          target.providers[KIMI_CODE_PROVIDER_NAME] = {
+          target.providers[CLOUD_CODE_PROVIDER_NAME] = {
             type: 'kimi',
             apiKey: '',
           };
@@ -324,7 +324,7 @@ describe('KimiOAuthToolkit', () => {
 
     storage.tokens.set('kimi-code', token('access-1'));
     await expect(toolkit.login()).resolves.toMatchObject({
-      providerName: KIMI_CODE_PROVIDER_NAME,
+      providerName: CLOUD_CODE_PROVIDER_NAME,
       ok: true,
       provision: {
         defaultModel: 'kimi-code/kimi-for-coding',
@@ -373,7 +373,7 @@ describe('KimiOAuthToolkit', () => {
         );
       });
       vi.stubGlobal('fetch', oauthFetch);
-      const toolkit = new KimiOAuthToolkit({
+      const toolkit = new CloudCodeOAuthToolkit({
         homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
         identity: TEST_IDENTITY,
         storage,
@@ -388,7 +388,7 @@ describe('KimiOAuthToolkit', () => {
           read: () => config,
           write,
           apply: (target, input) => {
-            target.providers[KIMI_CODE_PROVIDER_NAME] = {
+            target.providers[CLOUD_CODE_PROVIDER_NAME] = {
               type: 'kimi',
               apiKey: '',
             };
@@ -401,7 +401,7 @@ describe('KimiOAuthToolkit', () => {
       });
 
       await expect(toolkit.login(undefined, { onDeviceCode })).resolves.toMatchObject({
-        providerName: KIMI_CODE_PROVIDER_NAME,
+        providerName: CLOUD_CODE_PROVIDER_NAME,
         ok: true,
         provision: {
           defaultModel: 'kimi-code/kimi-for-coding',
@@ -465,7 +465,7 @@ describe('KimiOAuthToolkit', () => {
       );
     });
     vi.stubGlobal('fetch', oauthFetch);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -484,13 +484,13 @@ describe('KimiOAuthToolkit', () => {
     });
 
     await expect(toolkit.login(undefined, { baseUrl: devBaseUrl })).resolves.toMatchObject({
-      providerName: KIMI_CODE_PROVIDER_NAME,
+      providerName: CLOUD_CODE_PROVIDER_NAME,
       ok: true,
     });
     expect(oauthFetch).toHaveBeenCalledTimes(2);
     expect(storage.tokens.get('kimi-code')?.accessToken).toBe('prod-access');
     expect(storage.tokens.get(devStorageName)?.accessToken).toBe('dev-access');
-    expect(config.providers[KIMI_CODE_PROVIDER_NAME]?.oauth).toEqual({
+    expect(config.providers[CLOUD_CODE_PROVIDER_NAME]?.oauth).toEqual({
       storage: 'file',
       key: devOauthKey,
       oauthHost: devOauthHost,
@@ -548,7 +548,7 @@ describe('KimiOAuthToolkit', () => {
       );
     }) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchImpl);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -561,7 +561,7 @@ describe('KimiOAuthToolkit', () => {
     });
 
     await expect(toolkit.login(undefined, { onDeviceCode })).resolves.toMatchObject({
-      providerName: KIMI_CODE_PROVIDER_NAME,
+      providerName: CLOUD_CODE_PROVIDER_NAME,
       ok: true,
     });
     expect(onDeviceCode).toHaveBeenCalledTimes(1);
@@ -591,7 +591,7 @@ describe('KimiOAuthToolkit', () => {
       ),
     ) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchImpl);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -631,7 +631,7 @@ describe('KimiOAuthToolkit', () => {
       ),
     ) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchImpl);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -671,7 +671,7 @@ describe('KimiOAuthToolkit', () => {
       ),
     ) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchImpl);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -701,7 +701,7 @@ describe('KimiOAuthToolkit', () => {
       async () => new Response('', { status: 401 }),
     ) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchImpl);
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -718,10 +718,10 @@ describe('KimiOAuthToolkit', () => {
   it('removes managed config on logout when an adapter supports cleanup', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));
-    const config = { providers: { [KIMI_CODE_PROVIDER_NAME]: { type: 'kimi' } } };
+    const config = { providers: { [CLOUD_CODE_PROVIDER_NAME]: { type: 'kimi' } } };
     const write = vi.fn();
     const remove = vi.fn();
-    const toolkit = new KimiOAuthToolkit({
+    const toolkit = new CloudCodeOAuthToolkit({
       homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
       identity: TEST_IDENTITY,
       storage,
@@ -735,7 +735,7 @@ describe('KimiOAuthToolkit', () => {
     });
 
     await expect(toolkit.logout()).resolves.toMatchObject({
-      providerName: KIMI_CODE_PROVIDER_NAME,
+      providerName: CLOUD_CODE_PROVIDER_NAME,
       ok: true,
     });
     expect(remove).toHaveBeenCalledWith(config);

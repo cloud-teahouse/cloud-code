@@ -8,13 +8,13 @@
  * flag) is driven through the alias capability declarations and an injected
  * FlagResolver.
  *
- * The first block pins the gate-closed regression baseline (S0): with any
+ * The first block pins the gate-closed regression baseline: with any
  * gate closed, the outbound request keeps the inline shape byte-for-byte.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import type { ToolCall } from '@moonshot-ai/kosong';
+import type { ToolCall } from '@cloud-code/kosong';
 
 import {
   foldAnnouncedToolNames,
@@ -23,6 +23,7 @@ import {
 import { ToolManager } from '../../src/agent/tool';
 import type { Agent, AgentRecord } from '../../src/agent';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import { BEHAVIOR_REMINDERS_VARIANT } from '../../src/agent/injection/behavior-reminders';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import type { MCPClient } from '../../src/mcp/types';
 import { estimateTokensForMessage } from '../../src/utils/tokens';
@@ -56,7 +57,7 @@ function toolSelectFlagOn(): FlagResolver {
   return new FlagResolver({}, FLAG_DEFINITIONS, { 'tool-select': true });
 }
 
-/** Empty env so an ambient KIMI_CODE_EXPERIMENTAL_FLAG cannot force flags on. */
+/** Empty env so an ambient CLOUD_CODE_EXPERIMENTAL_FLAG cannot force flags on. */
 function toolSelectFlagOff(): FlagResolver {
   return new FlagResolver({}, FLAG_DEFINITIONS, {});
 }
@@ -687,15 +688,25 @@ describe('disclosure mode — compaction', () => {
 
     // The "nothing new since compaction" guard is baselined on the true
     // post-compaction floor: summary + the reinjected announcement (no
-    // rebuild message anymore). A baseline missing any re-appended piece
-    // would let auto-compaction re-trigger against a floor that cannot
-    // shrink (each round strips and re-appends the same reminders).
+    // rebuild message anymore) + the default-on behavior-rules reminder.
+    // A baseline missing any re-appended piece would let auto-compaction
+    // re-trigger against a floor that cannot shrink (each round strips and
+    // re-appends the same reminders).
     const internals = ctx.agent.fullCompaction as unknown as {
       lastCompactedTokenCount: number | null;
     };
     const reAnnouncement = ctx.agent.context.history.filter(isLoadableToolsAnnouncement).at(-1)!;
+    const behaviorReminder = ctx.agent.context.history
+      .filter(
+        (message) =>
+          message.origin?.kind === 'injection' &&
+          message.origin.variant === BEHAVIOR_REMINDERS_VARIANT,
+      )
+      .at(-1)!;
     expect(internals.lastCompactedTokenCount).toBe(
-      tokensAfter + estimateTokensForMessage(reAnnouncement),
+      tokensAfter +
+        estimateTokensForMessage(reAnnouncement) +
+        estimateTokensForMessage(behaviorReminder),
     );
 
     // Re-selecting after compaction takes the injection branch again (not
@@ -843,5 +854,159 @@ describe('disclosure mode — compaction', () => {
     ctx.mockNextResponse({ type: 'text', text: 'quiet turn' });
     await runTurn(ctx, 'still fine?');
     expect(started).toHaveLength(0);
+  });
+});
+
+const ALWAYS_LOAD_TOOL = 'mcp__grafana__health';
+const DEFERRED_TOOL = 'mcp__grafana__query_range';
+
+/** A two-tool server: `health` declared alwaysLoad, `query_range` deferred. */
+async function registerMixedServer(
+  ctx: TestAgentContext,
+  callLog: Array<[string, unknown]> = [],
+): Promise<void> {
+  const client: MCPClient = {
+    async listTools() {
+      return [
+        {
+          name: 'health',
+          description: 'Check datasource health',
+          inputSchema: { type: 'object', properties: {} },
+          _meta: { 'anthropic/alwaysLoad': true },
+        },
+        {
+          name: 'query_range',
+          description: 'Query a metrics range',
+          inputSchema: {
+            type: 'object',
+            properties: { query: { type: 'string' } },
+            required: ['query'],
+          },
+        },
+      ];
+    },
+    async callTool(name, args) {
+      callLog.push([name, args]);
+      return { content: [{ type: 'text', text: `${name} ok` }], isError: false };
+    },
+  };
+  const defs = await client.listTools();
+  // Mirrors registerConnectedMcpServer: the alwaysLoad set is derived from
+  // the raw listing's `_meta` and passed alongside the mapped schemas.
+  const alwaysLoad = new Set(
+    defs.filter((d) => d._meta?.['anthropic/alwaysLoad'] === true).map((d) => d.name),
+  );
+  ctx.agent.tools.registerMcpServer(
+    'grafana',
+    client,
+    defs.map((d) => ({
+      name: d.name,
+      description: d.description,
+      parameters: d.inputSchema as Record<string, unknown>,
+    })),
+    undefined,
+    alwaysLoad,
+  );
+}
+
+describe('alwaysLoad exemption (_meta[anthropic/alwaysLoad])', () => {
+  it('stays out of the deferred pool and ships in the top-level tools from the start', async () => {
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOn() });
+    ctx.configure({
+      tools: ['Read', 'mcp__*'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await registerMixedServer(ctx);
+
+    // The deferred pool holds only the regular tool.
+    expect(ctx.agent.tools.loadableDynamicToolNames()).toEqual([DEFERRED_TOOL]);
+
+    // Executable table: alwaysLoad tool present and NOT marked deferred; the
+    // regular tool waits for select_tools.
+    const loopTools = ctx.agent.tools.loopTools;
+    const health = loopTools.find((t) => t.name === ALWAYS_LOAD_TOOL);
+    expect(health).toBeDefined();
+    expect(health?.deferred).not.toBe(true);
+    expect(loopTools.map((t) => t.name)).not.toContain(DEFERRED_TOOL);
+
+    ctx.mockNextResponse({ type: 'text', text: 'hello' });
+    await runTurn(ctx, 'hi');
+
+    // Wire top-level carries the alwaysLoad tool, never the deferred one; the
+    // announcement lists only the deferred pool.
+    const wireNames = ctx.llmCalls[0]!.tools.map((t) => t.name);
+    expect(wireNames).toContain(ALWAYS_LOAD_TOOL);
+    expect(wireNames).not.toContain(DEFERRED_TOOL);
+    expect(historyText(ctx)).toContain(`<tools_added>\n${DEFERRED_TOOL}\n</tools_added>`);
+    expect(historyText(ctx)).not.toContain(ALWAYS_LOAD_TOOL);
+  });
+
+  it('dispatches an alwaysLoad tool directly without a select_tools round-trip', async () => {
+    const callLog: Array<[string, unknown]> = [];
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOn() });
+    ctx.configure({
+      tools: ['Read', 'mcp__*'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await registerMixedServer(ctx, callLog);
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'checking' },
+      { type: 'function', id: 'call-1', name: ALWAYS_LOAD_TOOL, arguments: '{}' },
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await runTurn(ctx, 'check health');
+
+    expect(callLog).toEqual([['health', {}]]);
+    expect(toolResultTexts(ctx)).toContainEqual('health ok');
+  });
+
+  it('unregistering the server also clears its alwaysLoad exemption', async () => {
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOn() });
+    ctx.configure({
+      tools: ['Read', 'mcp__*'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await registerMixedServer(ctx);
+    ctx.agent.tools.unregisterMcpServer('grafana');
+
+    expect(ctx.agent.tools.loadableDynamicToolNames()).toEqual([]);
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).not.toContain(ALWAYS_LOAD_TOOL);
+  });
+});
+
+describe('prefix invariant — dynamic tool-set changes never drift the prefix', () => {
+  it('keeps system/tools hashes identical across a select_tools load and later turns', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOn(), persistence });
+    ctx.configure({
+      tools: ['Read', 'mcp__*'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await registerGrafana(ctx);
+
+    // Turn 1: select_tools load (schema injection + announcement).
+    ctx.mockNextResponse({ type: 'text', text: 'loading' }, selectCall('call-1', [GRAFANA_TOOL]));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await runTurn(ctx, 'load it');
+    // Turn 2: plain follow-up.
+    ctx.mockNextResponse({ type: 'text', text: 'two' });
+    await runTurn(ctx, 'again');
+
+    const requests = persistence.records.filter(
+      (record): record is Extract<AgentRecord, { type: 'llm.request' }> =>
+        record.type === 'llm.request',
+    );
+    expect(requests.length).toBeGreaterThanOrEqual(3);
+    for (const request of requests) {
+      expect(request.systemPromptHash).toBe(requests[0]!.systemPromptHash);
+      expect(request.toolsHash).toBe(requests[0]!.toolsHash);
+      expect(request.prefixDriftReasons).toBeUndefined();
+    }
   });
 });

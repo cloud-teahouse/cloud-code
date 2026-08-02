@@ -1,5 +1,6 @@
+import chalk from "chalk";
 import { getKeybindings } from "../keybindings.ts";
-import type { Component } from "../tui.ts";
+import type { Component, MouseEvent } from "../tui.ts";
 import { truncateToWidth, visibleWidth } from "../utils.ts";
 
 const DEFAULT_PRIMARY_COLUMN_WIDTH = 32;
@@ -21,6 +22,12 @@ export interface SelectListTheme {
 	description: (text: string) => string;
 	scrollInfo: (text: string) => string;
 	noMatch: (text: string) => string;
+	/**
+	 * Mouse-hover style for a menu row (word/choice affordance — a background
+	 * highlight rather than a text underline). Defaults to underline when
+	 * omitted.
+	 */
+	hoverText?: (text: string) => string;
 }
 
 export interface SelectListTruncatePrimaryContext {
@@ -41,6 +48,7 @@ export class SelectList implements Component {
 	private items: SelectItem[] = [];
 	private filteredItems: SelectItem[] = [];
 	private selectedIndex: number = 0;
+	private hoveredIndex: number | null = null;
 	private maxVisible: number = 5;
 	private theme: SelectListTheme;
 	private layout: SelectListLayoutOptions;
@@ -83,11 +91,7 @@ export class SelectList implements Component {
 		const primaryColumnWidth = this.getPrimaryColumnWidth();
 
 		// Calculate visible range with scrolling
-		const startIndex = Math.max(
-			0,
-			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
-		);
-		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
+		const { startIndex, endIndex } = this.visibleItemWindow();
 
 		// Render visible items
 		for (let i = startIndex; i < endIndex; i++) {
@@ -96,7 +100,12 @@ export class SelectList implements Component {
 
 			const isSelected = i === this.selectedIndex;
 			const descriptionSingleLine = item.description ? normalizeToSingleLine(item.description) : undefined;
-			lines.push(this.renderItem(item, isSelected, width, descriptionSingleLine, primaryColumnWidth));
+			let line = this.renderItem(item, isSelected, width, descriptionSingleLine, primaryColumnWidth);
+			// Hover affordance (mouse): the theme's hover style (a background
+			// highlight for menu choices) or the underline default — a hovered
+			// selected row keeps its selection highlight either way.
+			if (i === this.hoveredIndex) line = this.theme.hoverText?.(line) ?? chalk.underline(line);
+			lines.push(line);
 		}
 
 		// Add scroll indicators if needed
@@ -134,6 +143,90 @@ export class SelectList implements Component {
 				this.onCancel();
 			}
 		}
+	}
+
+	/**
+	 * Hover-to-scroll: the wheel moves the selection one row per tick.
+	 * Unlike the arrow keys it clamps at the ends instead of wrapping —
+	 * wrapping on a physical scroll gesture feels like the list is jumping.
+	 * Left-press selects the item on the hit row; a press on the already
+	 * selected row confirms it (the Enter equivalent — SGR has no double-click
+	 * event, so re-click is the "open" gesture). Motion updates the hover
+	 * underline. Rows are component-relative, 0-based — see MouseEvent.
+	 */
+	handleMouse(event: MouseEvent): void | boolean {
+		if (event.type === "motion") {
+			const hit = this.rowToIndex(event.row);
+			if (hit === this.hoveredIndex) return false;
+			this.hoveredIndex = hit;
+			return;
+		}
+		if (event.type === "press" && event.button === 0) {
+			if (this.filteredItems.length === 0) return false;
+			const hit = this.rowToIndex(event.row);
+			if (hit === null) return false;
+			if (hit === this.selectedIndex) {
+				// Re-click on the selected row confirms, like Enter.
+				const selectedItem = this.filteredItems[this.selectedIndex];
+				if (selectedItem && this.onSelect) {
+					this.onSelect(selectedItem);
+				}
+				return;
+			}
+			this.selectedIndex = hit;
+			this.notifySelectionChange();
+			return;
+		}
+		if (event.type !== "wheel") return false;
+		const delta = event.button === 64 ? -1 : event.button === 65 ? 1 : 0;
+		if (delta === 0 || this.filteredItems.length === 0) return false;
+		const next = Math.max(0, Math.min(this.filteredItems.length - 1, this.selectedIndex + delta));
+		if (next === this.selectedIndex) return false;
+		this.selectedIndex = next;
+		this.notifySelectionChange();
+	}
+
+	/**
+	 * The visible item window: selection centered within the maxVisible
+	 * window, clamped at both ends. Shared by render() and the mouse
+	 * hit-test so the items on screen and the click targets never disagree.
+	 */
+	protected visibleItemWindow(): { startIndex: number; endIndex: number } {
+		const startIndex = Math.max(
+			0,
+			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
+		);
+		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
+		return { startIndex, endIndex };
+	}
+
+	/**
+	 * Terminal rows render() emits for one item — a single row in the base
+	 * list. Subclasses that paint multi-line items (e.g. wrapped
+	 * descriptions) override this; the mouse hit-test walks the same counts,
+	 * so a click always lands on the item that painted the row.
+	 */
+	protected itemRowCount(_item: SelectItem): number {
+		return 1;
+	}
+
+	/**
+	 * Maps a component-relative row onto an item index by walking the visible
+	 * window with the per-item row counts render() paints (see itemRowCount).
+	 * Returns null when the row falls outside the painted item rows (e.g. on
+	 * the scroll-info line or above the list).
+	 */
+	private rowToIndex(row: number): number | null {
+		if (row < 0 || this.filteredItems.length === 0) return null;
+		const { startIndex, endIndex } = this.visibleItemWindow();
+		let rows = 0;
+		for (let i = startIndex; i < endIndex; i++) {
+			const item = this.filteredItems[i];
+			if (!item) continue;
+			rows += this.itemRowCount(item);
+			if (row < rows) return i;
+		}
+		return null;
 	}
 
 	private renderItem(
@@ -176,13 +269,25 @@ export class SelectList implements Component {
 	}
 
 	private getPrimaryColumnWidth(): number {
+		// Depends only on filteredItems (replaced wholesale by setFilter, never
+		// mutated in place) and layout bounds (fixed at construction). render()
+		// calls this every frame while the dropdown is open, so memoize on the
+		// array identity instead of re-measuring every item each frame.
+		const cached = this.primaryColumnWidthCache;
+		if (cached && cached.items === this.filteredItems) {
+			return cached.width;
+		}
 		const { min, max } = this.getPrimaryColumnBounds();
 		const widestPrimary = this.filteredItems.reduce((widest, item) => {
 			return Math.max(widest, visibleWidth(this.getDisplayValue(item)) + PRIMARY_COLUMN_GAP);
 		}, 0);
 
-		return clamp(widestPrimary, min, max);
+		const width = clamp(widestPrimary, min, max);
+		this.primaryColumnWidthCache = { items: this.filteredItems, width };
+		return width;
 	}
+
+	private primaryColumnWidthCache: { items: readonly SelectItem[]; width: number } | null = null;
 
 	private getPrimaryColumnBounds(): { min: number; max: number } {
 		const rawMin =

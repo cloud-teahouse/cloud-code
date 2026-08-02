@@ -26,7 +26,7 @@
 
 import { fileURLToPath } from 'node:url';
 
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
 import type { Agent } from '..';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '../../tools/support/file-type';

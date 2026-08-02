@@ -1,6 +1,7 @@
 import { normalizeKimiToolSchema } from './kimi-schema';
 import { parseTraceId } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
+import { canonicalizeToolSchema } from '#/schema-canonicalize';
 import type {
   ChatProvider,
   FinishReason,
@@ -43,7 +44,7 @@ import {
   sanitizeToolCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
-export interface KimiOptions {
+export interface CloudCodeOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
   model: string;
@@ -194,6 +195,21 @@ function convertMessage(
 
   return result;
 }
+/**
+ * Normalized + canonicalized tool schemas, memoized per Tool identity. The
+ * pipeline is pure and never mutates its input, so an entry is valid for as
+ * long as the producing `tool.parameters` reference is unchanged
+ * (identity-equal input yields identical output). The cached schema object is
+ * shared across requests by reference and must stay treated as immutable.
+ * Failures are never cached: a throw propagates before the entry is stored,
+ * exactly as an uncached call would. The `$` builtin-function branch carries
+ * no schema and stays outside the cache.
+ */
+const kimiToolSchemaCache = new WeakMap<
+  Tool,
+  { parameters: Tool['parameters']; schema: Record<string, unknown> }
+>();
+
 function convertTool(tool: Tool): OpenAIToolParam {
   if (tool.name.startsWith('$')) {
     // Kimi builtin functions start with `$`
@@ -202,12 +218,23 @@ function convertTool(tool: Tool): OpenAIToolParam {
       function: { name: tool.name },
     };
   }
+  let cached = kimiToolSchemaCache.get(tool);
+  if (cached === undefined || cached.parameters !== tool.parameters) {
+    cached = {
+      parameters: tool.parameters,
+      // Compatibility normalization first (deref $ref, fill missing `type`),
+      // canonicalization last: it never undoes those repairs, it only makes
+      // the result byte-stable for prompt caching.
+      schema: canonicalizeToolSchema(normalizeKimiToolSchema(tool.parameters)),
+    };
+    kimiToolSchemaCache.set(tool, cached);
+  }
   const converted = toolToOpenAI(tool);
   return {
     ...converted,
     function: {
       ...converted.function,
-      parameters: normalizeKimiToolSchema(tool.parameters),
+      parameters: cached.schema,
     },
   };
 }
@@ -257,7 +284,7 @@ export function extractUsageFromChunk(
   return null;
 }
 
-class KimiStreamedMessage implements StreamedMessage {
+class CloudCodeStreamedMessage implements StreamedMessage {
   private _id: string | null = null;
   private _usage: TokenUsage | null = null;
   private _finishReason: FinishReason | null = null;
@@ -428,7 +455,7 @@ export class KimiChatProvider implements ChatProvider {
   private _files: KimiFiles | undefined;
   private _reasoningKeyDialect: ReasoningKeyDialect;
 
-  constructor(options: KimiOptions) {
+  constructor(options: CloudCodeOptions) {
     const apiKey = options.apiKey ?? process.env['KIMI_API_KEY'];
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._baseUrl = options.baseUrl ?? process.env['KIMI_BASE_URL'] ?? 'https://api.moonshot.ai/v1';
@@ -571,7 +598,7 @@ export class KimiChatProvider implements ChatProvider {
           options?.signal ? { signal: options.signal } : undefined,
         )
         .withResponse();
-      return new KimiStreamedMessage(
+      return new CloudCodeStreamedMessage(
         data as unknown as
           | OpenAI.Chat.ChatCompletion
           | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,

@@ -901,3 +901,30 @@ describe('OAuthManager + FileTokenStorage integration', () => {
     expect(persisted?.refreshToken).toBe('rotated-refresh');
   });
 });
+
+// ── getAccountSnapshot ────────────────────────────────────────────────
+
+describe('OAuthManager.getAccountSnapshot', () => {
+  it('reports not-logged-in when no token is stored', async () => {
+    const storage = new InMemoryStorage();
+    const mgr = new OAuthManager({ config, storage, now });
+    await expect(mgr.getAccountSnapshot()).resolves.toEqual({ state: 'not-logged-in' });
+  });
+
+  it('reports logged-in for a valid token, without account claims', async () => {
+    const storage = new InMemoryStorage();
+    await storage.save('kimi-code', makeToken());
+    const mgr = new OAuthManager({ config, storage, now });
+    await expect(mgr.getAccountSnapshot()).resolves.toEqual({ state: 'logged-in' });
+  });
+
+  it('reports expired for a revoked tombstone', async () => {
+    const storage = new InMemoryStorage();
+    await storage.save(
+      'kimi-code',
+      makeToken({ accessToken: '', refreshToken: '', expiresAt: 0, expiresIn: 0 }),
+    );
+    const mgr = new OAuthManager({ config, storage, now });
+    await expect(mgr.getAccountSnapshot()).resolves.toEqual({ state: 'expired' });
+  });
+});

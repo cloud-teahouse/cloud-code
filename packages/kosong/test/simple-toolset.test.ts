@@ -272,7 +272,6 @@ describe('SimpleToolset', () => {
       makeToolCall('1', 'nested_tool', '{"user":{"age":"not a number"}}'),
     );
     expect(result.returnValue.isError).toBe(true);
-    // Error message should mention the instance path `/user/age`.
     expect(result.returnValue.message).toContain('/user/age');
   });
 });

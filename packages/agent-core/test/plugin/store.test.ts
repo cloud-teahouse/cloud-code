@@ -10,20 +10,20 @@ import {
   writeInstalled,
 } from '../../src/plugin/store';
 
-async function makeKimiHome(): Promise<string> {
+async function makeCloudCodeHome(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'kimi-home-'));
 }
 
 describe('plugin store', () => {
   it('returns an empty list when the file does not exist', async () => {
-    const home = await makeKimiHome();
+    const home = await makeCloudCodeHome();
     const result = await readInstalled(home);
     expect(result.plugins).toEqual([]);
     expect(result.version).toBe(1);
   });
 
   it('writes and reads installed.json round-trip', async () => {
-    const home = await makeKimiHome();
+    const home = await makeCloudCodeHome();
     const data: InstalledFile = {
       version: 1,
       plugins: [
@@ -49,21 +49,21 @@ describe('plugin store', () => {
   });
 
   it('writes atomically (no .tmp left after success)', async () => {
-    const home = await makeKimiHome();
+    const home = await makeCloudCodeHome();
     await writeInstalled(home, { version: 1, plugins: [] });
     const after = await readFile(path.join(home, 'plugins', 'installed.json'), 'utf8');
     expect(after).toContain('"version": 1');
   });
 
   it('throws on a corrupt installed.json instead of silently dropping it', async () => {
-    const home = await makeKimiHome();
+    const home = await makeCloudCodeHome();
     await writeInstalled(home, { version: 1, plugins: [] });
     await writeFile(path.join(home, 'plugins', 'installed.json'), '{ not json', 'utf8');
     await expect(readInstalled(home)).rejects.toThrow(/parse/i);
   });
 
   it('round-trips a github-sourced record', async () => {
-    const home = await makeKimiHome();
+    const home = await makeCloudCodeHome();
     const data: InstalledFile = {
       version: 1,
       plugins: [
@@ -90,7 +90,7 @@ describe('plugin store', () => {
   });
 
   it('reads a legacy record without github field unchanged', async () => {
-    const home = await makeKimiHome();
+    const home = await makeCloudCodeHome();
     await writeInstalled(home, { version: 1, plugins: [] });
     await writeFile(
       path.join(home, 'plugins', 'installed.json'),

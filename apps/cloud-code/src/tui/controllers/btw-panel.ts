@@ -1,0 +1,215 @@
+import { Spacer } from '@cloud-code/pi-tui';
+import type {
+  Event,
+  CloudCodeHarness,
+  Session,
+  TurnEndedEvent,
+} from '@cloud-code/sdk';
+
+import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/cloud-code-tui';
+import { resolveDescription, t } from '../i18n';
+import { BtwPanelComponent } from '../components/panes/btw-panel';
+import { formatErrorMessage } from '../utils/event-payload';
+import { formatHookResultPlain } from '../utils/hook-result-format';
+import { createMarkdownTheme } from '../theme/pi-tui-theme';
+import type { TUIState } from '../tui-state';
+
+export interface BtwPanelHost {
+  state: TUIState;
+  session: Session | undefined;
+  readonly harness: CloudCodeHarness;
+
+  showError(msg: string): void;
+}
+
+export class BtwPanelController {
+  private active:
+    | {
+        readonly agentId: string;
+        readonly panel: BtwPanelComponent;
+      }
+    | undefined;
+  private readonly panelsByAgentId = new Map<string, BtwPanelComponent>();
+
+  constructor(private readonly host: BtwPanelHost) {}
+
+  open(agentId: string, initialPrompt: string): void {
+    let panel: BtwPanelComponent;
+    panel = new BtwPanelComponent({
+      markdownTheme: createMarkdownTheme(),
+      canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
+      terminalRows: () => this.host.state.terminal.rows,
+      onPrompt: (prompt) => {
+        this.promptAgent(agentId, prompt, panel);
+      },
+    });
+    this.active = { agentId, panel };
+    this.panelsByAgentId.set(agentId, panel);
+    this.mount(panel);
+    panel.submit(initialPrompt);
+  }
+
+  clear(): void {
+    const active = this.active;
+    if (active !== undefined && this.shouldCancelOnUnmount(active.panel)) {
+      void this.cancelAgent(active.agentId);
+    }
+    this.active = undefined;
+    this.panelsByAgentId.clear();
+    this.host.state.btwPanelContainer.clear();
+    this.host.state.editor.connectedAbove = false;
+  }
+
+  closeOrCancel(): boolean {
+    const active = this.active;
+    if (active === undefined) return false;
+    const shouldCancel = this.shouldCancelOnUnmount(active.panel);
+    this.close(active.panel);
+    if (shouldCancel) {
+      void this.cancelAgent(active.agentId);
+    }
+    return true;
+  }
+
+  cancelRunning(): boolean {
+    const active = this.active;
+    if (active === undefined || !active.panel.isRunning()) return false;
+    void this.cancelAgent(active.agentId);
+    return true;
+  }
+
+  sendUserInput(text: string): boolean {
+    const active = this.active;
+    if (active === undefined) return false;
+    if (active.panel.isRunning()) {
+      this.showBusyNotice(active, text);
+      return true;
+    }
+    active.panel.submit(text);
+    this.host.state.ui.setFocus(this.host.state.editor);
+    this.host.state.ui.requestRender();
+    return true;
+  }
+
+  scroll(direction: 'up' | 'down'): boolean {
+    const panel = this.active?.panel;
+    if (panel === undefined || !panel.scroll(direction)) return false;
+    this.host.state.ui.requestRender();
+    return true;
+  }
+
+  routeEvent(event: Event): boolean {
+    const panel = this.panelsByAgentId.get(event.agentId);
+    if (panel === undefined) return false;
+
+    switch (event.type) {
+      case 'assistant.delta':
+        panel.appendAnswer(event.delta);
+        this.host.state.ui.requestRender();
+        return true;
+      case 'thinking.delta':
+        panel.appendThinking(event.delta);
+        this.host.state.ui.requestRender();
+        return true;
+      case 'hook.result':
+        panel.appendAnswer(formatHookResultPlain(event));
+        this.host.state.ui.requestRender();
+        return true;
+      case 'turn.ended':
+        if (event.reason === 'completed') {
+          panel.markDone();
+        } else {
+          panel.markFailed(formatBtwTurnEnd(event));
+        }
+        this.host.state.ui.requestRender();
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  private mount(panel: BtwPanelComponent): void {
+    this.host.state.btwPanelContainer.clear();
+    this.host.state.btwPanelContainer.addChild(new Spacer(1));
+    this.host.state.btwPanelContainer.addChild(panel);
+    this.host.state.editor.connectedAbove = true;
+    this.host.state.ui.setFocus(this.host.state.editor);
+    this.host.state.ui.requestRender();
+  }
+
+  private close(panel: BtwPanelComponent): void {
+    if (!this.host.state.btwPanelContainer.children.includes(panel)) return;
+    this.unregister(panel);
+    this.host.state.btwPanelContainer.clear();
+    this.host.state.editor.connectedAbove = false;
+    this.host.state.ui.setFocus(this.host.state.editor);
+    // Panel removal shrinks the frame: repaint the viewport in place so the
+    // native scrollback survives (a destructive full clear would wipe it).
+    this.host.state.ui.requestCollapseRender();
+  }
+
+  private unregister(panel: BtwPanelComponent): void {
+    for (const [agentId, candidate] of this.panelsByAgentId) {
+      if (candidate === panel) {
+        this.panelsByAgentId.delete(agentId);
+      }
+    }
+    if (this.active?.panel === panel) this.active = undefined;
+  }
+
+  private showBusyNotice(
+    active: { readonly panel: BtwPanelComponent },
+    input: string,
+  ): void {
+    this.host.state.editor.setText(input);
+    active.panel.addTransientNotice(t('controllers.btw.busyNotice'));
+    this.host.state.ui.requestRender();
+  }
+
+  private promptAgent(agentId: string, prompt: string, panel: BtwPanelComponent): void {
+    const session = this.host.session;
+    if (session === undefined) {
+      panel.markFailed(resolveDescription(NO_ACTIVE_SESSION_MESSAGE));
+      this.host.state.ui.requestRender();
+      return;
+    }
+    void this.withInteractiveAgent(agentId, () => session.prompt(prompt)).catch((error: unknown) => {
+      panel.markFailed(
+        t('controllers.btw.sendPromptFailed', { message: formatErrorMessage(error) }),
+      );
+      this.host.state.ui.requestRender();
+    });
+  }
+
+  private async cancelAgent(agentId: string): Promise<void> {
+    const session = this.host.session;
+    if (session === undefined) return;
+    await this.withInteractiveAgent(agentId, () => session.cancel()).catch((error: unknown) => {
+      this.host.showError(t('controllers.btw.cancelFailed', { message: formatErrorMessage(error) }));
+    });
+  }
+
+  private shouldCancelOnUnmount(panel: BtwPanelComponent): boolean {
+    return panel.isRunning() || panel.isEmpty();
+  }
+
+  private withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+    return this.host.harness.withInteractiveAgent(agentId, fn);
+  }
+}
+
+function formatBtwTurnEnd(event: TurnEndedEvent): string {
+  if (event.reason === 'cancelled') {
+    return t('session.turn.interrupted');
+  }
+  if (event.error?.code === 'provider.filtered') {
+    return t('session.turn.filteredTitle');
+  }
+  if (event.error !== undefined) {
+    return `[${event.error.code}] ${event.error.message}`;
+  }
+  if (event.reason === 'blocked') {
+    return t('controllers.btw.hookBlocked');
+  }
+  return t('controllers.btw.turnEnded', { reason: event.reason });
+}

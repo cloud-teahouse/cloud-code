@@ -68,26 +68,15 @@ describe('background notification → main agent (real Agent instance)', () => {
     const ctx = testAgent();
     ctx.configure({ tools: [] });
 
-    // Step 1 of the user-prompted turn: produce no tool call, end turn.
-    // But to give the steerBuffer a chance to be flushed we want a
-    // multi-step turn. So instead: queue a text response for step 1
-    // that DOESN'T end the turn yet (set finishReason to tool_calls
-    // is wrong because we have no tool call). Easiest is to chain two
-    // responses: first one is text-only (so step ends), the steer
-    // notification arrives during that step, then a second LLM call
-    // happens that should contain the notification.
-    //
-    // Actually with the scripted-generate harness, a text-only
-    // response yields finishReason='completed' and the turn ends.
-    // To force a 2-step turn we need the first step to emit a tool
-    // call. Since we configured no tools, we can't. So this BUSY
-    // case is hard to model without LLM-side multi-step. Instead we
-    // test the buffer mechanism directly:
+    // With the scripted-generate harness, a text-only response yields
+    // finishReason='completed' and ends the turn, and a multi-step turn
+    // would need a tool call — but no tools are configured. The BUSY
+    // case can't be modeled LLM-side, so test the buffer mechanism
+    // directly:
 
     const steerSpy = vi.spyOn(ctx.agent.turn, 'steer');
 
     // Pretend a turn is active by calling prompt and not awaiting end.
-    // Queue a response that will be consumed.
     ctx.mockNextResponse({ type: 'text', text: 'first turn ack' });
     const promptPromise = ctx.rpc.prompt({
       input: [{ type: 'text', text: 'kick off a turn' }],
@@ -101,7 +90,6 @@ describe('background notification → main agent (real Agent instance)', () => {
       'busy-state repro',
     ));
 
-    // Wait for the first turn to end.
     await promptPromise;
     await ctx.untilTurnEnd();
 
@@ -180,7 +168,7 @@ describe('background notification → main agent (real Agent instance)', () => {
   });
 
   it('RACE: bg completion fires AFTER LLM returns but BEFORE activeTurn is cleared', async () => {
-    // We're hunting a window: shouldContinueAfterStop reads an empty
+    // The race window: shouldContinueAfterStop reads an empty
     // steerBuffer → returns { continue: false } → runTurn unwinds →
     // finally block hasn't yet set activeTurn = null. If a steer()
     // lands in this window, it gets buffered, then activeTurn=null
@@ -206,7 +194,6 @@ describe('background notification → main agent (real Agent instance)', () => {
       input: [{ type: 'text', text: 'hello main agent' }],
     });
 
-    // Wait until turn.ended fires.
     await ctx.untilTurnEnd();
     await turnEndedPromise;
 
@@ -239,7 +226,7 @@ describe('background notification → main agent (real Agent instance)', () => {
   });
 
   it('RESUME: terminal bg tasks discovered on reconcile are SILENTLY injected (no auto-turn)', async () => {
-    // Scenario the user described: kimi exits while bg tasks are
+    // Scenario: kimi exits while bg tasks are
     // running; on next start, resume() loads them from disk and
     // reconcile() classifies them as terminal (lost for in-process
     // agent tasks; possibly completed for bash tasks if the process

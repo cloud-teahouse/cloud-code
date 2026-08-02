@@ -11,7 +11,7 @@
  * `it` keeps Vitest happy.
  */
 
-import type { ContentPart, ModelCapability, TokenUsage } from '@moonshot-ai/kosong';
+import type { ContentPart, ModelCapability, TokenUsage } from '@cloud-code/kosong';
 import { describe, expect, it } from 'vitest';
 
 import { createLoopEventDispatcher, runTurn, ToolAccesses } from '../../src/loop/index';
@@ -381,7 +381,7 @@ function _typeOnlyChecks(): void {
   // @ts-expect-error - stop reasons that flow through throws are not in the union
   const _badStop1: LoopTurnStopReason = 'error';
   void _badStop1;
-  // @ts-expect-error - max_steps is represented by a thrown KimiError, not StopReason.
+  // @ts-expect-error - max_steps is represented by a thrown CloudCodeError, not StopReason.
   const _badStop2: LoopTurnStopReason = 'max_steps';
   void _badStop2;
   // @ts-expect-error - tool_use is step-local and cannot be a final turn result.

@@ -27,9 +27,7 @@
  * helpers stay private so callers cannot bypass the limits.
  */
 
-import type { ContentPart } from '@moonshot-ai/kosong';
-
-import type { TelemetryClient } from '#/telemetry';
+import type { ContentPart } from '@cloud-code/kosong';
 
 import { compressImageContentParts } from '../tools/support/image-compress';
 import {
@@ -46,8 +44,6 @@ export interface McpOutputOptions {
    * Falls back to the shared temp-dir cache when absent.
    */
   readonly originalsDir?: string | undefined;
-  /** Report an `image_compress` event per compressed tool-result image. */
-  readonly telemetry?: TelemetryClient | undefined;
   /** Owner-resolved longest-edge ceiling (px) for tool-result images. */
   readonly maxImageEdgePx?: number | undefined;
 }
@@ -204,10 +200,6 @@ export async function mcpResultToExecutableOutput(
   // a caption can never be mistaken for a generated one.
   const compressed = await compressImageContentParts(budgeted.parts, {
     maxEdge: options.maxImageEdgePx,
-    telemetry:
-      options.telemetry === undefined
-        ? undefined
-        : { client: options.telemetry, source: 'mcp_tool_result' },
     annotate: {
       persistOriginal: (bytes, mimeType) =>
         persistOriginalImage(

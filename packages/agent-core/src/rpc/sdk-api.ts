@@ -1,17 +1,31 @@
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
+
+import type { PermissionMode } from '#/agent/permission/types';
 
 import type { RPCMethods } from './client';
 import type { AgentEvent, ToolInputDisplay } from './events';
 import type { WithAgentId, WithSessionId } from './types';
 
 export type ApprovalDecision = 'approved' | 'rejected' | 'cancelled';
-export type ApprovalScope = 'session';
+/**
+ * `session` — remember the approval rule in memory for this session only.
+ * `always` — persist the rule to the user config file (`permission.rules`,
+ * scope `user`) so it permanently approves matching calls; on write failure
+ * the approval degrades to `session`.
+ */
+export type ApprovalScope = 'session' | 'always';
 
 export interface ApprovalResponse {
   readonly decision: ApprovalDecision;
   readonly scope?: ApprovalScope | undefined;
   readonly feedback?: string | undefined;
   readonly selectedLabel?: string | undefined;
+  /**
+   * Optional permission-mode switch requested alongside the decision
+   * (plan-review "approve and switch mode" variants). Applied by the
+   * resolving policy only when the decision is 'approved'.
+   */
+  readonly mode?: PermissionMode | undefined;
 }
 
 export interface ApprovalRequest {
@@ -20,6 +34,18 @@ export interface ApprovalRequest {
   readonly toolName: string;
   readonly action: string;
   readonly display: ToolInputDisplay;
+  /**
+   * Leader permission bridge: present when the ask is routed from a
+   * teammate through the leader's approval queue — the user sees WHO is
+   * asking (CC's workerBadge equivalent). Absent for the leader's own asks.
+   */
+  readonly requester?: ApprovalRequester | undefined;
+}
+
+/** Identity of the teammate an approval request was bridged from. */
+export interface ApprovalRequester {
+  readonly name: string;
+  readonly teamName?: string | undefined;
 }
 
 export interface QuestionOption {

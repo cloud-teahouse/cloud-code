@@ -3,10 +3,12 @@
  * the goal's status directly; the turn driver reads the status at each turn
  * boundary and stops (`complete` / `blocked`) or keeps going (`active`).
  *
- * The argument is intentionally just a status enum — no reason or evidence. The
- * model explains itself in its own reply; the status is the machine-readable
- * signal. The tool stays visible to the main agent even when no goal is active;
- * goal-store operations decide whether a requested transition is valid.
+ * The argument is a status enum plus an optional `evidence` list: when the
+ * completion gate enforces (docs/phase5/goal-completion-gate.md §3.2),
+ * `complete` must cite usable verification receipts by tool call id or the
+ * tool returns an error and the goal stays active. The tool stays visible to
+ * the main agent even when no goal is active; goal-store operations decide
+ * whether a requested transition is valid.
  */
 
 import type { Agent } from '#/agent';
@@ -14,6 +16,7 @@ import { z } from 'zod';
 
 import {
   buildGoalBlockedReasonPrompt,
+  buildGoalCompletionGateRejectionPrompt,
   buildGoalCompletionSummaryPrompt,
 } from './outcome-prompts';
 import type { BuiltinTool } from '../../../agent/tool';
@@ -27,6 +30,12 @@ export const UpdateGoalToolInputSchema = z
       .enum(['active', 'complete', 'blocked'])
       .describe(
         'The lifecycle status to set for the current goal. Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same non-terminal blocking condition repeats for at least 3 consecutive goal turns.',
+      ),
+    evidence: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Tool call ids of verification results cited when completing a goal (for example, a passing test run). Required when the goal set a completion criterion, involved code changes, or produced tool receipts: the runtime rejects completion that cites unknown, failed, out-of-date, or expired receipts.',
       ),
   })
   .strict();
@@ -45,6 +54,7 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
       return {
         isError: true,
         output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+        display: { key: 'toolResult.goal.invalidStatus' },
       };
     }
 
@@ -66,6 +76,20 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           return { output: 'Goal resumed.' };
         }
         if (status === 'complete') {
+          // Completion gate (C2 P2): when the gate enforces, completion must
+          // cite usable evidence receipts. A rejection is an ordinary tool
+          // error — the goal stays active and the model can re-verify and
+          // re-cite later in the same turn.
+          const verdict = goal.evaluateCompletionGate(args.evidence ?? []);
+          if (!verdict.allowed) {
+            return {
+              isError: true,
+              output: buildGoalCompletionGateRejectionPrompt(verdict),
+              // The output is model-facing recovery instructions; users get
+              // the concise localized summary instead.
+              display: { key: 'toolResult.goal.completionGateRejected' },
+            };
+          }
           const completed = await goal.markComplete({}, 'model');
           if (completed === null) {
             return { output: 'Goal not completed: no active goal.' };
@@ -86,6 +110,7 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
         return {
           isError: true,
           output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+          display: { key: 'toolResult.goal.invalidStatus' },
         };
       },
     };

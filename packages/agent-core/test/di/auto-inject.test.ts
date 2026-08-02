@@ -7,9 +7,9 @@ import { IInstantiationService, createDecorator } from '#/di/instantiation';
 import { ServiceCollection } from '#/di/serviceCollection';
 
 /**
- * P1.1 — `@IFoo` constructor-parameter auto-injection.
+ * `@IFoo` constructor-parameter auto-injection.
  *
- * The container now reads `_util.getServiceDependencies(ctor)` and resolves
+ * The container reads `_util.getServiceDependencies(ctor)` and resolves
  * each entry against the container before constructing. Static (non-service)
  * arguments come first; service args are appended in decorator-position order.
  *

@@ -1,12 +1,12 @@
-import { ErrorCodes, KimiError } from '@moonshot-ai/agent-core';
+import { ErrorCodes, CloudCodeError } from '@cloud-code/agent-core';
 import {
   OAuthConnectionError,
   OAuthUnauthorizedError,
   RetryableRefreshError,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/oauth';
 
 /**
- * Classify an OAuth token-fetch failure into the public {@link KimiError}
+ * Classify an OAuth token-fetch failure into the public {@link CloudCodeError}
  * protocol so callers (turn serialization, SDK clients, ACP) can react on
  * `code` rather than on class identity.
  *
@@ -22,16 +22,16 @@ import {
  * lock failure as `auth.login_required` would send the user down the wrong
  * remediation path.
  */
-export function mapOAuthTokenError(error: unknown, providerName: string): KimiError | undefined {
+export function mapOAuthTokenError(error: unknown, providerName: string): CloudCodeError | undefined {
   if (error instanceof OAuthUnauthorizedError) {
-    return new KimiError(
+    return new CloudCodeError(
       ErrorCodes.AUTH_LOGIN_REQUIRED,
       `OAuth provider "${providerName}" requires login before it can be used.`,
       { cause: error },
     );
   }
   if (error instanceof OAuthConnectionError || error instanceof RetryableRefreshError) {
-    return new KimiError(
+    return new CloudCodeError(
       ErrorCodes.PROVIDER_CONNECTION_ERROR,
       `OAuth provider "${providerName}" failed to fetch an access token: ${error.message}`,
       { cause: error },

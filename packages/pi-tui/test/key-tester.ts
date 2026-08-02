@@ -26,7 +26,6 @@ class KeyLogger implements Component {
 			process.exit(0);
 		}
 
-		// Convert to various representations
 		const hex = Buffer.from(data).toString("hex");
 		const charCodes = Array.from(data)
 			.map((c) => c.charCodeAt(0))
@@ -42,12 +41,10 @@ class KeyLogger implements Component {
 
 		this.log.push(logLine);
 
-		// Keep only last N lines
 		if (this.log.length > this.maxLines) {
 			this.log.shift();
 		}
 
-		// Request re-render to show the new log entry
 		this.tui.requestRender();
 	}
 
@@ -68,25 +65,21 @@ class KeyLogger implements Component {
 	render(width: number): string[] {
 		const lines: string[] = [];
 
-		// Title
 		lines.push("=".repeat(width));
 		lines.push(this.fit("Key Code Tester - Press keys to see their codes (Ctrl+C to exit)", width));
 		lines.push(this.fit(`Protocol: ${this.protocolName()}`, width));
 		lines.push("=".repeat(width));
 		lines.push("");
 
-		// Log entries
 		for (const entry of this.log) {
 			lines.push(this.fit(entry, width));
 		}
 
-		// Fill remaining space
 		const remaining = Math.max(0, 25 - lines.length);
 		for (let i = 0; i < remaining; i++) {
 			lines.push("".padEnd(width));
 		}
 
-		// Footer
 		lines.push("=".repeat(width));
 		lines.push(this.fit("Test these:", width));
 		lines.push(this.fit("  - Shift + Enter (should show: \\x1b[13;2u with Kitty protocol)", width));
@@ -100,7 +93,6 @@ class KeyLogger implements Component {
 	}
 }
 
-// Set up TUI
 const terminal = new ProcessTerminal();
 const tui = new TUI(terminal);
 const logger = new KeyLogger(tui, terminal);
@@ -115,7 +107,6 @@ process.on("SIGINT", () => {
 	process.exit(0);
 });
 
-// Start the TUI
 tui.start();
 
 // Protocol negotiation completes asynchronously after the first render.

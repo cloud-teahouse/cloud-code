@@ -19,6 +19,7 @@ function makeAgent(
     readonly plan?: string | null | undefined;
     readonly path?: string | undefined;
     readonly planFilePath?: string | null | undefined;
+    readonly permissionMode?: string | undefined;
     readonly emit?: ((event: unknown) => void) | undefined;
   } = {},
 ): { agent: Agent; requestApproval: ReturnType<typeof vi.fn>; emit: ReturnType<typeof vi.fn> } {
@@ -47,9 +48,8 @@ function makeAgent(
         emit({ type: 'plan_mode.exit' });
       },
     },
-    permission: { mode: 'auto' },
+    permission: { mode: input.permissionMode ?? 'auto' },
     rpc: { requestApproval },
-    telemetry: { track: vi.fn() },
     emit,
   } as unknown as Agent;
   return { agent, requestApproval, emit };
@@ -176,6 +176,118 @@ describe('ExitPlanModeTool', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('journal write failed');
+  });
+});
+
+describe('ExitPlanModeTool structured outcome and display refs', () => {
+  it('marks auto-approved exits with a structured auto_approved outcome', async () => {
+    const { agent } = makeAgent({ path: '/tmp/kimi-plan.md' });
+
+    const result = await executeTool(new ExitPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'call_auto',
+      args: {},
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.structured).toEqual({ outcome: 'auto_approved', path: '/tmp/kimi-plan.md' });
+    // Model-facing output stays byte-identical English.
+    expect(result.output).toContain('## Plan (auto-approved, not user-reviewed):');
+  });
+
+  it('marks user-mode exits with a structured approved outcome', async () => {
+    const { agent } = makeAgent({ path: '/tmp/kimi-plan.md', permissionMode: 'manual' });
+
+    const result = await executeTool(new ExitPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'call_manual',
+      args: {},
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.structured).toEqual({ outcome: 'approved', path: '/tmp/kimi-plan.md' });
+    expect(result.output).toContain('## Approved Plan:');
+  });
+
+  it('omits the path from the structured outcome when no plan file path exists', async () => {
+    const { agent } = makeAgent({ path: undefined, planFilePath: null });
+    // Plan data without a path: approved but nothing to report as `path`.
+    const dataSpy = vi.fn(async () => ({ content: 'plan', path: undefined }));
+    (agent.planMode as unknown as { data: unknown }).data = dataSpy;
+
+    const result = await executeTool(new ExitPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'call_nopath',
+      args: {},
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.structured).toEqual({ outcome: 'auto_approved' });
+  });
+
+  it('points the inactive-plan-mode error at a localized rendering', async () => {
+    const { agent } = makeAgent({ active: false });
+
+    const result = await executeTool(new ExitPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'call_inactive',
+      args: {},
+      signal,
+    });
+
+    expect(result.display).toEqual({ key: 'toolResult.exitPlanMode.notInPlanMode' });
+  });
+
+  it('points the missing-plan-file error at a localized rendering with the path', async () => {
+    const { agent } = makeAgent({ plan: '', path: '/tmp/kimi-plan.md' });
+
+    const result = await executeTool(new ExitPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'call_missing',
+      args: {},
+      signal,
+    });
+
+    expect(result.display).toEqual({
+      key: 'toolResult.exitPlanMode.noPlanFileAtPath',
+      params: { path: '/tmp/kimi-plan.md' },
+    });
+  });
+
+  it('points the no-plan-file-path error at a localized rendering without params', async () => {
+    const { agent } = makeAgent({ plan: null, planFilePath: null });
+
+    const result = await executeTool(new ExitPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'call_nofile',
+      args: {},
+      signal,
+    });
+
+    expect(result.display).toEqual({ key: 'toolResult.exitPlanMode.noPlanFile' });
+  });
+
+  it('points plan-exit failures at a localized rendering with the error', async () => {
+    const { agent } = makeAgent({
+      emit: () => {
+        throw new Error('journal write failed');
+      },
+    });
+
+    const result = await executeTool(new ExitPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'call_exitfail',
+      args: {},
+      signal,
+    });
+
+    expect(result.display).toEqual({
+      key: 'toolResult.exitPlanMode.exitFailed',
+      params: { error: 'journal write failed' },
+    });
   });
 });
 

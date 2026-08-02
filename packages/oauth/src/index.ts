@@ -17,6 +17,8 @@ export type {
 } from './types';
 export { tokenFromWire, tokenToWire } from './types';
 
+export type { OAuthAccountSnapshot, OAuthAccountState } from './account-snapshot';
+
 export type { TokenStorage } from './storage';
 export { FileTokenStorage } from './storage';
 
@@ -27,19 +29,19 @@ export type { LoginOptions, OAuthManagerOptions, OAuthRefreshOutcome } from './o
 export { OAuthManager, defaultRefreshThreshold, newInstanceId } from './oauth-manager';
 
 export {
-  assertKimiHostIdentity,
+  assertCloudCodeHostIdentity,
   createKimiDefaultHeaders,
-  createKimiDeviceHeaders,
+  createCloudCodeDeviceHeaders,
   createKimiDeviceId,
-  createKimiUserAgent,
-  KIMI_CODE_CUSTOM_HEADERS_ENV,
-  KIMI_CODE_PLATFORM,
+  createCloudCodeUserAgent,
+  CLOUD_CODE_CUSTOM_HEADERS_ENV,
+  CLOUD_CODE_PLATFORM,
   parseKimiCodeCustomHeaders,
   readKimiDeviceId,
 } from './identity';
-export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
+export type { CloudCodeHostIdentity, CloudCodeIdentityOptions } from './identity';
 
-export { KIMI_CODE_FLOW_CONFIG } from './constants';
+export { CLOUD_CODE_FLOW_CONFIG } from './constants';
 
 export {
   applyManagedApiKeyProviderModels,
@@ -49,9 +51,9 @@ export {
   fetchManagedKimiCodeModels,
   kimiCodeEnvBaseUrl,
   kimiCodeEnvOAuthHost,
-  KIMI_CODE_OAUTH_KEY,
-  KIMI_CODE_PLATFORM_ID,
-  KIMI_CODE_PROVIDER_NAME,
+  CLOUD_CODE_OAUTH_KEY,
+  CLOUD_CODE_PLATFORM_ID,
+  CLOUD_CODE_PROVIDER_NAME,
   ManagedKimiCodeModelsAuthError,
   provisionManagedKimiCodeConfig,
   resolveKimiCodeLoginAuth,
@@ -167,18 +169,18 @@ export type {
   FetchCustomRegistryOptions,
 } from './custom-registry';
 
-export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
+export { CloudCodeOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
   AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   AuthProviderStatus,
   AuthStatus,
   BearerTokenProvider,
-  KimiOAuthLoginOptions,
-  KimiOAuthLoginResult,
-  KimiOAuthLogoutResult,
-  KimiOAuthTokenRef,
-  KimiOAuthToolkitOptions,
+  CloudCodeOAuthLoginOptions,
+  CloudCodeOAuthLoginResult,
+  CloudCodeOAuthLogoutResult,
+  CloudCodeOAuthTokenRef,
+  CloudCodeOAuthToolkitOptions,
 } from './toolkit';
 
 export { refreshProviderModels } from './refreshProviderModels';
@@ -189,3 +191,95 @@ export type {
   RefreshProviderScope,
   RefreshResult,
 } from './refreshProviderModels';
+
+export {
+  applyChatGptCodexConfig,
+  applyChatGptCodexLogoutConfig,
+  CHATGPT_ACCOUNT_ID_HEADER,
+  CHATGPT_CODEX_BASE_URL,
+  CHATGPT_CODEX_CLIENT_ID,
+  CHATGPT_CODEX_ISSUER,
+  CHATGPT_CODEX_LOGIN_PORTS,
+  CHATGPT_CODEX_OAUTH_KEY,
+  CHATGPT_CODEX_ORIGINATOR,
+  CHATGPT_CODEX_PLATFORM_ID,
+  CHATGPT_CODEX_PROVIDER_NAME,
+  CHATGPT_CODEX_SCOPE,
+  CHATGPT_CODEX_TOKEN_STORAGE_NAME,
+  ChatGptCodexModelsAuthError,
+  fetchChatGptCodexModels,
+  isChatGptCodexProvider,
+  provisionChatGptCodexConfig,
+} from './chatgpt-codex';
+export type {
+  ChatGptCodexApplyResult,
+  ChatGptCodexConfigAdapter,
+  ChatGptCodexModelInfo,
+  ChatGptCodexProvisionResult,
+  FetchChatGptCodexModelsOptions,
+  ProvisionChatGptCodexConfigOptions,
+} from './chatgpt-codex';
+
+export {
+  CHATGPT_CODEX_USAGE_URL,
+  fetchCodexPlanUsage,
+  parseCodexPlanUsagePayload,
+} from './chatgpt-codex-usage';
+export type {
+  CodexPlanUsage,
+  CodexUsageCredits,
+  CodexUsageWindow,
+  FetchCodexPlanUsageOptions,
+} from './chatgpt-codex-usage';
+
+export {
+  CHATGPT_CODEX_RESET_CREDITS_URL,
+  consumeCodexResetCredit,
+  fetchCodexResetCredits,
+  parseCodexResetCreditsPayload,
+  parseConsumeCodexResetCreditPayload,
+} from './chatgpt-codex-reset-credits';
+export type {
+  CodexResetCredit,
+  CodexResetCreditsList,
+  ConsumeCodexResetCreditCode,
+  ConsumeCodexResetCreditOptions,
+  ConsumeCodexResetCreditResult,
+  FetchCodexResetCreditsOptions,
+} from './chatgpt-codex-reset-credits';
+
+export {
+  buildChatGptAuthorizeUrl,
+  exchangeChatGptAuthorizationCode,
+  generateOAuthState,
+  generatePkce,
+  jwtExpiresAt,
+  parseChatGptAuthorizationInput,
+  parseChatGptIdTokenClaims,
+  refreshChatGptAccessToken,
+  revokeChatGptToken,
+  runChatGptCodexLoginFlow,
+  startChatGptCallbackServer,
+} from './chatgpt-codex-flow';
+export type {
+  BuildChatGptAuthorizeUrlOptions,
+  ChatGptCallbackResult,
+  ChatGptCallbackServer,
+  ChatGptCodexLoginFlowOptions,
+  ChatGptCodexLoginFlowResult,
+  ChatGptIdTokenClaims,
+  ChatGptRefreshResult,
+  ChatGptTokenBundle,
+  ExchangeChatGptAuthorizationCodeOptions,
+  ParsedChatGptAuthorizationInput,
+  PkcePair,
+  RefreshChatGptAccessTokenOptions,
+  RevokeChatGptTokenOptions,
+  StartChatGptCallbackServerOptions,
+} from './chatgpt-codex-flow';
+
+export { ChatGptOAuthManager } from './chatgpt-codex-manager';
+export type {
+  ChatGptLoginOptions,
+  ChatGptOAuthManagerOptions,
+} from './chatgpt-codex-manager';

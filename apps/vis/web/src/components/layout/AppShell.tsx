@@ -19,7 +19,7 @@ export function AppShell({ children }: AppShellProps) {
         <Link to="/" className="flex items-center gap-2">
           <LogoMark />
           <span className="font-mono text-[12px] uppercase tracking-[0.12em] text-fg-0">
-            kimi <span className="text-fg-2">vis</span>
+            cloud-code <span className="text-fg-2">vis</span>
           </span>
           <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.12em] text-fg-3">
             debug · local files

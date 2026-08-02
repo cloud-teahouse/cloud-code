@@ -5,7 +5,7 @@
  * 0600 is enforced; corrupted files return undefined rather than throwing.
  */
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -210,5 +210,44 @@ describe('FileTokenStorage', () => {
     // Defaults should be strings (empty / 'Bearer'), never undefined.
     expect(typeof loaded?.scope).toBe('string');
     expect(typeof loaded?.tokenType).toBe('string');
+  });
+
+  // ── mtime-guarded load cache ─────────────────────────────────────────
+
+  it('cached load() observes an external write that bumps mtime', async () => {
+    // After load() has populated the cache, a write through a second
+    // FileTokenStorage instance (simulating a peer process) with a strictly
+    // newer mtime must be observed on the very next load().
+    const file = join(dir, 'kimi-code.json');
+    await storage.save('kimi-code', sampleToken({ accessToken: 'at-one' }));
+    expect((await storage.load('kimi-code'))?.accessToken).toBe('at-one');
+
+    const peer = new FileTokenStorage(dir);
+    await peer.save('kimi-code', sampleToken({ accessToken: 'at-two' }));
+    // On a coarse-granularity filesystem the peer write could reuse the same
+    // mtime tick (a cache no-op), so force a strictly newer mtime to keep the
+    // test deterministic everywhere.
+    const future = new Date('2030-01-01T00:00:00Z');
+    utimesSync(file, future, future);
+
+    expect((await storage.load('kimi-code'))?.accessToken).toBe('at-two');
+  });
+
+  it('same-instance save() is visible on the next load() even under an mtime collision', async () => {
+    // The save() write-through must not rely on the mtime comparison: even
+    // when the on-disk mtime is forced back to the marker cached for the
+    // previous value (the coarse-filesystem same-tick case), the next load()
+    // must return the value this instance just wrote.
+    const file = join(dir, 'kimi-code.json');
+    await storage.save('kimi-code', sampleToken({ accessToken: 'at-one' }));
+    expect((await storage.load('kimi-code'))?.accessToken).toBe('at-one');
+
+    const past = new Date('2020-01-01T00:00:00Z');
+    utimesSync(file, past, past);
+    expect((await storage.load('kimi-code'))?.accessToken).toBe('at-one'); // recached at `past`
+
+    await storage.save('kimi-code', sampleToken({ accessToken: 'at-two' }));
+    utimesSync(file, past, past); // collide with the marker cached above
+    expect((await storage.load('kimi-code'))?.accessToken).toBe('at-two');
   });
 });

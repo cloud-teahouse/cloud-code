@@ -2,129 +2,185 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+permissions:
+  contents: write
+
+# Same-tag re-runs are rare and deliberate; do not cancel an in-progress
+# publish — aborting it halfway could leave a partially-uploaded release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
+  bun-binary:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: bun-linux-x64, artifact: cloud-code-linux-x64 }
+          - { target: bun-linux-arm64, artifact: cloud-code-linux-arm64 }
+          - { target: bun-darwin-x64, artifact: cloud-code-darwin-x64 }
+          - { target: bun-darwin-arm64, artifact: cloud-code-darwin-arm64 }
+          - { target: bun-windows-x64, artifact: cloud-code-windows-x64.exe }
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'MoonshotAI'
-    outputs:
-      packages_published: ${{ steps.changesets.outputs.published }}
-      kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
-      kimi_release_tag: ${{ steps.kimi-release.outputs.tag }}
-    permissions:
-      contents: write
-      pull-requests: write
-      id-token: write # Required for NPM Trusted Publishing (OIDC)
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v4
+
+      # See ci.yml: the version comes from package.json `packageManager`.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: 24
+          cache: pnpm
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: "pnpm"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Upgrade npm for Trusted Publishing
-        run: npm install -g npm@11
+      - uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Generate Kimi Code built-in catalog
-        shell: bash
-        run: |
-          CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
-          node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
-          echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
-
       - name: Build packages
         run: pnpm build
 
-      - name: Create Release Pull Request or Publish to npm
-        id: changesets
-        uses: changesets/action@v1
+      # The tag (`vX.Y.Z`) is the version source of truth for releases.
+      - name: Compile single-file binary
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bun build apps/cloud-code/dist/main.mjs \
+            --compile \
+            --minify \
+            --define __CLOUD_CODE_VERSION__="\"$VERSION\"" \
+            --define __CLOUD_CODE_CHANNEL__="\"release\"" \
+            --define __CLOUD_CODE_COMMIT__="\"${GITHUB_SHA::7}\"" \
+            --define __CLOUD_CODE_BUILD_TARGET__="\"${{ matrix.target }}\"" \
+            --target=${{ matrix.target }} \
+            --outfile release/${{ matrix.artifact }}
+
+      - name: Smoke check (native target only)
+        if: matrix.target == 'bun-linux-x64'
+        run: |
+          ./release/${{ matrix.artifact }} --version
+          ./release/${{ matrix.artifact }} --version | grep -Fx "${GITHUB_REF_NAME#v}"
+
+      - uses: actions/upload-artifact@v4
         with:
-          publish: pnpm changeset publish
-          version: pnpm run version:release
-          commit: "ci: release packages"
-          title: "ci: release packages"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # NPM_TOKEN is not needed with Trusted Publishing (OIDC)
+          name: ${{ matrix.artifact }}
+          path: release/${{ matrix.artifact }}
+          retention-days: 7
 
-      - name: Resolve Kimi Code native release
-        if: steps.changesets.outputs.published == 'true'
-        id: kimi-release
-        run: node apps/kimi-code/scripts/native/resolve-release.mjs
-        env:
-          CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
-
-  deploy-docs:
-    name: Deploy docs
-    needs: release
-    if: needs.release.outputs.packages_published == 'true'
-    uses: ./.github/workflows/docs-deploy.yml
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-
-  native-artifacts:
-    name: Native release artifact
-    needs: release
-    if: needs.release.outputs.kimi_native_release == 'true'
-    uses: ./.github/workflows/_native-build.yml
-    with:
-      upload-artifact-prefix: kimi-code-native
-      retention-days: 7
-      sign-macos: true
-    secrets:
-      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-
-  publish-native-assets:
-    name: Publish native release assets
-    needs:
-      - release
-      - native-artifacts
-    if: needs.release.outputs.kimi_native_release == 'true'
+  publish:
+    needs: bun-binary
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Download native artifacts
-        uses: actions/download-artifact@v8
+      # Full history so the changelog fallback can list commits since the
+      # previous tag.
+      - uses: actions/checkout@v4
         with:
-          pattern: kimi-code-native-*
-          path: dist-native-release
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cloud-code-*
+          path: release
           merge-multiple: true
 
-      - name: Produce manifest.json
-        env:
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
+      - name: Package archives and checksums
+        run: |
+          cd release
+          mkdir -p raw
+          for f in cloud-code-*; do
+            case "$f" in
+              raw) ;;
+              *.exe) zip "${f%.exe}.zip" "$f"; mv "$f" raw/ ;;
+              *.tar.gz|*.zip) ;;
+              *) tar -czf "$f.tar.gz" "$f"; mv "$f" raw/ ;;
+            esac
+          done
+          # Raw binaries are summed (not just the archives): the /update
+          # client verifies its downloaded binary against this file.
+          sha256sum raw/* > sha256sums.txt
+          sha256sum *.tar.gz *.zip >> sha256sums.txt
+          sed -i 's|  raw/|  |' sha256sums.txt
 
-      - name: Upload assets to GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist-native-release/* --clobber
+      # Bilingual (en + zh-CN) release notes. The changelog section is pulled
+      # from apps/cloud-code/CHANGELOG.md (`## <version>`) when present;
+      # otherwise it falls back to the commit list since the previous tag.
+      - name: Generate release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SECTION=$(awk -v v="$VERSION" '
+            $0 == "## " v { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' apps/cloud-code/CHANGELOG.md)
+          if [ -n "$(printf '%s' "$SECTION" | tr -d '[:space:]')" ]; then
+            echo "Changelog source: apps/cloud-code/CHANGELOG.md section '$VERSION'"
+          else
+            PREV_TAG=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+            if [ -n "$PREV_TAG" ]; then
+              SECTION=$(git log --no-merges --pretty=format:'- %s (%h)' "$PREV_TAG..HEAD")
+              echo "Changelog source: git log $PREV_TAG..HEAD (no matching CHANGELOG.md section)"
+            else
+              # No previous tag (first release): cap the fallback commit list.
+              SECTION=$(git log --no-merges --pretty=format:'- %s (%h)' -n 30 HEAD)
+              echo "Changelog source: git log -n 30 HEAD (no previous tag, no matching CHANGELOG.md section)"
+            fi
+          fi
+          # NOTE: heredoc bodies must stay unindented — leading spaces would
+          # render as code blocks in the release notes.
+          {
+          cat <<'EOF'
+          ## English
+
+          **Cloud Code CLI** is an AI coding agent that runs in your terminal: it reads and
+          edits code, runs shell commands, searches files, fetches web pages, and chooses
+          its next step from the feedback it receives. This release ships prebuilt
+          single-file binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64).
+
+          ### Install
+
+          - Install script: `curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash`
+          - npm: `npm install -g @cloud-teahouse/cloudcode-cli`
+          - Manual: download the archive for your platform below, verify it against
+            `sha256sums.txt`, unpack it, and check `cloud-code --version`.
+
+          ### Changelog
+
+          EOF
+          printf '%s\n' "$SECTION"
+          cat <<'EOF'
+
+          ---
+
+          ## 中文
+
+          **Cloud Code CLI** 是一个运行在终端中的 AI 编程智能体：它可以读写代码、执行
+          shell 命令、搜索文件、抓取网页，并根据反馈决定下一步。本次发布提供
+          Linux（x64/arm64）、macOS（x64/arm64）和 Windows（x64）的单文件预编译二进制。
+
+          ### 安装
+
+          - 安装脚本：`curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash`
+          - npm：`npm install -g @cloud-teahouse/cloudcode-cli`
+          - 手动安装：在下方下载对应平台的压缩包，用 `sha256sums.txt` 校验后解压，
+            运行 `cloud-code --version` 确认版本。
+
+          ### 更新日志
+
+          EOF
+          printf '%s\n' "$SECTION"
+          } > release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Cloud Code CLI ${{ github.ref_name }}
+          body_path: release-notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release/raw/*
+            release/*.tar.gz
+            release/*.zip
+            release/sha256sums.txt

@@ -8,7 +8,7 @@ import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@cloud-code/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -108,9 +108,6 @@ describe('BackgroundManager — event emission', () => {
         status: 'running',
       }),
     });
-    expect(agent.telemetry.track).toHaveBeenCalledWith('background_task_created', {
-      kind: 'bash',
-    });
   });
 
   it('emits background.task.started for agent tasks', () => {
@@ -127,15 +124,11 @@ describe('BackgroundManager — event emission', () => {
         status: 'running',
       }),
     });
-    expect(agent.telemetry.track).toHaveBeenCalledWith('background_task_created', {
-      kind: 'agent',
-    });
   });
 
-  it('emits background.task.terminated and telemetry on natural exit', async () => {
+  it('emits background.task.terminated on natural exit', async () => {
     const { agent, manager } = createBackgroundManager();
     const taskId = registerProcess(manager, immediateProcess(0), 'echo', 'done');
-    agent.telemetry.track.mockClear();
 
     await manager.wait(taskId);
 
@@ -146,66 +139,24 @@ describe('BackgroundManager — event emission', () => {
         status: 'completed',
       }),
     });
-    expect(agent.telemetry.track).toHaveBeenCalledWith(
-      'background_task_completed',
-      expect.objectContaining({
-        kind: 'process',
-        duration_ms: expect.any(Number),
-        status: 'completed',
-      }),
-    );
   });
 
-  it('sends null duration_ms when a terminal task has no endedAt', () => {
-    const { agent, manager } = createBackgroundManager();
-    agent.telemetry.track.mockClear();
-
-    const info: BackgroundTaskInfo = {
-      taskId: 'task-1',
-      description: 'lost task',
-      status: 'lost',
-      kind: 'process',
-      command: 'sleep 60',
-      pid: 123,
-      exitCode: null,
-      startedAt: 100,
-      endedAt: null,
-    };
-
-    (manager as unknown as { emitTaskTerminated: (info: BackgroundTaskInfo) => void }).emitTaskTerminated(
-      info,
-    );
-
-    const trackCall = agent.telemetry.track.mock.calls.find(
-      (call) => call[0] === 'background_task_completed',
-    );
-    expect(trackCall?.[1]).toMatchObject({ kind: 'process', status: 'lost' });
-    expect(trackCall?.[1]?.duration_ms).toBeNull();
-  });
-
-  it('tracks failed and timed-out terminal statuses', async () => {
+  it('reaches failed and timed-out terminal statuses', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const { agent, manager } = createBackgroundManager();
+    const { manager } = createBackgroundManager();
     const failedId = registerProcess(manager, immediateProcess(1), 'false', 'failed');
     const timedOutId = manager.registerTask(
       agentTask(new Promise(() => {}), 'slow agent'),
       { timeoutMs: 1 },
     );
-    agent.telemetry.track.mockClear();
 
-    await manager.wait(failedId);
+    const failed = await manager.wait(failedId);
     const timedOut = manager.wait(timedOutId);
     await vi.advanceTimersByTimeAsync(5_010);
-    await timedOut;
+    const timedOutInfo = await timedOut;
 
-    expect(agent.telemetry.track).toHaveBeenCalledWith(
-      'background_task_completed',
-      expect.objectContaining({ kind: 'process', status: 'failed' }),
-    );
-    expect(agent.telemetry.track).toHaveBeenCalledWith(
-      'background_task_completed',
-      expect.objectContaining({ kind: 'agent', status: 'timed_out' }),
-    );
+    expect(failed?.status).toBe('failed');
+    expect(timedOutInfo?.status).toBe('timed_out');
   });
 
   it('emits background.task.terminated on stop', async () => {

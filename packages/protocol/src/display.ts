@@ -160,3 +160,30 @@ export const ToolResultDisplaySchema = z.discriminatedUnion('kind', [
 
 export type ToolInputDisplay = z.infer<typeof ToolInputDisplaySchema>;
 export type ToolResultDisplay = z.infer<typeof ToolResultDisplaySchema>;
+
+/**
+ * Localization pointer attached to a tool result. The emitted `output` text
+ * stays English (the model reads it, and parts of the UI parse it); `display`
+ * names a client-side i18n key plus interpolation params so a UI can render
+ * the same outcome in the user's locale instead. UIs that do not know the key
+ * (older clients, headless consumers) render the raw output — the field is
+ * purely additive.
+ */
+export const toolResultDisplayRefSchema = z.object({
+  key: z.string().min(1),
+  params: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+});
+export type ToolResultDisplayRef = z.infer<typeof toolResultDisplayRefSchema>;
+
+/**
+ * Structured outcome data attached to a tool result. Some outputs are parsed
+ * by clients (plan-approval markers, background `task_id:` prefixes, agent
+ * envelopes, goal status JSON); those outputs must stay byte-identical for
+ * the model and for replays of older sessions, so the parsed facts ride
+ * alongside as plain JSON instead. Each tool names its own shape; consumers
+ * validate narrowly and fall back to parsing the raw output when the field
+ * is absent (older sessions) or malformed. UI-only — never projected to the
+ * model.
+ */
+export const toolResultStructuredSchema = z.record(z.string(), z.unknown());
+export type ToolResultStructured = z.infer<typeof toolResultStructuredSchema>;

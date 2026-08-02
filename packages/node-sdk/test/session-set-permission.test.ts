@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, type KimiError, type PermissionMode } from '#/index';
+import { createCloudCodeHarness, type CloudCodeError, type PermissionMode } from '#/index';
 import { makeTempDir, removeTempDirs, waitForAgentWireEvent } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
 
@@ -16,7 +16,7 @@ describe('Session.setPermission', () => {
     async (mode: PermissionMode) => {
       const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-home-');
       const workDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-work-');
-      const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+      const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
       try {
         const session = await harness.createSession({
@@ -46,15 +46,15 @@ describe('Session.setPermission', () => {
   it('rejects invalid permission modes', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_permission_invalid', workDir });
 
       await expect(session.setPermission('invalid' as never)).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.permission_mode_invalid',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -63,16 +63,16 @@ describe('Session.setPermission', () => {
   it('rejects after the session is closed', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-permission-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_permission_closed', workDir });
       await session.close();
 
       await expect(session.setPermission('yolo')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.closed',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }

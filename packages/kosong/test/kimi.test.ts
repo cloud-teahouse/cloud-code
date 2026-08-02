@@ -53,15 +53,15 @@ function mockCreateResult(data: unknown, traceId?: string) {
   };
 }
 
-type KimiGenerationState = {
+type CloudCodeGenerationState = {
   max_tokens?: number | undefined;
   temperature?: number | undefined;
   prompt_cache_key?: string | undefined;
   extra_body?: Record<string, unknown> | undefined;
 };
 
-function getGenerationState(provider: KimiChatProvider): KimiGenerationState {
-  return Reflect.get(provider, '_generationKwargs') as KimiGenerationState;
+function getGenerationState(provider: KimiChatProvider): CloudCodeGenerationState {
+  return Reflect.get(provider, '_generationKwargs') as CloudCodeGenerationState;
 }
 
 /** Capture the request body sent to OpenAI by mocking the client. */
@@ -92,7 +92,7 @@ async function captureRequestBody(
   return capturedBody;
 }
 
-async function captureKimiMessages(
+async function captureCloudCodeMessages(
   history: Message[],
   configure?: (provider: KimiChatProvider) => KimiChatProvider,
 ): Promise<Array<Record<string, unknown>>> {
@@ -666,7 +666,7 @@ describe('KimiChatProvider', () => {
         },
       ];
 
-      const messages = await captureKimiMessages(history, (provider) =>
+      const messages = await captureCloudCodeMessages(history, (provider) =>
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 
@@ -682,7 +682,7 @@ describe('KimiChatProvider', () => {
         },
       ];
 
-      const messages = await captureKimiMessages(history, (provider) =>
+      const messages = await captureCloudCodeMessages(history, (provider) =>
         provider.withExtraBody({ thinking: { keep: 'all' } }),
       );
 
@@ -698,7 +698,7 @@ describe('KimiChatProvider', () => {
         },
       ];
 
-      const messages = await captureKimiMessages(history, (provider) =>
+      const messages = await captureCloudCodeMessages(history, (provider) =>
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 
@@ -717,7 +717,7 @@ describe('KimiChatProvider', () => {
         },
       ];
 
-      const messages = await captureKimiMessages(history, (provider) =>
+      const messages = await captureCloudCodeMessages(history, (provider) =>
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 
@@ -736,7 +736,7 @@ describe('KimiChatProvider', () => {
         },
       ];
 
-      const messages = await captureKimiMessages(history, (provider) =>
+      const messages = await captureCloudCodeMessages(history, (provider) =>
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 
@@ -761,7 +761,7 @@ describe('KimiChatProvider', () => {
           },
         ];
 
-        const messages = await captureKimiMessages(history, (provider) =>
+        const messages = await captureCloudCodeMessages(history, (provider) =>
           provider.withExtraBody({ thinking: { type: 'enabled', keep } }),
         );
 
@@ -780,7 +780,7 @@ describe('KimiChatProvider', () => {
         },
       ];
 
-      const messages = await captureKimiMessages(history, (provider) =>
+      const messages = await captureCloudCodeMessages(history, (provider) =>
         provider.withExtraBody({ thinking: { type: 'disabled', keep: 'all' } }),
       );
 
@@ -799,7 +799,7 @@ describe('KimiChatProvider', () => {
         },
       ];
 
-      const messages = await captureKimiMessages(history, (provider) =>
+      const messages = await captureCloudCodeMessages(history, (provider) =>
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 

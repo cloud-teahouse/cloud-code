@@ -35,6 +35,22 @@ describe('convertAnthropicError', () => {
     expect(result).toBeInstanceOf(APIConnectionError);
   });
 
+  it('APIUserAbortError keeps abort identity instead of being classified', () => {
+    // A request-phase user abort has no status: classifying it would produce
+    // a base ChatProviderError that isRetryableGenerateError treats as
+    // retryable — a cancellation must rethrow as the generate() AbortError
+    // contract instead.
+    const err = new AnthropicUserAbortError({ message: 'Request was aborted.' });
+    let caught: unknown;
+    try {
+      convertAnthropicError(err);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DOMException);
+    expect((caught as DOMException).name).toBe('AbortError');
+  });
+
   it('APIError with status -> APIStatusError', () => {
     const err = AnthropicAPIError.generate(
       502,
@@ -101,12 +117,14 @@ describe('convertAnthropicError', () => {
     expect((result as APIProviderRateLimitError).retryAfterMs).toBe(7_000);
   });
 
-  it('ignores a non-integer (HTTP-date) retry-after header, leaving retryAfterMs null', () => {
+  it('ignores a past HTTP-date retry-after header, leaving retryAfterMs null', () => {
+    // A past date asks for no wait at all, so it is not a backoff directive;
+    // a FUTURE HTTP-date would now be honored (see errors.test.ts).
     const err = AnthropicAPIError.generate(
       429,
       { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } },
       'rate limited',
-      new Headers({ 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' }),
+      new Headers({ 'retry-after': 'Wed, 21 Oct 2015 07:28:00 GMT' }),
     );
     const result = convertAnthropicError(err);
     expect(result).toBeInstanceOf(APIProviderRateLimitError);

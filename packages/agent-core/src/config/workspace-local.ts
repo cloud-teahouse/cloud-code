@@ -1,9 +1,9 @@
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@cloud-code/kaos';
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 
 const S_IFMT = 0o170000;
 const S_IFDIR = 0o040000;
@@ -109,7 +109,7 @@ export function normalizeAdditionalDirs(additionalDirs: readonly string[]): stri
 }
 
 function getWorkspaceLocalConfigPath(projectRoot: string): string {
-  return join(projectRoot, '.kimi-code', 'local.toml');
+  return join(projectRoot, '.cloud-code', 'local.toml');
 }
 
 async function findProjectRoot(kaos: Kaos, workDir: string): Promise<string> {
@@ -137,7 +137,7 @@ async function readWorkspaceLocalToml(
     text = await kaos.readText(configPath);
   } catch (error: unknown) {
     if (isPathMissing(error)) return undefined;
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.CONFIG_INVALID,
       `Failed to read ${configPath}: ${describeError(error)}`,
       { cause: error },
@@ -150,7 +150,7 @@ async function readWorkspaceLocalToml(
   try {
     raw = parseToml(text);
   } catch (error: unknown) {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.CONFIG_INVALID,
       `Invalid TOML in ${configPath}: ${describeError(error)}`,
       { cause: error },
@@ -158,7 +158,7 @@ async function readWorkspaceLocalToml(
   }
 
   if (!isPlainObject(raw)) {
-    throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid workspace local config in ${configPath}`);
+    throw new CloudCodeError(ErrorCodes.CONFIG_INVALID, `Invalid workspace local config in ${configPath}`);
   }
 
   return { raw: cloneRecord(raw), parsed: parseWorkspaceLocalToml(raw) };
@@ -169,7 +169,7 @@ function parseWorkspaceLocalToml(raw: Record<string, unknown>): WorkspaceLocalTo
     return WorkspaceLocalTomlSchema.parse(raw);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
-      throw new KimiError(ErrorCodes.CONFIG_INVALID, describeWorkspaceLocalValidationError(error), {
+      throw new CloudCodeError(ErrorCodes.CONFIG_INVALID, describeWorkspaceLocalValidationError(error), {
         cause: error,
       });
     }
@@ -231,11 +231,11 @@ async function resolveAdditionalDir(
 
 function normalizeAdditionalDirInput(additionalDir: string): string {
   if (typeof additionalDir !== 'string') {
-    throw new KimiError(ErrorCodes.CONFIG_INVALID, 'workspace.additional_dir must be an array of strings');
+    throw new CloudCodeError(ErrorCodes.CONFIG_INVALID, 'workspace.additional_dir must be an array of strings');
   }
   const trimmed = additionalDir.trim();
   if (trimmed.length === 0) {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.CONFIG_INVALID,
       'workspace.additional_dir must exist and be a directory',
     );
@@ -269,19 +269,19 @@ async function assertDirectory(kaos: Kaos, filePath: string): Promise<void> {
     if ((stat.stMode & S_IFMT) === S_IFDIR) return;
   } catch (error: unknown) {
     if (isPathMissing(error)) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         'workspace.additional_dir must exist and be a directory',
       );
     }
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.CONFIG_INVALID,
       `Failed to stat ${filePath}: ${describeError(error)}`,
       { cause: error },
     );
   }
 
-  throw new KimiError(
+  throw new CloudCodeError(
     ErrorCodes.CONFIG_INVALID,
     'workspace.additional_dir must exist and be a directory',
   );

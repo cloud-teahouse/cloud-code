@@ -8,7 +8,7 @@ export interface FlagDefinitionInput {
   readonly id: string;
   readonly title: string;
   readonly description: string;
-  /** Full environment variable name, e.g. `KIMI_CODE_EXPERIMENTAL_MY_FEATURE`. Read directly by the resolver. */
+  /** Full environment variable name, e.g. `CLOUD_CODE_EXPERIMENTAL_MY_FEATURE`. Read directly by the resolver. */
   readonly env: string;
   readonly default: boolean;
   readonly surface: FlagSurface;

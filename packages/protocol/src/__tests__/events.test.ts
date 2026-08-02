@@ -8,8 +8,11 @@ import {
   agentEventSchema,
   assistantDeltaEventSchema,
   eventSchema,
+  mcpServerStatusEventSchema,
   shellCompletedEventSchema,
+  subagentFailedEventSchema,
   toolCallStartedEventSchema,
+  toolResultEventSchema,
 } from '../events';
 import type { Event } from '../events';
 import type { ToolInputDisplay } from '../display';
@@ -21,7 +24,7 @@ type _AssertToolInputDisplayNonNever = ToolInputDisplay extends never ? never : 
 const _assertDisplay: _AssertToolInputDisplayNonNever = true;
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
-const sdkPackageName = ['@moonshot-ai', 'kimi-code-sdk'].join('/');
+const sdkPackageName = ['@cloud-code', 'sdk'].join('/');
 
 function readPackageFiles(): string {
   const files = ['package.json', ...sourceFiles(join(packageRoot, 'src'))];
@@ -103,6 +106,114 @@ describe('events / display re-exports', () => {
       agentEventSchema.safeParse({
         type: 'unknown.event',
         turnId: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('round-trips tool.result display refs and keeps them optional', () => {
+    // With a display ref: the parse preserves key + params verbatim.
+    const withDisplay = toolResultEventSchema.parse({
+      type: 'tool.result',
+      turnId: 3,
+      toolCallId: 'call_1',
+      output: 'Created task #1 in team "core"',
+      display: {
+        key: 'toolResult.teamTask.created',
+        params: { id: 1, team: 'core', subject: 'Fix the bug' },
+      },
+    });
+    expect(withDisplay.display).toEqual({
+      key: 'toolResult.teamTask.created',
+      params: { id: 1, team: 'core', subject: 'Fix the bug' },
+    });
+
+    // Without one: results from unlocalized tools validate unchanged.
+    const bare = toolResultEventSchema.parse({
+      type: 'tool.result',
+      turnId: 3,
+      toolCallId: 'call_2',
+      output: 'raw text',
+      isError: true,
+    });
+    expect(bare.display).toBeUndefined();
+
+    // A malformed ref (empty key, non-scalar param) is rejected.
+    expect(
+      toolResultEventSchema.safeParse({
+        type: 'tool.result',
+        turnId: 3,
+        toolCallId: 'call_3',
+        output: 'x',
+        display: { key: '', params: { id: 1 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      toolResultEventSchema.safeParse({
+        type: 'tool.result',
+        turnId: 3,
+        toolCallId: 'call_4',
+        output: 'x',
+        display: { key: 'toolResult.cron.deleted', params: { id: { nested: true } } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('round-trips tool.result structured payloads and keeps them optional', () => {
+    const withStructured = toolResultEventSchema.parse({
+      type: 'tool.result',
+      turnId: 3,
+      toolCallId: 'call_5',
+      output: 'Exited plan mode. …',
+      structured: { outcome: 'approved', path: '/tmp/plan.md', chosen: 'Approach B' },
+    });
+    expect(withStructured.structured).toEqual({
+      outcome: 'approved',
+      path: '/tmp/plan.md',
+      chosen: 'Approach B',
+    });
+
+    const bare = toolResultEventSchema.parse({
+      type: 'tool.result',
+      turnId: 3,
+      toolCallId: 'call_6',
+      output: 'raw text',
+    });
+    expect(bare.structured).toBeUndefined();
+
+    // Non-object payloads are rejected.
+    expect(
+      toolResultEventSchema.safeParse({
+        type: 'tool.result',
+        turnId: 3,
+        toolCallId: 'call_7',
+        output: 'x',
+        structured: 'approved',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('round-trips the subagent.failed error kind', () => {
+    const cancelled = subagentFailedEventSchema.parse({
+      type: 'subagent.failed',
+      subagentId: 'agent-1',
+      error: 'Aborted by the user',
+      errorKind: 'user_cancelled',
+    });
+    expect(cancelled.errorKind).toBe('user_cancelled');
+
+    const bare = subagentFailedEventSchema.parse({
+      type: 'subagent.failed',
+      subagentId: 'agent-2',
+      error: 'boom',
+    });
+    expect(bare.errorKind).toBeUndefined();
+
+    expect(
+      subagentFailedEventSchema.safeParse({
+        type: 'subagent.failed',
+        subagentId: 'agent-3',
+        error: 'boom',
+        errorKind: 'timeout',
       }).success,
     ).toBe(false);
   });
@@ -274,5 +385,24 @@ describe('events / display re-exports', () => {
         previous_status: 'idle',
       }).success,
     ).toBe(false);
+  });
+
+  it('accepts an mcp.server.status event with the sse transport (schema matches the interface)', () => {
+    // McpServerStatusPayload.transport includes 'sse' (and tool.ts's
+    // mcpServerTransportSchema agrees), so the wire schema must accept an
+    // SSE-transport MCP server status — both directly and through the full
+    // agent-event union consumers validate against.
+    const event = {
+      type: 'mcp.server.status',
+      server: {
+        name: 'legacy-sse-server',
+        transport: 'sse',
+        status: 'connected',
+        toolCount: 3,
+      },
+    };
+    const parsed = mcpServerStatusEventSchema.parse(event);
+    expect(parsed.server.transport).toBe('sse');
+    expect(agentEventSchema.safeParse(event).success).toBe(true);
   });
 });

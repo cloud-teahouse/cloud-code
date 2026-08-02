@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { describe, expect, it, vi } from 'vitest';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
 // Dynamic-import contract: locks the public shape of the future HookEngine
 // without forcing TS module resolution to find a file that doesn't exist yet.
@@ -324,35 +324,6 @@ describe('HookEngine', () => {
     });
 
     await expect(engine.fireAndForgetTrigger('Notification')).resolves.toEqual([]);
-  });
-
-  it('preserves a PreToolUse block result even when telemetry throws (no fail-open)', async () => {
-    // Safety-critical: a telemetry failure MUST NOT silently bypass a block.
-    const telemetry = await import('../../src/utils/telemetry' as string).catch(() => null);
-    const { HookEngine } = await importEngine();
-    const engine = new HookEngine([
-      { event: 'PreToolUse', matcher: 'ReadFile', command: 'exit 2', timeout: 5 },
-    ]);
-
-    const spy =
-      telemetry && typeof (telemetry as { track?: unknown }).track === 'function'
-        ? vi
-            .spyOn(telemetry as { track: (...args: unknown[]) => unknown }, 'track')
-            .mockImplementation(() => {
-              throw new Error('telemetry broken');
-            })
-        : null;
-
-    try {
-      const results = await engine.trigger('PreToolUse', {
-        matcherValue: 'ReadFile',
-        inputData: {},
-      });
-      expect(results).toHaveLength(1);
-      expect(results[0]?.action).toBe('block');
-    } finally {
-      spy?.mockRestore();
-    }
   });
 
   it('runs a hook with HookDef.cwd as the working directory', async () => {

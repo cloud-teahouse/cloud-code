@@ -6,20 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createRPC,
-  KimiCore,
+  CloudCodeCore,
   type CoreAPI,
   type SDKAPI,
-  type TelemetryClient,
 } from '../../src';
 import {
   __resetRootLoggerForTest,
   getRootLogger,
 } from '../../src/logging/logger';
 import { resolveLoggingConfig } from '../../src/logging/resolve-config';
-import {
-  recordingContextTelemetry,
-  type TelemetryContextRecord,
-} from '../fixtures/telemetry';
 
 const CONFIG = `
 default_model = "kimi-code/kimi-for-coding"
@@ -250,7 +245,7 @@ max_context_size = 200000
       model: 'kimi-code/kimi-for-coding',
     });
 
-    const updatedConfig = await rpc.setKimiConfig({
+    const updatedConfig = await rpc.setCloudCodeConfig({
       defaultModel: 'gpt-alias',
       providers: {
         openai: {
@@ -418,7 +413,7 @@ reason = "no rm"
     await freshRpc.resumeSession({ sessionId: created.id });
     await getRootLogger().flushSession(created.id);
 
-    const logText = await readFile(join(created.sessionDir, 'logs', 'kimi-code.log'), 'utf-8');
+    const logText = await readFile(join(created.sessionDir, 'logs', 'cloud-code.log'), 'utf-8');
     expect(logText).toContain('session resume');
     expect(logText).toContain('app_version=1.2.3-test');
   });
@@ -452,126 +447,14 @@ max_context_size = 1000000
     await expect(freshRpc.resumeSession({ sessionId: created.id })).rejects.toThrow();
   });
 
-  it('scopes agent telemetry events to the owning session', async () => {
-    const createRecords: TelemetryContextRecord[] = [];
-    const createRpc = await createTestRpc({ telemetry: recordingContextTelemetry(createRecords) });
-    const created = await createRpc.createSession({
-      workDir,
-      model: 'kimi-code/kimi-for-coding',
-    });
-
-    await createRpc.setPermission({ sessionId: created.id, agentId: 'main', mode: 'yolo' });
-
-    expect(createRecords).toContainEqual({
-      event: 'yolo_toggle',
-      sessionId: created.id,
-      properties: { enabled: true, agent_id: 'main' },
-    });
-
-    await createRpc.setPermission({ sessionId: created.id, agentId: 'main', mode: 'auto' });
-
-    expect(createRecords).toContainEqual({
-      event: 'afk_toggle',
-      sessionId: created.id,
-      properties: { enabled: true, agent_id: 'main' },
-    });
-
-    await createRpc.setKimiConfig({
-      defaultModel: 'gpt-alias',
-      providers: {
-        openai: {
-          type: 'openai',
-          apiKey: 'sk-openai',
-          baseUrl: 'https://openai.example/v1',
-        },
-      },
-      models: {
-        'gpt-alias': {
-          provider: 'openai',
-          model: 'gpt-runtime',
-          maxContextSize: 200000,
-        },
-      },
-    });
-    await createRpc.setModel({
-      sessionId: created.id,
-      agentId: 'main',
-      model: 'gpt-alias',
-    });
-
-    expect(createRecords).toContainEqual({
-      event: 'model_switch',
-      sessionId: created.id,
-      properties: { model: 'gpt-alias', agent_id: 'main' },
-    });
-
-    const resumeRecords: TelemetryContextRecord[] = [];
-    const resumeRpc = await createTestRpc({ telemetry: recordingContextTelemetry(resumeRecords) });
-    await resumeRpc.resumeSession({ sessionId: created.id });
-    await resumeRpc.setThinking({ sessionId: created.id, agentId: 'main', effort: 'off' });
-
-    expect(resumeRecords).toContainEqual({
-      event: 'thinking_toggle',
-      sessionId: created.id,
-      properties: { enabled: false, effort: 'off', from: 'high', agent_id: 'main' },
-    });
-  });
-
-  it('tracks session_load_failed with the attempted session context', async () => {
+  it('rejects resume when the persisted session state is corrupt', async () => {
     const rpc = await createTestRpc();
     const created = await rpc.createSession({ workDir });
     await writeFile(join(created.sessionDir, 'state.json'), '{bad json', 'utf-8');
 
-    const records: TelemetryContextRecord[] = [];
-    const freshRpc = await createTestRpc({ telemetry: recordingContextTelemetry(records) });
+    const freshRpc = await createTestRpc();
 
     await expect(freshRpc.resumeSession({ sessionId: created.id })).rejects.toThrow();
-    expect(records).toContainEqual({
-      event: 'session_load_failed',
-      sessionId: created.id,
-      properties: { reason: 'SyntaxError' },
-    });
-  });
-
-  it('adds web client metadata to new-session telemetry', async () => {
-    const records: TelemetryContextRecord[] = [];
-    const rpc = await createTestRpc({ telemetry: recordingContextTelemetry(records) });
-    const created = await rpc.createSession({
-      workDir,
-      client: {
-        id: 'web_test_client',
-        name: 'kimi-code-web',
-        version: '0.1.1',
-        uiMode: 'web',
-      },
-    });
-
-    expect(records).toContainEqual({
-      event: 'session_started',
-      sessionId: created.id,
-      properties: {
-        client_id: 'web_test_client',
-        client_name: 'kimi-code-web',
-        client_version: '0.1.1',
-        ui_mode: 'web',
-        resumed: false,
-      },
-    });
-
-    await rpc.setPermission({ sessionId: created.id, agentId: 'main', mode: 'yolo' });
-
-    expect(records).toContainEqual({
-      event: 'yolo_toggle',
-      sessionId: created.id,
-      properties: {
-        client_id: 'web_test_client',
-        client_name: 'kimi-code-web',
-        client_version: '0.1.1',
-        ui_mode: 'web',
-        enabled: true,
-        agent_id: 'main',
-      },
-    });
   });
 
   async function findWireFile(root: string): Promise<string> {
@@ -588,15 +471,13 @@ max_context_size = 1000000
     options: {
       readonly appVersion?: string;
       readonly emitEvent?: (event: Parameters<SDKAPI['emitEvent']>[0]) => void;
-      readonly telemetry?: TelemetryClient;
     } = {},
   ) {
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    void new KimiCore(coreRpc, {
+    void new CloudCodeCore(coreRpc, {
       homeDir,
       configPath,
       appVersion: options.appVersion,
-      telemetry: options.telemetry,
     });
     return sdkRpc({
       emitEvent: options.emitEvent ?? vi.fn(),

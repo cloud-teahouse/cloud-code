@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events';
 import { Readable, type Writable } from 'node:stream';
 
 import { createControlledPromise } from '@antfu/utils';
-import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
-import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
+import { type Environment, type Kaos, type KaosProcess } from '@cloud-code/kaos';
+import type { ModelCapability, ProviderConfig } from '@cloud-code/kosong';
 import { expect, onTestFinished, vi } from 'vitest';
 
 import {
@@ -19,14 +19,13 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../../src/agent/records';
-import type { KimiConfig } from '../../../src/config';
+import type { CloudCodeConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
 import type { Logger } from '../../../src/logging';
 import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';
 import type { ToolServices } from '../../../src/tools/support/services';
-import type { TelemetryClient } from '../../../src/telemetry';
 import type { PromisifyMethods } from '../../../src/utils/types';
 import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
 import { testKaos } from '../../fixtures/test-kaos';
@@ -92,21 +91,30 @@ export interface TestAgentOptions {
   readonly kaos?: Kaos | undefined;
   readonly runtime?: ToolServices | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
-  readonly microCompaction?: AgentOptions['microCompaction'];
+  readonly graduatedCompaction?: AgentOptions['graduatedCompaction'];
   readonly generate?: GenerateFn | undefined;
+  /**
+   * Test-only provider wrapper around the scripted generate: keeps response
+   * scripting intact while letting a wrapper observe/annotate each request
+   * (e.g. the mock prefix-cache provider overriding the usage cache counters).
+   * Ignored when `generate` replaces the scripted generate outright.
+   */
+  readonly wrapGenerate?: ((inner: GenerateFn) => GenerateFn) | undefined;
   readonly hookEngine?: AgentOptions['hookEngine'];
   readonly type?: AgentOptions['type'];
   readonly permission?: AgentOptions['permission'];
   readonly goal?: GoalMode;
   readonly providerManager?: ProviderManager;
-  readonly initialConfig?: KimiConfig;
+  readonly initialConfig?: CloudCodeConfig;
   readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
   readonly sessionId?: string;
   readonly subagentHost?: AgentOptions['subagentHost'];
+  readonly skills?: AgentOptions['skills'];
+  readonly systemPromptContextProvider?: AgentOptions['systemPromptContextProvider'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
   readonly persistence?: AgentRecordPersistence | undefined;
   readonly homedir?: AgentOptions['homedir'];
-  readonly telemetry?: TelemetryClient | undefined;
+  readonly brandHomeDir?: AgentOptions['brandHomeDir'];
   readonly log?: Logger;
   readonly experimentalFlags?: AgentOptions['experimentalFlags'];
 }
@@ -162,7 +170,7 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
-  private kimiConfig: KimiConfig;
+  private kimiConfig: CloudCodeConfig;
 
   constructor(options: TestAgentOptions = {}) {
     this.options = options;
@@ -185,16 +193,21 @@ export class AgentTestContext {
       config: this.kimiConfig,
       rpc: this.createRpcProxy(),
       homedir: options.homedir,
+      brandHomeDir: options.brandHomeDir,
       persistence,
-      generate: options.generate ?? this.scriptedGenerate.generate,
+      generate:
+        options.generate ??
+        (options.wrapGenerate?.(this.scriptedGenerate.generate) ??
+          this.scriptedGenerate.generate),
       compactionStrategy: options.compactionStrategy,
-      microCompaction: options.microCompaction,
+      graduatedCompaction: options.graduatedCompaction,
       modelProvider: providerManager,
       subagentHost: options.subagentHost,
+      skills: options.skills,
+      systemPromptContextProvider: options.systemPromptContextProvider,
       type: options.type,
       permission: options.permission,
       hookEngine: options.hookEngine,
-      telemetry: options.telemetry,
       log: options.log,
       experimentalFlags: options.experimentalFlags,
     });
@@ -445,8 +458,10 @@ export class AgentTestContext {
     });
   }
 
-  appendToolExchange(): void {
-    const stepUuid = 'context-tool-step';
+  appendToolExchange(options?: { key?: string; resultText?: string }): void {
+    const key = options?.key ?? '';
+    const suffix = key === '' ? '' : `_${key}`;
+    const stepUuid = `context-tool-step${suffix}`;
     this.agent.context.appendUserMessage([{ type: 'text', text: 'lookup something' }]);
     this.dispatch({
       type: 'context.append_loop_event',
@@ -456,7 +471,7 @@ export class AgentTestContext {
       type: 'context.append_loop_event',
       event: {
         type: 'content.part',
-        uuid: 'context-tool-part',
+        uuid: `context-tool-part${suffix}`,
         turnId: '',
         step: 2,
         stepUuid,
@@ -470,11 +485,11 @@ export class AgentTestContext {
       type: 'context.append_loop_event',
       event: {
         type: 'tool.call',
-        uuid: 'context-tool-call',
+        uuid: `context-tool-call${suffix}`,
         turnId: '',
         step: 2,
         stepUuid,
-        toolCallId: 'call_lookup',
+        toolCallId: `call_lookup${suffix}`,
         name: 'Lookup',
         args: {
           query: 'moon',
@@ -495,9 +510,9 @@ export class AgentTestContext {
       type: 'context.append_loop_event',
       event: {
         type: 'tool.result',
-        parentUuid: 'context-tool-call',
-        toolCallId: 'call_lookup',
-        result: { output: 'lookup result' },
+        parentUuid: `context-tool-call${suffix}`,
+        toolCallId: `call_lookup${suffix}`,
+        result: { output: options?.resultText ?? 'lookup result' },
       },
     });
   }
@@ -747,7 +762,7 @@ export class AgentTestContext {
       providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
-      microCompaction: this.options.microCompaction,
+      graduatedCompaction: this.options.graduatedCompaction,
       subagentHost: this.options.subagentHost,
       experimentalFlags: this.options.experimentalFlags,
       persistence: new InMemoryAgentRecordPersistence(
@@ -999,6 +1014,7 @@ function createResumeNoSideEffectKaos(
     mkdir: () => fail('mkdir'),
     exec: () => fail('exec'),
     execWithEnv: () => fail('execWithEnv'),
+    ptyExec: () => fail('ptyExec'),
   };
 }
 
@@ -1048,15 +1064,15 @@ function configStateSnapshot(agent: Agent): ResumeStateSnapshot['config'] {
   };
 }
 
-function emptyConfig(): KimiConfig {
+function emptyConfig(): CloudCodeConfig {
   return configWithProvider({ providers: {} }, MOCK_PROVIDER, undefined);
 }
 
 function configWithProvider(
-  config: KimiConfig,
+  config: CloudCodeConfig,
   provider: ProviderConfig,
   modelCapabilities: ModelCapability | undefined,
-): KimiConfig {
+): CloudCodeConfig {
   const providerName = 'test-provider';
   const maxContextSize = modelCapabilities?.max_context_tokens;
   return {
@@ -1078,7 +1094,7 @@ function configWithProvider(
   };
 }
 
-function providerConfigForAlias(provider: ProviderConfig): KimiConfig['providers'][string] {
+function providerConfigForAlias(provider: ProviderConfig): CloudCodeConfig['providers'][string] {
   return {
     type: provider.type,
     apiKey: 'apiKey' in provider ? provider.apiKey : undefined,

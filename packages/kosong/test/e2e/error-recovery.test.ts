@@ -259,15 +259,12 @@ describe('e2e: error recovery', () => {
       const toolResults = await result.toolResults();
 
       expect(toolResults).toHaveLength(3);
-      // First tool: success
       expect(toolResults[0]!.returnValue.isError).toBe(false);
       expect(toolResults[0]!.returnValue.output).toBe('success');
-      // Second tool: runtime error
       expect(toolResults[1]!.returnValue.isError).toBe(true);
       expect(toolResults[1]!.returnValue.message).toBe(
         'Error running tool: Tool timeout simulation',
       );
-      // Third tool: success
       expect(toolResults[2]!.returnValue.isError).toBe(false);
       expect(toolResults[2]!.returnValue.output).toBe('success');
     });

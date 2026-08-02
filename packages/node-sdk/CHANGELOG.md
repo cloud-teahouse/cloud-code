@@ -1,4 +1,4 @@
-# @moonshot-ai/kimi-code-sdk
+# @cloudcode/sdk
 
 ## 0.15.0
 
@@ -82,7 +82,7 @@
 
   - Use the `/add-dir <path>` command to add extra working directories to the current session, or remember them for the project.
   - Use `kimi --add-dir <path>` to add them on startup.
-  - Project-level local config is now managed in `.kimi-code/local.toml`; we recommend adding it to your `.gitignore`.
+  - Project-level local config is now managed in `.cloud-code/local.toml`; we recommend adding it to your `.gitignore`.
 
 ### Patch Changes
 
@@ -136,7 +136,7 @@
 
 - [#383](https://github.com/MoonshotAI/kimi-code/pull/383) [`15d71b5`](https://github.com/MoonshotAI/kimi-code/commit/15d71b5130d949c35d9dc2641e807e08d72dce48) - Add /reload to reload the current session and apply updated config files, plus /reload-tui to reload only TUI preferences.
 
-- [#431](https://github.com/MoonshotAI/kimi-code/pull/431) [`6a4e4c7`](https://github.com/MoonshotAI/kimi-code/commit/6a4e4c75d4bf6db3fefbb5c115d7a7c324bcae16) - Add a doctor command for validating Kimi Code configuration files.
+- [#431](https://github.com/MoonshotAI/kimi-code/pull/431) [`6a4e4c7`](https://github.com/MoonshotAI/kimi-code/commit/6a4e4c75d4bf6db3fefbb5c115d7a7c324bcae16) - Add a doctor command for validating Cloud Code configuration files.
 
 ### Patch Changes
 
@@ -156,7 +156,7 @@
 
 ### Minor Changes
 
-- [#270](https://github.com/MoonshotAI/kimi-code/pull/270) [`ac37d74`](https://github.com/MoonshotAI/kimi-code/commit/ac37d7448458fdb73fbe00e35856dcf44a13f734) - Add experimental goal mode for longer tasks that need more than one turn. Turn it on with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` before you start Kimi.
+- [#270](https://github.com/MoonshotAI/kimi-code/pull/270) [`ac37d74`](https://github.com/MoonshotAI/kimi-code/commit/ac37d7448458fdb73fbe00e35856dcf44a13f734) - Add experimental goal mode for longer tasks that need more than one turn. Turn it on with `CLOUD_CODE_EXPERIMENTAL_GOAL_COMMAND=1` before you start Kimi.
 
   Use `/goal <objective>` in the TUI when you want Kimi to keep working on one task across turns. For example:
 

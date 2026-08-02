@@ -4,6 +4,7 @@ import {
   APIEmptyResponseError,
   APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
+  APIQuotaExceededError,
   APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
@@ -13,7 +14,9 @@ import {
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
+  isVideoFormatError,
   normalizeAPIStatusError,
+  parseRetryAfterMs,
 } from '#/errors';
 import { describe, expect, it } from 'vitest';
 
@@ -179,6 +182,45 @@ describe('isRetryableGenerateError', () => {
     expect(isRetryableGenerateError(new ChatProviderError('unclassified upstream failure'))).toBe(
       true,
     );
+  });
+
+  it('does not retry a quota-exhausted 429, while a transient 429 still retries', () => {
+    // The exhausted plan cannot serve another request until the window
+    // resets — retrying only burns the budget. It inherits the 429 status,
+    // so the exclusion must win over the transient-status branch.
+    expect(isRetryableGenerateError(new APIQuotaExceededError('usage limit reached'))).toBe(false);
+    expect(isRetryableGenerateError(new APIProviderRateLimitError('rate limited'))).toBe(true);
+  });
+});
+
+describe('APIQuotaExceededError', () => {
+  it('stays 429-shaped: extends APIProviderRateLimitError with quota details', () => {
+    const err = new APIQuotaExceededError('usage limit reached', {
+      requestId: 'req-quota',
+      planType: 'pro',
+      resetsAtMs: 1_900_000_000_000,
+      quotaWindow: 'weekly',
+    });
+
+    expect(err).toBeInstanceOf(APIProviderRateLimitError);
+    expect(err).toBeInstanceOf(APIStatusError);
+    expect(err).toBeInstanceOf(ChatProviderError);
+    expect(err.name).toBe('APIQuotaExceededError');
+    expect(err.statusCode).toBe(429);
+    expect(err.requestId).toBe('req-quota');
+    expect(err.planType).toBe('pro');
+    expect(err.resetsAtMs).toBe(1_900_000_000_000);
+    expect(err.quotaWindow).toBe('weekly');
+    // Structural rate-limit checks keep working on the subclass.
+    expect(isProviderRateLimitError(err)).toBe(true);
+  });
+
+  it('defaults the quota details to null (mid-stream SSE variant)', () => {
+    const err = new APIQuotaExceededError('usage limit reached');
+
+    expect(err.planType).toBeNull();
+    expect(err.resetsAtMs).toBeNull();
+    expect(err.quotaWindow).toBeNull();
   });
 });
 
@@ -578,7 +620,7 @@ describe('isImageFormatError', () => {
     ).toBe(true);
     // Anthropic decode failure
     expect(isImageFormatError(new APIStatusError(400, 'Could not process image'))).toBe(true);
-    // Moonshot/Kimi (from the Kimi Code error reference)
+    // Moonshot/Kimi (from the Cloud Code error reference)
     expect(
       isImageFormatError(
         new APIStatusError(400, 'Invalid request: unsupported image url: /tmp/photo.avif'),
@@ -677,6 +719,194 @@ describe('isImageFormatError', () => {
     expect(
       isRetryableGenerateError(new APIStatusError(400, 'unsupported image format')),
     ).toBe(false);
+  });
+
+  it('treats a bare 400 with no response body as transient (edge blip), but not real 400s with bodies', () => {
+    expect(isRetryableGenerateError(new APIStatusError(400, '400 status code (no body)'))).toBe(true);
+    expect(
+      isRetryableGenerateError(new APIStatusError(400, '{"detail":"Unsupported parameter: x"}')),
+    ).toBe(false);
+    expect(isRetryableGenerateError(new APIStatusError(401, '401 status code (no body)'))).toBe(false);
+  });
+});
+
+describe('isVideoFormatError', () => {
+  it('matches kosong client-side video whitelist throws', () => {
+    expect(
+      isVideoFormatError(
+        new ChatProviderError('Unsupported media type for base64 video: video/x-ms-wmv'),
+      ),
+    ).toBe(true);
+    expect(
+      isVideoFormatError(
+        new ChatProviderError('Invalid data URL for video: data:video/mp4;base64,AAAA…(4 bytes)'),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match image errors, status errors, or unrelated errors', () => {
+    expect(
+      isVideoFormatError(
+        new ChatProviderError('Unsupported media type for base64 image: image/avif'),
+      ),
+    ).toBe(false);
+    expect(
+      isVideoFormatError(new APIStatusError(400, 'unsupported media type for base64 video')),
+    ).toBe(false);
+    expect(isVideoFormatError(new ChatProviderError('connection reset'))).toBe(false);
+    expect(isVideoFormatError(new Error('invalid data url for video'))).toBe(false);
+  });
+
+  it('is excluded from the transient-retry fallback (deterministic, no resend recovery)', () => {
+    // A client-side video rejection is a base ChatProviderError that would
+    // normally be retried as an unclassified transient; the identical
+    // request fails every retry, so it must fail fast like an image
+    // rejection instead of burning the retry budget (and re-logging the
+    // payload on every attempt).
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError('Unsupported media type for base64 video: video/x-ms-wmv'),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError('Invalid data URL for video: data:video/mp4;base64,AAAA'),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('normalizeAPIStatusError token gap parsing', () => {
+  it.each([
+    // Anthropic, observed wording: the prompt count is left of the ">", the
+    // limit right of it.
+    ['prompt is too long: 210000 tokens > 200000 maximum', 210000, 200000],
+    // Thousands separators are common in these messages.
+    ['prompt is too long: 210,000 tokens > 200,000 maximum', 210000, 200000],
+    // OpenAI: the LIMIT comes first, the requested prompt count second.
+    [
+      "This model's maximum context length is 4096 tokens. However, you requested 5000 tokens " +
+        '(4500 in the messages, 500 in the completion). Please reduce the length of the messages or completion.',
+      5000,
+      4096,
+    ],
+    // OpenAI-compatible "resulted in" variant phrasing, with separators.
+    [
+      'maximum context length is 128,000 tokens. However, your messages resulted in 129,543 tokens. ' +
+        'Please reduce the length of the messages.',
+      129543,
+      128000,
+    ],
+  ])('parses token counts from "%s"', (message, promptTokens, limitTokens) => {
+    const error = normalizeAPIStatusError(400, message);
+    expect(error).toBeInstanceOf(APIContextOverflowError);
+    if (error instanceof APIContextOverflowError) {
+      expect(error.promptTokens).toBe(promptTokens);
+      expect(error.limitTokens).toBe(limitTokens);
+    }
+  });
+
+  it.each([
+    // Anthropic overflow wording without the "N > M" numbers carries no gap.
+    'prompt is too long: 210000 tokens exceeds the maximum',
+    'Context length exceeded',
+    'Maximum context window exceeded',
+    'input token count 131072 exceeds the maximum number of tokens allowed',
+  ])('leaves token counts unset for "%s"', (message) => {
+    const error = normalizeAPIStatusError(400, message);
+    expect(error).toBeInstanceOf(APIContextOverflowError);
+    if (error instanceof APIContextOverflowError) {
+      expect(error.promptTokens).toBeUndefined();
+      expect(error.limitTokens).toBeUndefined();
+    }
+  });
+
+  it('keeps the overflow classification and HTTP details unchanged while adding the gap fields', () => {
+    // Vertex phrases prompt-too-long as a 413; the gap parse must not disturb
+    // any of the existing carried fields.
+    const error = normalizeAPIStatusError(
+      413,
+      'prompt is too long: 210000 tokens > 200000 maximum',
+      'req-gap',
+      5_000,
+      'trace-1',
+    );
+    expect(error).toBeInstanceOf(APIContextOverflowError);
+    expect(error.statusCode).toBe(413);
+    expect(error.requestId).toBe('req-gap');
+    expect(error.retryAfterMs).toBe(5_000);
+    expect(error.traceId).toBe('trace-1');
+  });
+
+  it('leaves the gap fields unset on a directly constructed error', () => {
+    const err = new APIContextOverflowError(400, 'context length exceeded');
+    expect(err.promptTokens).toBeUndefined();
+    expect(err.limitTokens).toBeUndefined();
+  });
+});
+
+describe('parseRetryAfterMs', () => {
+  it('parses integer seconds', () => {
+    expect(parseRetryAfterMs(new Headers({ 'retry-after': '30' }))).toBe(30_000);
+    expect(parseRetryAfterMs(new Headers({ 'retry-after': '0' }))).toBe(0);
+  });
+
+  it('returns null when the header is missing, unparseable, or negative', () => {
+    expect(parseRetryAfterMs(new Headers())).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ 'retry-after': 'soon' }))).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ 'retry-after': '-5' }))).toBeNull();
+    expect(parseRetryAfterMs(undefined)).toBeNull();
+    expect(parseRetryAfterMs({})).toBeNull();
+  });
+
+  it('honors a future HTTP-date as a delta from now', () => {
+    const result = parseRetryAfterMs(
+      new Headers({ 'retry-after': new Date(Date.now() + 120_000).toUTCString() }),
+    );
+    // toUTCString truncates to whole seconds and time elapses between
+    // building the header and parsing it, so the delta lands just under the
+    // offset.
+    expect(result).toBeGreaterThan(60_000);
+    expect(result).toBeLessThanOrEqual(120_000);
+  });
+
+  it('ignores a past HTTP-date', () => {
+    expect(
+      parseRetryAfterMs(new Headers({ 'retry-after': new Date(Date.now() - 60_000).toUTCString() })),
+    ).toBeNull();
+  });
+
+  it('reads retry-after-ms as milliseconds when retry-after is absent', () => {
+    expect(parseRetryAfterMs(new Headers({ 'retry-after-ms': '1500' }))).toBe(1_500);
+  });
+
+  it('prefers retry-after-ms over a shorter retry-after seconds directive', () => {
+    expect(parseRetryAfterMs(new Headers({ 'retry-after-ms': '30000', 'retry-after': '5' }))).toBe(
+      30_000,
+    );
+  });
+
+  it('keeps the retry-after seconds directive when it is longer than retry-after-ms', () => {
+    expect(parseRetryAfterMs(new Headers({ 'retry-after-ms': '500', 'retry-after': '10' }))).toBe(
+      10_000,
+    );
+  });
+
+  it('falls back to retry-after when retry-after-ms is unparseable', () => {
+    expect(parseRetryAfterMs(new Headers({ 'retry-after-ms': 'later', 'retry-after': '7' }))).toBe(
+      7_000,
+    );
+  });
+
+  it('prefers retry-after-ms over an HTTP-date retry-after', () => {
+    expect(
+      parseRetryAfterMs(
+        new Headers({
+          'retry-after-ms': '2500',
+          'retry-after': new Date(Date.now() + 120_000).toUTCString(),
+        }),
+      ),
+    ).toBe(2_500);
   });
 });
 

@@ -80,7 +80,6 @@ it('smoke: a compressed-image prompt reaches the model with the caption as a sys
   expect(JSON.stringify(appendRecords[0]!.args)).toContain('system-reminder');
   expect(JSON.stringify(appendRecords[1]!.args)).not.toContain('<system>');
 
-  // Resume the session from the records and require identical state.
   await ctx.expectResumeMatches();
 });
 

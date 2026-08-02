@@ -1,4 +1,4 @@
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import type { McpServerStdioConfig } from '#/config/schema';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/utils/proxy';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -60,7 +60,7 @@ export class StdioMcpClient implements MCPClient {
 
   constructor(config: McpServerStdioConfig, options: StdioMcpClientOptions = {}) {
     if (config.executor !== undefined && config.executor !== 'local') {
-      throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
+      throw new CloudCodeError(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
     }
     this.transport = new StdioClientTransport({
       command: config.command,
@@ -150,6 +150,15 @@ export class StdioMcpClient implements MCPClient {
       buildRequestOptions(this.startupTimeoutMs, undefined),
     );
     return result.tools.map(toMcpToolDefinition);
+  }
+
+  /**
+   * Instructions advertised by the server in the `initialize` handshake,
+   * when any. The SDK caches them at connect time, so this is a plain
+   * property read.
+   */
+  getInstructions(): string | undefined {
+    return this.client.getInstructions();
   }
 
   async callTool(

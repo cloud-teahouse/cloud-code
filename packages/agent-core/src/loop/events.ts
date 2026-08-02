@@ -1,4 +1,4 @@
-import type { FinishReason, TextPart, ThinkPart, TokenUsage } from '@moonshot-ai/kosong';
+import type { FinishReason, TextPart, ThinkPart, TokenUsage } from '@cloud-code/kosong';
 
 import type { ToolInputDisplay } from '../tools/display';
 import type { ExecutableToolResult, LoopStepStopReason, ToolUpdate } from './types';
@@ -45,7 +45,7 @@ export interface LoopStepEndEvent {
   readonly messageId?: string | undefined;
   /**
    * Provider trace identifier from the `x-trace-id` response header of this
-   * step's final request attempt (Kimi/KFC only). Telemetry-only; must not
+   * step's final request attempt (Kimi/KFC only). Diagnostic-only; must not
    * drive loop control.
    */
   readonly traceId?: string;
@@ -104,8 +104,8 @@ export interface LoopTurnInterruptedEvent {
   readonly activeStep?: number | undefined;
   readonly message?: string | undefined;
   /**
-   * Telemetry-facing interrupt cause. `aborted` is split into a deliberate user
-   * cancel vs. any other abort; `max_steps`/`error` mirror `reason`.
+   * Diagnostic-facing interrupt cause. `aborted` is split into a deliberate
+   * user cancel vs. any other abort; `max_steps`/`error` mirror `reason`.
    */
   readonly interruptReason?: LoopInterruptCause | undefined;
   readonly traceId?: string;

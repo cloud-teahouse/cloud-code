@@ -1,0 +1,38 @@
+{
+  "name": "@cloud-code/server",
+  "version": "0.2.1",
+  "private": true,
+  "description": "JSON-RPC 2.0 protocol server for the Cloud Code CLI agent core (Phase 4: stdio + WebSocket transports).",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
+    "directory": "packages/server"
+  },
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@cloud-code/agent-core": "workspace:^",
+    "@cloud-code/protocol": "workspace:^",
+    "ws": "8.20.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

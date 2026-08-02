@@ -15,13 +15,18 @@
 
 import type { Readable } from 'node:stream';
 
-import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@cloud-code/kaos';
 
 import { log } from '../logging/logger';
 
 const GIT_TIMEOUT_MS = 5_000;
 const MAX_DIRTY_FILES = 20;
 const MAX_COMMIT_LINE_LENGTH = 200;
+// Soft cap for the main-loop `git status --short` summary, after Claude
+// Code's MAX_STATUS_CHARS. Long output is truncated with a pointer to run
+// `git status` for the full picture.
+const MAX_STATUS_CHARS = 2_000;
+const MAIN_LOOP_RECENT_COMMITS = 5;
 
 // Well-known public hosts whose remote URLs are safe to surface. Self-hosted
 // or unrecognized hosts are excluded to avoid leaking internal infrastructure.
@@ -134,6 +139,129 @@ export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string
   }
 
   return `<git-context>\n${sections.join('\n')}\n</git-context>`;
+}
+
+/**
+ * Git status snapshot for the main loop's system prompt.
+ *
+ * Mirrors Claude Code's `getGitStatus`: current branch, main branch (for
+ * PRs), a truncated `git status --short` summary, and the last few commits.
+ * The text itself tells the model it is a point-in-time snapshot that will
+ * not update during the conversation.
+ *
+ * Returns an empty string when `cwd` is not inside a git repository — the
+ * caller then omits the whole prompt section.
+ */
+export async function collectGitStatusSnapshot(kaos: Kaos, cwd: string): Promise<string> {
+  const revParseArgs = ['rev-parse', '--is-inside-work-tree'] as const;
+  const revParse = await runGit(kaos, cwd, revParseArgs);
+  if (!revParse.ok) {
+    if (revParse.kind !== 'command-failed' || !isNotARepo(revParse.stderr)) {
+      logGitFailure(cwd, revParseArgs, revParse);
+    }
+    return '';
+  }
+
+  // Every probe is optional and runs in parallel; the main-branch candidates
+  // are resolved by precedence below (origin/HEAD symref, then local
+  // main/master, then a plain 'main' default).
+  const commandArgs = [
+    ['symbolic-ref', '--short', 'HEAD'],
+    ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+    ['rev-parse', '--verify', 'refs/heads/main'],
+    ['rev-parse', '--verify', 'refs/heads/master'],
+    ['--no-optional-locks', 'status', '--short'],
+    ['--no-optional-locks', 'log', '--oneline', '-n', String(MAIN_LOOP_RECENT_COMMITS)],
+  ] as const;
+  const [branch, originHead, localMain, localMaster, status, gitLog] = (await Promise.all(
+    commandArgs.map(async (args) => ({ args, result: await runGit(kaos, cwd, args) })),
+  )) as unknown as [
+    TaggedGitResult,
+    TaggedGitResult,
+    TaggedGitResult,
+    TaggedGitResult,
+    TaggedGitResult,
+    TaggedGitResult,
+  ];
+
+  for (const { args, result } of [branch, originHead, localMain, localMaster, status, gitLog]) {
+    if (!result.ok) logGitFailure(cwd, args, result);
+  }
+
+  const branchName = stdoutOf(branch.result);
+  const mainBranch = resolveMainBranch(
+    stdoutOf(originHead.result),
+    localMain.result.ok,
+    localMaster.result.ok,
+  );
+
+  const statusRaw = stdoutOf(status.result);
+  const truncatedStatus =
+    statusRaw.length > MAX_STATUS_CHARS
+      ? statusRaw.slice(0, MAX_STATUS_CHARS) +
+        '\n... (truncated because it exceeds 2k characters. If you need more information, run "git status" using BashTool)'
+      : statusRaw;
+
+  const sections: string[] = [
+    'This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.',
+    ...(branchName ? [`Current branch: ${branchName}`] : []),
+    `Main branch (you will usually use this for PRs): ${mainBranch}`,
+    `Status:\n${truncatedStatus || '(clean)'}`,
+  ];
+
+  const logRaw = stdoutOf(gitLog.result);
+  if (logRaw) {
+    const logLines = logRaw.split('\n').filter((line) => line.trim().length > 0);
+    if (logLines.length > 0) {
+      const body = logLines.map((line) => line.slice(0, MAX_COMMIT_LINE_LENGTH)).join('\n');
+      sections.push(`Recent commits:\n${body}`);
+    }
+  }
+
+  return sections.join('\n\n');
+}
+
+/**
+ * Pick the repository's main branch: the `origin/HEAD` symref when the clone
+ * has one, otherwise a local `main` or `master`, otherwise the 'main'
+ * default (same fallback as Claude Code).
+ */
+function resolveMainBranch(originHead: string, hasLocalMain: boolean, hasLocalMaster: boolean): string {
+  const symref = originHead.replace(/^origin\//, '');
+  if (symref.length > 0) return symref;
+  if (hasLocalMain) return 'main';
+  if (hasLocalMaster) return 'master';
+  return 'main';
+}
+
+// Session-level memo for the main-loop snapshot, keyed by normalized cwd.
+// The system prompt is a stable prefix for prompt caching, so the snapshot
+// must be computed at most once per session instead of re-running git on
+// every prompt build (bootstrap, post-compaction refresh, resume of an
+// incomplete wire). Resumed sessions replay their persisted system prompt
+// verbatim and never re-enter collection; the first build after a resume in
+// a fresh process computes a new snapshot, which then stands as that
+// session's "start".
+const gitStatusSnapshotCache = new Map<string, Promise<string>>();
+
+/**
+ * Session-memoized variant of {@link collectGitStatusSnapshot}. The promise
+ * (not just the resolved value) is cached so concurrent first callers share
+ * one computation. Keyed by cwd alone — all callers in a session share one
+ * Kaos backend, and `runGit` addresses the repo via `git -C <cwd>`.
+ */
+export function getGitStatusSnapshot(kaos: Kaos, cwd: string): Promise<string> {
+  const key = kaos.normpath(cwd);
+  const cached = gitStatusSnapshotCache.get(key);
+  if (cached !== undefined) return cached;
+  const computed = collectGitStatusSnapshot(kaos, cwd);
+  gitStatusSnapshotCache.set(key, computed);
+  return computed;
+}
+
+/** @internal for tests — empty the session snapshot cache. */
+export function _clearGitStatusSnapshotCacheForTests(): void {
+  gitStatusSnapshotCache.clear();
 }
 
 /**

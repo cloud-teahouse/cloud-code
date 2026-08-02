@@ -118,7 +118,6 @@ describe('e2e: streaming fidelity', () => {
         filters: { category: 'test', status: 'active' },
       });
 
-      // Split into small chunks
       const chunkSize = 8;
       const parts: StreamedMessagePart[] = [
         {
@@ -144,7 +143,6 @@ describe('e2e: streaming fidelity', () => {
       expect(result.message.toolCalls).toHaveLength(1);
       expect(result.message.toolCalls[0]!.arguments).toBe(fullArgs);
 
-      // Verify JSON is parseable and complete
       const parsed = JSON.parse(result.message.toolCalls[0]!.arguments!) as Record<
         string,
         unknown
@@ -315,7 +313,6 @@ describe('e2e: streaming fidelity', () => {
 
       await step(provider, '', toolset, [], {
         onMessagePart(part: StreamedMessagePart): void {
-          // Track when onMessagePart sees the ToolCall
           if (part.type === 'function') {
             const tc = part;
             toolCallSnapshots.push(`onMessagePart:args=${tc.arguments}`);

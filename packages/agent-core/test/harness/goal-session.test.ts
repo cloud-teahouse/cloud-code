@@ -7,13 +7,13 @@ import {
   APIStatusError,
   type GenerateResult,
   type ProviderConfig,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { AgentOptions } from '../../src/agent';
-import type { KimiConfig } from '../../src/config';
-import { ErrorCodes, KimiError } from '../../src/errors';
+import type { CloudCodeConfig } from '../../src/config';
+import { ErrorCodes, CloudCodeError } from '../../src/errors';
 import type { HookDef } from '../../src/session/hooks';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
@@ -85,7 +85,7 @@ async function setupSession(
   tools: readonly string[],
   generate?: NonNullable<AgentOptions['generate']>,
   hooks?: readonly HookDef[],
-  config?: KimiConfig,
+  config?: CloudCodeConfig,
 ) {
   const scripted = createScriptedGenerate();
   const session = track(
@@ -223,6 +223,33 @@ describe('goal session end-to-end', () => {
     // One turn, then the turn budget blocks the goal (resumable) — no second turn.
     expect((await api.getGoal({ agentId: 'main' })).goal?.status).toBe('blocked');
     expect(scripted.calls.length).toBe(1);
+  });
+
+  it('blocks at the tiered default turn budget when no explicit budget is set', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal']);
+    const api = new SessionAPIImpl(session);
+    // P3: the short objective heuristically tiers `small`, whose default caps
+    // (10 turns / 300k tokens) are filled at creation — no SetGoalBudget here.
+    await api.createGoal({ agentId: 'main', objective: 'work' });
+    expect((await api.getGoal({ agentId: 'main' })).goal?.budget.turnBudget).toBe(10);
+
+    // The model never decides, so the driver keeps running continuation turns
+    // until the tiered 10-turn default blocks the goal at the drive boundary.
+    for (let i = 1; i <= 10; i += 1) {
+      scripted.mockNextResponse({ type: 'text', text: `step ${String(i)}` });
+    }
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+    await session.flushMetadata();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    expect(scripted.calls.length).toBe(10);
+    expect(goal?.status).toBe('blocked');
+    expect(goal?.turnsUsed).toBe(10);
+    expect(goal?.terminalReason).toBe('A configured budget was reached');
   });
 
   it('continues goal mode after the model resumes a paused goal', async () => {
@@ -685,7 +712,7 @@ describe('goal session end-to-end', () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];
     const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], async () => {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+      throw new CloudCodeError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     });
     const api = new SessionAPIImpl(session);
     await api.createGoal({ agentId: 'main', objective: 'work' });
@@ -1077,5 +1104,227 @@ describe('goal session end-to-end', () => {
     await api.createGoal({ agentId: 'main', objective: 'again' });
     await api.cancelGoal({ agentId: 'main' });
     expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+  });
+
+  it('rejects completion right after an edit until fresh verification is cited', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, [
+      'Write',
+      'Bash',
+      'GetGoal',
+      'UpdateGoal',
+    ]);
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ agentId: 'main', objective: 'Ship the change' });
+
+    // The model edits a file, then immediately tries to complete with no
+    // evidence — the gate rejects it (a mutation was observed). It re-verifies
+    // in the foreground and completes citing the new receipt.
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'w1',
+      name: 'Write',
+      arguments: JSON.stringify({ path: join(sessionDir, 'note.txt'), content: 'v1' }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c1',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'b1',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: 'echo verified' }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c2',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete', evidence: ['b1'] }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Verified and completed.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'Ship the change' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const rejected = events.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'c1',
+    );
+    expect(rejected?.['isError']).toBe(true);
+    expect(String(rejected?.['output'])).toContain('completion gate');
+    expect(String(rejected?.['output'])).toContain('still active');
+
+    // The rejection reached the model in-context before its recovery step.
+    const recoveryHistory = JSON.stringify(scripted.calls[2]?.history ?? []);
+    expect(recoveryHistory).toContain('completion gate');
+
+    const completed = events.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'c2',
+    );
+    expect(completed?.['isError']).toBeFalsy();
+    expect(String(completed?.['output'])).toContain('Goal completed successfully.');
+    expect(scripted.calls).toHaveLength(5);
+    expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+  });
+
+  it('rejects completion citing evidence past the turn lease', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(
+      sessionDir,
+      events,
+      ['Bash', 'GetGoal', 'UpdateGoal'],
+      undefined,
+      undefined,
+      { providers: {}, goal: { evidenceLeaseTurns: 0 } },
+    );
+    const api = new SessionAPIImpl(session);
+    // The RPC payload has no completionCriterion field; create through the
+    // agent's goal store directly (same path SetGoalBudget tests use).
+    await agent.goal.createGoal({ objective: 'work', completionCriterion: 'run the check' });
+
+    // Goal turn 1 verifies but does not complete, so the receipt is one goal
+    // turn old when the continuation turn cites it — past the zero-turn lease.
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'b1',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: 'echo check-1' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'More work remains.' });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c1',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete', evidence: ['b1'] }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'b2',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: 'echo check-2' }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c2',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete', evidence: ['b2'] }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Done.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const rejected = events.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'c1',
+    );
+    expect(rejected?.['isError']).toBe(true);
+    expect(String(rejected?.['output'])).toContain('evidence lease');
+    const completed = events.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'c2',
+    );
+    expect(String(completed?.['output'])).toContain('Goal completed successfully.');
+    expect(scripted.calls).toHaveLength(6);
+    expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+  });
+
+  it('requires fresh verification after a restart: pre-restart receipts are forgotten', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, [
+      'Bash',
+      'GetGoal',
+      'UpdateGoal',
+    ]);
+    // The RPC payload has no completionCriterion field; create through the
+    // agent's goal store directly (same path SetGoalBudget tests use).
+    await agent.goal.createGoal({ objective: 'work', completionCriterion: 'run the check' });
+
+    // Before the restart the goal runs a verification (receipt `old1`) and the
+    // model then blocks the goal so the driver stops instead of completing.
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'old1',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: 'echo old-check' }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'block1',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'blocked' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Blocked for now.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+    await session.flushMetadata();
+
+    // Restart: the goal survives as `blocked`, but the evidence ledger was
+    // memory-only and starts empty.
+    const resumedEvents: Array<Record<string, unknown>> = [];
+    const resumed = track(new Session({
+      id: 'goal-session',
+      kaos: testKaos.withCwd(sessionDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(resumedEvents),
+      skills: { explicitDirs: [join(sessionDir, 'missing')] },
+      providerManager: testProviderManager(),
+    }));
+    await resumed.resume();
+    const resumedAgent = resumed.getReadyAgent('main');
+    if (resumedAgent === undefined) throw new Error('main agent should be ready after resume');
+    const resumedScripted = createScriptedGenerate();
+    (resumedAgent as unknown as { rawGenerate: typeof resumedScripted.generate }).rawGenerate =
+      resumedScripted.generate;
+    resumedAgent.useProfile(goalProfile(['Bash', 'GetGoal', 'UpdateGoal']));
+    resumedAgent.config.update({ modelAlias: 'mock-model', thinkingEffort: 'off' });
+    resumedAgent.permission.setMode('yolo');
+
+    resumedScripted.mockNextResponse({
+      type: 'function',
+      id: 'resume1',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'active' }),
+    });
+    resumedScripted.mockNextResponse({
+      type: 'function',
+      id: 'c1',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete', evidence: ['old1'] }),
+    });
+    resumedScripted.mockNextResponse({
+      type: 'function',
+      id: 'new1',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: 'echo fresh-check' }),
+    });
+    resumedScripted.mockNextResponse({
+      type: 'function',
+      id: 'c2',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete', evidence: ['new1'] }),
+    });
+    resumedScripted.mockNextResponse({ type: 'text', text: 'Re-verified and done.' });
+
+    resumedAgent.turn.prompt([{ type: 'text', text: 'continue' }]);
+    await resumedAgent.turn.waitForCurrentTurn();
+
+    // Citing the pre-restart receipt fails as unknown: the ledger did not
+    // survive the restart, so completion requires fresh verification.
+    const rejected = resumedEvents.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'c1',
+    );
+    expect(rejected?.['isError']).toBe(true);
+    expect(String(rejected?.['output'])).toContain('Receipt "old1" is not in the goal evidence ledger');
+    const completed = resumedEvents.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'c2',
+    );
+    expect(String(completed?.['output'])).toContain('Goal completed successfully.');
+    expect(resumedScripted.calls).toHaveLength(5);
+    expect((await new SessionAPIImpl(resumed).getGoal({ agentId: 'main' })).goal).toBeNull();
   });
 });

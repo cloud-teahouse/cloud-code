@@ -1,5 +1,5 @@
 import type { UsageStatus } from '#/rpc';
-import { addUsage, type TokenUsage } from '@moonshot-ai/kosong';
+import { addUsage, type RateLimitSnapshot, type TokenUsage } from '@cloud-code/kosong';
 
 import type { Agent } from '..';
 
@@ -12,6 +12,15 @@ function copyUsage(usage: TokenUsage): TokenUsage {
 export class UsageRecorder {
   private readonly byModel: Record<string, TokenUsage> = {};
   private currentTurn: TokenUsage | undefined;
+  /**
+   * Latest rate-limit snapshot captured from provider response headers
+   * (ChatGPT Codex `x-codex-*` family, official chatgpt.com backend only).
+   * Persisted latest-wins as `usage.rate_limit` wire records and restored
+   * on resume, so `/usage` shows the last known snapshot immediately (the
+   * panel marks it stale as it ages) instead of staying empty until the
+   * first post-resume response.
+   */
+  private latestRateLimit: RateLimitSnapshot | undefined;
 
   constructor(protected readonly agent?: Agent) {}
 
@@ -30,6 +39,9 @@ export class UsageRecorder {
       usage,
       usageScope: scope,
     });
+    // A settled request's usage is where prefix-drift attribution meets the
+    // real cache counters (F7 diagnostics; self-gated on the debug switch).
+    this.agent?.llmRequestRecorder.reportUsageSettled(usage);
     const current = this.byModel[model];
     this.byModel[model] = current === undefined ? copyUsage(usage) : addUsage(current, usage);
 
@@ -40,6 +52,14 @@ export class UsageRecorder {
     this.agent?.emitStatusUpdated();
   }
 
+  recordRateLimit(snapshot: RateLimitSnapshot): void {
+    this.latestRateLimit = snapshot;
+    // Persist latest-wins so a resumed session restores the last known quota
+    // state. Replay routes through this same method; logRecord is a no-op
+    // while restoring, so restore never re-writes the record.
+    this.agent?.records.logRecord({ type: 'usage.rate_limit', snapshot });
+  }
+
   data(): UsageStatus {
     const byModel = this.byModelSnapshot();
     const hasByModel = Object.keys(byModel).length > 0;
@@ -48,6 +68,7 @@ export class UsageRecorder {
       byModel: hasByModel ? byModel : undefined,
       total: hasByModel ? totalUsage(byModel) : undefined,
       currentTurn: currentTurn === undefined ? undefined : copyUsage(currentTurn),
+      rateLimit: this.latestRateLimit,
     };
   }
 
@@ -56,7 +77,8 @@ export class UsageRecorder {
     if (
       status.byModel === undefined &&
       status.total === undefined &&
-      status.currentTurn === undefined
+      status.currentTurn === undefined &&
+      status.rateLimit === undefined
     ) {
       return undefined;
     }

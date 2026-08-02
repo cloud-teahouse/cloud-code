@@ -24,7 +24,7 @@ Severity grades, merge/block verdicts, and "is splitting worth it" calls live do
 
 ## When to use
 
-Apply this lens only when the user asks for it explicitly (for example "用单一抽象层次审视一下", "check whether this function does too much", "errors should be handled above/below, right?"). Leave general reviews and refactors to other lenses unless the user names this one.
+Apply this lens only when the user asks for it explicitly (for example "review this through the single-level-of-abstraction lens", "check whether this function does too much", "errors should be handled above/below, right?"). Leave general reviews and refactors to other lenses unless the user names this one.
 
 ## The principle
 
@@ -32,16 +32,16 @@ One function, one level of abstraction, one responsibility. Three mutually reinf
 
 1. **Single Level of Abstraction (SLAP).** Every statement inside a function sits at the same conceptual level. High-level intent ("reserve inventory, charge payment, create the order") must not be interleaved with low-level mechanics (building headers, escaping strings, opening sockets, parsing bytes). If some lines read as "what" and others as "how", they belong in different functions.
 2. **Error handling is its own concern (Clean Code).** A function either does the work or handles the error — not both. Business logic describes the happy path and *signals* failure (throw or return a result); the catch, mapping, logging, and recovery live in a dedicated handler, usually one layer up. Prefer exceptions / result types over threaded check-and-return ladders that interrupt the main flow.
-3. **Separation of concerns by layer.** Each layer owns exactly one kind of knowledge: low-level code knows formats and protocols; mid-level code knows business rules; edge code knows the outside world (HTTP / CLI / UI). A function that knows two of these at once is leaking a layer.
+3. **Separation of concerns by layer.** Each layer owns exactly one kind of knowledge: low-level code knows formats and protocols; mid-level code knows business rules; edge code knows the outside world (RPC / CLI / UI). A function that knows two of these at once is leaking a layer.
 
 The combined test: **could you explain this function to someone without using the word "and"?** If the explanation is "it reserves stock AND validates the email format AND maps the error to a status code AND logs to metrics", it is doing more than its layer's job.
 
 Concerns that usually do **not** belong in a business function:
 
 - Format / range / null validation that a lower value or parser could guarantee once.
-- Mapping domain failures to an external protocol (status code, exit code, UI message) — that is the edge layer's job.
+- Mapping domain failures to an external protocol (error payload, exit code, UI message) — that is the edge layer's job.
 - Catch-and-swallow, retry loops, backoff, timeout, circuit breaking around a single call — infrastructure, push down.
-- Cross-cutting telemetry / log / metric noise woven through every step — extract or push to a wrapper.
+- Cross-cutting log / metric noise woven through every step — extract or push to a wrapper.
 - Check-and-return ladders that occupy more space than the business core — replace with signal + a handler above.
 
 ## Methodology — fixing a function that violates it
@@ -52,7 +52,7 @@ Work top-down. Never start by shuffling lines.
 2. **Classify every statement.** Tag each line or block as: **core** (this layer's business), **down** (a detail a lower abstraction should own), **up** (a concern an upper / edge layer should own), or **cross-cutting** (log / metric / retry). Unlabeled lines are where the mess hides — do not "just leave them".
 3. **Decide down vs. up for each foreign item.**
    - Push **down** when it is a guarantee a lower building block can provide: a value that can only be constructed valid, a parser that returns a typed result, an infra helper that already retries. The business function then assumes validity and stays clean.
-   - Push **up** when it is about translating or reacting to failure for the outside world: status codes, messages, exit codes, aggregation of many errors. The edge layer catches once and maps; business code just signals.
+   - Push **up** when it is about translating or reacting to failure for the outside world: error payloads, messages, exit codes, aggregation of many errors. The edge layer catches once and maps; business code just signals.
    - Rule of thumb: if removing it would change what the business rule says, it is core and stays; if removing it only changes how a failure is reported or a detail is computed, it moves.
 4. **Extract, do not interleave.** Pull each foreign concern into its own named function or layer. Keep the original function as a readable sequence of same-level calls. For error handling specifically, separate the work body from the recovery body into distinct functions so neither clutters the other.
 5. **Signal, do not handle, in the middle.** Mid-layer business functions throw / return and let the right layer react. Do not catch-and-log-and-continue in business code unless continuing is itself the business rule.
@@ -67,7 +67,7 @@ Read each changed or touched function and, for each check, record only: **the hi
 1. **Altitude check.** Are all lines at the same level of abstraction? Record each place where a "what" line is immediately followed by a "how" block (or vice versa) inside the same function, with `file:line`.
 2. **Happy-path check.** Can you read the business intent top to bottom without stepping through error branches? Record whether error handling sits inline between business steps (yes/no + `file:line`), supported by raw counts from "Quantify" (e.g. number of `catch` clauses, `continue` statements).
 3. **Ownership check.** For each validation, catch, mapping, log, retry: is this layer the rightful owner, or is it borrowed from above / below? Record each borrowed item with `file:line` and its destination (down / up), using the rules from the methodology.
-4. **Layer-leak check.** Does a business function mention an external protocol (status code, exit code, UI text, wire field)? Does an edge function contain a business rule? Record each leak candidate with `file:line` and whether it names an *external* protocol or an *internal* domain shape.
+4. **Layer-leak check.** Does a business function mention an external protocol (error-payload shape, exit code, UI text, wire field)? Does an edge function contain a business rule? Record each leak candidate with `file:line` and whether it names an *external* protocol or an *internal* domain shape.
 5. **Explanation test.** Describe the function in one sentence with no "and". Record whether "and" was needed; if so, list the proposed split as candidate moves (down / up).
 
 ### Quantify — report only raw factual counts

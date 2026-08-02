@@ -29,7 +29,6 @@ describe('ScriptedEchoChatProvider', () => {
 
     const provider = new ScriptedEchoChatProvider([dsl, secondDsl]);
 
-    // First call
     const parts: StreamedMessagePart[] = [];
     const stream = await provider.generate('', [], []);
     for await (const part of stream) {

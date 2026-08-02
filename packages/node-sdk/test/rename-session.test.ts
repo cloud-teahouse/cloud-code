@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, KimiError, type Event } from '#/index';
+import { createCloudCodeHarness, CloudCodeError, type Event } from '#/index';
 
 import { SessionStore } from '../../agent-core/src/session/store';
 import { TEST_IDENTITY } from './test-identity';
@@ -88,9 +88,9 @@ describe('SessionStore.rename', () => {
     const summary = await store.create({ id: 'ses_no_state_rename', workDir });
 
     await expect(store.rename(summary.id, 'Missing State')).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'session.state_not_found',
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
     expect(existsSync(join(summary.sessionDir, 'state.json'))).toBe(false);
   });
 
@@ -102,9 +102,9 @@ describe('SessionStore.rename', () => {
     await writeFile(join(summary.sessionDir, 'state.json'), '[]', 'utf-8');
 
     await expect(store.rename(summary.id, 'Bad State')).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'session.state_invalid',
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
     expect(await readFile(join(summary.sessionDir, 'state.json'), 'utf-8')).toBe('[]');
   });
 
@@ -113,19 +113,19 @@ describe('SessionStore.rename', () => {
     const store = new SessionStore(homeDir);
 
     await expect(store.rename('ses_missing', 'Missing Title')).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'session.not_found',
       details: { sessionId: 'ses_missing' },
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
     expect(existsSync(join(homeDir, 'sessions', 'ses_missing', 'state.json'))).toBe(false);
   });
 });
 
-describe('KimiHarness.renameSession', () => {
+describe('CloudCodeHarness.renameSession', () => {
   it('persists titles through the public Harness API and emits an active session event', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -172,7 +172,7 @@ describe('KimiHarness.renameSession', () => {
   it('renames persisted sessions even when they are not active in memory', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -206,7 +206,7 @@ describe('KimiHarness.renameSession', () => {
 
   it('rejects missing session ids', async () => {
     const homeDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -216,11 +216,11 @@ describe('KimiHarness.renameSession', () => {
         id: 'ses_missing',
         title: 'Missing Title',
       });
-      await expect(missingRename).rejects.toBeInstanceOf(KimiError);
+      await expect(missingRename).rejects.toBeInstanceOf(CloudCodeError);
       await expect(missingRename).rejects.toMatchObject({
         code: 'session.not_found',
         details: { sessionId: 'ses_missing' },
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }

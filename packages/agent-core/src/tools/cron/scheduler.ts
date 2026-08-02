@@ -8,7 +8,7 @@
  * scheduler stays oblivious so its tick-loop tests can run with a
  * pure in-memory `source()`.
  *
- * Design notes worth keeping near the code:
+ * Design notes:
  *
  *   - **No direct wall-clock reads.** Every wall-clock read goes
  *     through `clocks.wallNow()`. The companion `no-date-now.test.ts`
@@ -90,8 +90,8 @@ export interface CronSchedulerOptions {
    * Optional. Called after a recurring task fires successfully, with
    * the wall-clock timestamp of the last ideal occurrence whose
    * jittered delivery has just been delivered. The manager wires this
-   * to `store.markFired(id, ts)` + a per-id JSON write so resuming the
-   * session does not replay the fire.
+   * to `store.markFired(id, ts)` + a per-id JSON write so a
+   * `cloud-code resume` does not replay the fire.
    *
    * Fire-and-forget: the scheduler does not wait for persistence to
    * settle. One-shot tasks do not invoke this callback (the
@@ -105,8 +105,7 @@ export interface CronSchedulerOptions {
    *   - 0 or null → no automatic polling. Caller drives tick()
    *     manually.
    *
-   * Used by P1.8 to wire `KIMI_CRON_MANUAL_TICK=1` to disable the
-   * timer.
+   * Used to wire `KIMI_CRON_MANUAL_TICK=1` to disable the timer.
    */
   readonly pollIntervalMs?: number | null;
 }
@@ -172,7 +171,7 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
   const parsedCache = new Map<string, ParsedCronExpression>();
 
   // Per-task wall-clock baseline for "where did we last look from".
-  // Now persisted across session resumes via `task.lastFiredAt`: when
+  // Now persisted across `cloud-code resume` via `task.lastFiredAt`: when
   // the scheduler first sees a task whose `lastFiredAt` is set and
   // not in the future, that timestamp seeds this map so resume does
   // not coalesce-replay already-delivered recurring fires. A bogus
@@ -448,8 +447,8 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
     lastSeenAt.clear();
     seededFromDisk.clear();
     parsedCache.clear();
-    // Async signature for forward compatibility with Phase 2 (file
-    // I/O cleanup, lock release). Session-only resolves immediately.
+    // Async signature so a future implementation can do file-I/O cleanup
+    // or lock release here; the in-memory scheduler resolves immediately.
   }
 
   function nextFireFor(task: CronTask): number | null {

@@ -377,7 +377,7 @@ export class Input implements Component, Focusable {
 
 	render(width: number): string[] {
 		// Calculate visible window
-		const prompt = "> ";
+		const prompt = "❯ ";
 		const availableWidth = width - prompt.length;
 
 		if (availableWidth <= 0) {

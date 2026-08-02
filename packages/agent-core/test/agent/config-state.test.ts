@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { emptyUsage } from '@moonshot-ai/kosong';
+import { emptyUsage } from '@cloud-code/kosong';
 
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import { ProviderManager } from '../../src/session/provider-manager';
@@ -7,7 +7,7 @@ import {
   applyEnvModelConfig,
   ENV_MODEL_ALIAS_KEY,
   getDefaultConfig,
-  type KimiConfig,
+  type CloudCodeConfig,
 } from '../../src/config';
 import { testAgent } from './harness';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
@@ -152,9 +152,53 @@ describe('ConfigState model capabilities', () => {
     expect(requestMaxTokens).toBe(131072);
   });
 
+  it('passes a custom-named effort straight to an OpenAI-compatible wire', async () => {
+    let captured: Record<string, unknown> | undefined;
+    const config: CloudCodeConfig = {
+      providers: {
+        gateway: { type: 'openai', apiKey: 'test-key', baseUrl: 'https://openai-proxy.example.test/v1' },
+      },
+      models: {
+        'gateway/gpt-x': {
+          provider: 'gateway',
+          model: 'gpt-x',
+          maxContextSize: 200_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['deep', 'turbo'],
+        },
+      },
+    };
+    const ctx = testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+      generate: async (provider) => {
+        captured = { thinkingEffort: (provider as { thinkingEffort?: unknown }).thinkingEffort };
+        return {
+          id: 'r1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({ modelAlias: 'gateway/gpt-x', systemPrompt: 'system' });
+    ctx.agent.config.setThinkingEffort('deep');
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    // Custom names are outside the built-in effort enum but pass through
+    // unchanged on OpenAI-compatible wires (kosong ThinkingEffort is open).
+    expect(captured?.['thinkingEffort']).toBe('deep');
+  });
+
   it('warns and sends when an Anthropic effort is not listed by the model', async () => {
     let requests = 0;
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: {
         compatible: {
           type: 'kimi',
@@ -253,7 +297,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     // `agent.kimiConfig.models`, so the same config must back both the
     // ProviderManager (provider resolution) and the agent's kimiConfig (the
     // clamp's model lookup).
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
       models: {
         'kimi-code/deep': {
@@ -361,7 +405,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   function kimiAgent() {
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
       models: {
         'kimi-code': {
@@ -381,7 +425,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   // The same config backs both the ProviderManager (provider resolution) and
   // the agent's kimiConfig (where ConfigState reads thinking.keep).
   function kimiAgentWithThinkingKeep(keep: string | undefined) {
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
       models: {
         'kimi-code': {
@@ -553,7 +597,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   it('applies the Kimi force through an Anthropic protocol override', () => {
     vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
     try {
-      const config: KimiConfig = {
+      const config: CloudCodeConfig = {
         providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
         models: {
           'kimi-code-anthropic': {
@@ -585,7 +629,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   it('does not carry the Kimi force into a non-Kimi model switch', () => {
     vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
     try {
-      const config: KimiConfig = {
+      const config: CloudCodeConfig = {
         providers: {
           kimi: { type: 'kimi', apiKey: 'test-key' },
           anthropic: { type: 'anthropic', apiKey: 'test-key' },
@@ -640,7 +684,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   function anthropicAgentWithThinkingKeep(keep: string | undefined) {
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: { anthropic: { type: 'anthropic', apiKey: 'test-key' } },
       models: {
         'claude-sonnet-4-6': {
@@ -696,7 +740,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
 describe('ConfigState.provider memo (reasoning dialect survives turns)', () => {
   function kimiAgentWithTwoModels() {
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
       models: {
         'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },

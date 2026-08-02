@@ -1,28 +1,19 @@
-<!--
-Thank you for your contribution to Kimi Code!
-Please open an issue before sending a feature PR — PRs without prior discussion may be closed without review.
+## Summary
 
-See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
--->
+<!-- What does this PR change and why? Keep it brief but specific. -->
 
-## Related Issue
+## Test evidence
 
-<!-- Link the issue this feature came from. If there is no issue, explain the problem in the next section instead. -->
+<!-- Check what applies and paste command output or link a CI run where useful. -->
 
-Resolve #(issue_number)
+- [ ] `pnpm build` passes
+- [ ] `pnpm test` passes (new/changed behavior is covered by tests)
+- [ ] `pnpm typecheck` passes
+- [ ] `pnpm lint` passes
+- [ ] User-visible strings go through i18n — added to both `en` and `zh-CN`
+      under `apps/cloud-code/src/tui/i18n/locales/`
+- [ ] TUI/visual changes update or add snapshot tests
 
-## Problem
+## Related issue
 
-<!-- What user need or limitation does this address? If the linked issue already covers this, write "See linked issue". -->
-
-## What changed
-
-<!-- What did you implement, and why does this approach fit Kimi Code? -->
-
-## Checklist
-
-- [ ] I have read the [CONTRIBUTING](https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md) document.
-- [ ] I have linked a related issue, or explained the problem above.
-- [ ] I have added tests that prove my feature works.
-- [ ] Ran `gen-changesets` skill, or this PR needs no changeset.
-- [ ] Ran `gen-docs` skill, or this PR needs no doc update.
+<!-- e.g. Closes #123. Remove this section if there is no related issue. -->

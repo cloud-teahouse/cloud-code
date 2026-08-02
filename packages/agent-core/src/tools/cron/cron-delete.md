@@ -13,6 +13,10 @@ Behaviour by task kind:
   it has not happened yet. One-shots that have already fired
   auto-delete themselves, so calling `CronDelete` on a fired one-shot
   returns "no cron job with id ...".
+- **Project-durable task** (`source: project` in `CronList`): removed
+  from the shared `.cloud-code/scheduled_tasks.json`, so the deletion
+  takes effect for every session in the project — including the session
+  that currently owns (and fires) the schedule.
 
 Not-found is reported as an error (not a silent no-op) so you can
 correct yourself — typically by calling `CronList` to see which ids

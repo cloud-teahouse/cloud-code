@@ -14,11 +14,11 @@ afterEach(() => {
 const SAMPLE_BODY: SubmitFeedbackBody = {
   session_id: 'sess-123',
   content: 'great tool',
-  version: 'kimi-code-0.1.1',
+  version: 'cloud-code-0.1.1',
   os: 'Darwin 25.3.0',
   model: 'kimi-code/kimi-for-coding',
   contact: 'test@example.com',
-  info: { tool: 'kimi-code-cli', env: 'test' },
+  info: { tool: 'cloud-code-cli', env: 'test' },
 };
 
 describe('kimiCodeFeedbackUrl', () => {
@@ -26,8 +26,8 @@ describe('kimiCodeFeedbackUrl', () => {
     expect(kimiCodeFeedbackUrl()).toBe('https://api.kimi.com/coding/v1/feedback');
   });
 
-  it('honours KIMI_CODE_BASE_URL and trims trailing slashes', () => {
-    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://example.test/v9///');
+  it('honours CLOUD_CODE_BASE_URL and trims trailing slashes', () => {
+    vi.stubEnv('CLOUD_CODE_BASE_URL', 'https://example.test/v9///');
     expect(kimiCodeFeedbackUrl()).toBe('https://example.test/v9/feedback');
   });
 });
@@ -82,7 +82,7 @@ describe('fetchSubmitFeedback', () => {
     });
   });
 
-  it('preserves the kimi-code- version prefix in the request body', async () => {
+  it('preserves the cloud-code- version prefix in the request body', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ feedback_id: 3 }), {
         status: 200,
@@ -95,7 +95,7 @@ describe('fetchSubmitFeedback', () => {
 
     const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
     const sent = JSON.parse(calls[0]?.[1]?.body as string) as Record<string, unknown>;
-    expect(sent['version']).toBe('kimi-code-0.1.1');
+    expect(sent['version']).toBe('cloud-code-0.1.1');
   });
 
   it('returns an error with status when the server responds 401', async () => {

@@ -1,5 +1,6 @@
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
+import type { ReasoningRoundTrip } from '#/providers/openai-common';
 import { OpenAILegacyChatProvider } from '#/providers/openai-legacy';
 import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
@@ -26,6 +27,7 @@ function createProvider(
   options?: Partial<{
     stream: boolean;
     reasoningKey: string;
+    reasoningRoundTrip: ReasoningRoundTrip;
     model: string;
     offEffort: string;
   }>,
@@ -35,6 +37,7 @@ function createProvider(
     apiKey: 'test-key',
     stream: options?.stream ?? false,
     reasoningKey: options?.reasoningKey,
+    reasoningRoundTrip: options?.reasoningRoundTrip,
     offEffort: options?.offEffort,
   });
 }
@@ -2162,5 +2165,132 @@ describe('OpenAILegacyChatProvider — non-indexed streaming tool_calls', () => 
     for await (const p of stream) parts.push(p as unknown as Record<string, unknown>);
 
     expect(parts).toEqual([]);
+  });
+
+  describe('reasoningRoundTrip policy', () => {
+    const THINK_ONLY_ASSISTANT: Message = {
+      role: 'assistant',
+      content: [
+        { type: 'think', think: 'inner monologue' },
+        { type: 'text', text: 'answer' },
+      ],
+      toolCalls: [],
+    };
+    const THINK_TOOLCALL_ASSISTANT: Message = {
+      role: 'assistant',
+      content: [
+        { type: 'think', think: 'deciding to call' },
+        { type: 'text', text: '' },
+      ],
+      toolCalls: [{ type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"x"}' }],
+    };
+    const PLAIN_TOOLCALL_ASSISTANT: Message = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '' }],
+      toolCalls: [{ type: 'function', id: 'call_2', name: 'lookup', arguments: '{"q":"y"}' }],
+    };
+
+    it("'always' (default) echoes reasoning on any turn with think parts", async () => {
+      const provider = createProvider({ reasoningRoundTrip: 'always' });
+      const body = await captureRequestBody(provider, '', [], [
+        { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+        THINK_ONLY_ASSISTANT,
+        { role: 'user', content: [{ type: 'text', text: 'next' }], toolCalls: [] },
+      ]);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[1]).toEqual({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_content: 'inner monologue',
+      });
+    });
+
+    it("'tool-calls-only' drops reasoning on non-tool-call turns", async () => {
+      const provider = createProvider({ reasoningRoundTrip: 'tool-calls-only' });
+      const body = await captureRequestBody(provider, '', [], [
+        { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+        THINK_ONLY_ASSISTANT,
+        { role: 'user', content: [{ type: 'text', text: 'next' }], toolCalls: [] },
+      ]);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[1]).toEqual({ role: 'assistant', content: 'answer' });
+      expect(messages[1]).not.toHaveProperty('reasoning_content');
+    });
+
+    it("'tool-calls-only' sends reasoning on tool-call turns when think parts exist", async () => {
+      const provider = createProvider({ reasoningRoundTrip: 'tool-calls-only' });
+      const body = await captureRequestBody(provider, '', [], [THINK_TOOLCALL_ASSISTANT]);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toMatchObject({
+        role: 'assistant',
+        reasoning_content: 'deciding to call',
+      });
+    });
+
+    it("'tool-calls-only' keeps the key present as an empty string when a tool-call turn has no reasoning", async () => {
+      // The DeepSeek rule: a missing `reasoning_content` key on an assistant
+      // tool_calls turn is a 400 — the key must be there even when empty, so
+      // every tool-call turn has a uniform shape.
+      const provider = createProvider({ reasoningRoundTrip: 'tool-calls-only' });
+      const body = await captureRequestBody(provider, '', [], [PLAIN_TOOLCALL_ASSISTANT]);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
+    });
+
+    it("'tool-calls-only' honors the detected/pinned reasoning key dialect", async () => {
+      const provider = createProvider({
+        reasoningKey: 'reasoning_details',
+        reasoningRoundTrip: 'tool-calls-only',
+      });
+      const body = await captureRequestBody(provider, '', [], [PLAIN_TOOLCALL_ASSISTANT]);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toHaveProperty('reasoning_details', '');
+      expect(messages[0]).not.toHaveProperty('reasoning_content');
+    });
+
+    it("'never' drops reasoning on every turn", async () => {
+      const provider = createProvider({ reasoningRoundTrip: 'never' });
+      const body = await captureRequestBody(provider, '', [], [
+        { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+        THINK_ONLY_ASSISTANT,
+        THINK_TOOLCALL_ASSISTANT,
+      ]);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[1]).toEqual({ role: 'assistant', content: 'answer' });
+      expect(messages[1]).not.toHaveProperty('reasoning_content');
+      expect(messages[2]).not.toHaveProperty('reasoning_content');
+      expect(messages[2]).toHaveProperty('tool_calls');
+    });
+
+    it("'never' skips the history-driven reasoning_effort auto-injection", async () => {
+      // With reasoning dropped from the wire, no endpoint can require
+      // reasoning_effort on account of reasoning_content — the auto-enable
+      // premise (#1616) never holds under 'never'.
+      const provider = createProvider({ reasoningRoundTrip: 'never' });
+      const body = await captureRequestBody(provider, '', [], [
+        { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+        THINK_ONLY_ASSISTANT,
+      ]);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+    });
+
+    it("'tool-calls-only' keeps the history-driven reasoning_effort auto-injection", async () => {
+      // reasoning_content still reaches the wire on tool-call turns, so the
+      // gateway validation the auto-injection guards against still applies.
+      const provider = createProvider({ reasoningRoundTrip: 'tool-calls-only' });
+      const body = await captureRequestBody(provider, '', [], [
+        { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+        THINK_ONLY_ASSISTANT,
+      ]);
+
+      expect(body['reasoning_effort']).toBe('medium');
+    });
   });
 });

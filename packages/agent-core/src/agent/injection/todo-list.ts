@@ -7,6 +7,7 @@ import {
 } from '#/tools/builtin/state/todo-list';
 
 import { DynamicInjector } from './injector';
+import { renderReminder } from './reminder';
 
 const TODO_LIST_REMINDER_VARIANT = 'todo_list_reminder';
 const TODO_LIST_REMINDER_TURNS_SINCE_WRITE = 10;
@@ -105,8 +106,18 @@ function isTodoListReminder(message: ContextMessage): boolean {
 }
 
 function renderTodoListReminder(todos: readonly TodoItem[]): string {
-  let message =
-    'The TodoList tool has not been updated recently. If you are working on tasks that benefit from progress tracking, consider using TodoList to update task status. Also consider clearing or rewriting the todo list if it has become stale and no longer matches the current work. Only use it if relevant. This is a gentle reminder; ignore it if not applicable. Make sure that you NEVER mention this reminder to the user.';
+  // Gentle tier: a low-stakes nudge, so it closes on the opt-out license and
+  // carries the anti-echo clause instead of any hard "never". The current
+  // list rides after the prose as a data attachment.
+  let message = renderReminder({
+    authority: 'gentle',
+    body:
+      'The TodoList tool has not been updated recently. If you are working on tasks that ' +
+      'benefit from progress tracking, consider using TodoList to update task status. Also ' +
+      'consider clearing or rewriting the todo list if it has become stale and no longer ' +
+      'matches the current work. Only use it if relevant.',
+    antiEcho: 'Do not mention this reminder to the user.',
+  });
 
   const items = renderTodoItems(todos);
   if (items.length > 0) {

@@ -36,7 +36,7 @@ import {
 } from '../../src/services';
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
-const sdkPackageName = ['@moonshot-ai', 'kimi-code-sdk'].join('/');
+const sdkPackageName = ['@cloud-code', 'sdk'].join('/');
 
 function readPackageFiles(): string {
   const files = [
@@ -151,7 +151,7 @@ function makeFakeQuestion(): QuestionRequest & { sessionId: string; agentId: str
   };
 }
 
-describe('@moonshot-ai/agent-core · services interfaces', () => {
+describe('@cloud-code/agent-core · services interfaces', () => {
   it('does not depend on the node SDK package', () => {
     expect(readPackageFiles()).not.toContain(sdkPackageName);
   });

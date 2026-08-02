@@ -8,9 +8,10 @@
  * while dispatching terminal events in provider order.
  */
 
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 import { describe, expect, it } from 'vitest';
 
+import { ToolCallDeduplicator } from '../../src/agent/turn/tool-dedup';
 import { ToolAccesses } from '../../src/loop';
 import type { Logger } from '../../src/logging';
 import type { ExecutableTool, ExecutableToolResult, LoopHooks, ToolCall, ToolExecution } from '../../src/loop';
@@ -147,6 +148,127 @@ describe('runTurn — tool-call behaviour', () => {
       expect(entry.result.output).toBe(`payload-${String(i)}`);
       expect(entry.result.isError).toBeUndefined();
       expect('note' in entry.result).toBe(false);
+    }
+  });
+
+  it('preserves a tool result display ref through normalization into the recorded event', async () => {
+    const blocks = new ContentBlocksTool({
+      output: 'payload',
+      display: { key: 'toolResult.cron.deleted', params: { id: '0123abcd' } },
+    });
+    const { context } = await runTurn({
+      tools: [blocks],
+      responses: [
+        makeToolUseResponse([makeToolCall('blocks', {}, 'tc-display')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const result = context.toolResults()[0]?.result;
+    expect(result?.output).toBe('payload');
+    // display is part of the persisted result contract (like note): it rides
+    // the record so resume/replay renders the same localized text.
+    expect(result?.display).toEqual({
+      key: 'toolResult.cron.deleted',
+      params: { id: '0123abcd' },
+    });
+  });
+
+  it('enforces the display contract ({key, params?}) at the normalization boundary', async () => {
+    // Same rationale as the note contract above: a malformed display ref
+    // (non-string key, empty key, non-scalar param, params of the wrong
+    // shape) is discarded rather than reaching the record.
+    const malformed = [
+      null,
+      'toolResult.cron.deleted',
+      { key: 42 },
+      { key: '' },
+      { key: 'k', params: 'nope' },
+      { key: 'k', params: { id: { nested: true } } },
+      { key: 'k', params: { id: undefined } },
+    ];
+    const tools = malformed.map(
+      (display, i) =>
+        new ContentBlocksTool({ output: `payload-${String(i)}`, display } as never),
+    );
+    for (const [i, tool] of tools.entries()) {
+      Object.defineProperty(tool, 'name', { value: `blocks${String(i)}` });
+    }
+
+    const { context } = await runTurn({
+      tools,
+      responses: [
+        makeToolUseResponse(
+          tools.map((tool, i) => makeToolCall(tool.name, {}, `tc-bad-${String(i)}`)),
+        ),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const results = context.toolResults();
+    expect(results).toHaveLength(malformed.length);
+    for (const [i, entry] of results.entries()) {
+      expect(entry.result.output).toBe(`payload-${String(i)}`);
+      expect(entry.result.isError).toBeUndefined();
+      expect('display' in entry.result).toBe(false);
+    }
+  });
+
+  it('preserves a tool result structured payload through normalization into the recorded event', async () => {
+    const blocks = new ContentBlocksTool({
+      output: 'payload',
+      structured: { outcome: 'approved', path: '/tmp/plan.md' },
+    });
+    const { context } = await runTurn({
+      tools: [blocks],
+      responses: [
+        makeToolUseResponse([makeToolCall('blocks', {}, 'tc-structured')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const result = context.toolResults()[0]?.result;
+    expect(result?.output).toBe('payload');
+    // structured is part of the persisted result contract (like display): it
+    // rides the record so replay/renderers read fields instead of parsing.
+    expect(result?.structured).toEqual({ outcome: 'approved', path: '/tmp/plan.md' });
+  });
+
+  it('enforces the structured contract (plain JSON object) at the normalization boundary', async () => {
+    // Arrays, non-objects, and non-JSON-serializable payloads are discarded
+    // rather than breaking the record downstream.
+    const cyclic: Record<string, unknown> = {};
+    cyclic['self'] = cyclic;
+    const malformed: unknown[] = [
+      null,
+      'approved',
+      ['approved'],
+      cyclic,
+      { fn: () => 1 },
+    ];
+    const tools = malformed.map(
+      (structured, i) =>
+        new ContentBlocksTool({ output: `payload-${String(i)}`, structured } as never),
+    );
+    for (const [i, tool] of tools.entries()) {
+      Object.defineProperty(tool, 'name', { value: `blocks${String(i)}` });
+    }
+    const { context } = await runTurn({
+      tools,
+      responses: [
+        makeToolUseResponse(
+          tools.map((_, i) => makeToolCall(`blocks${String(i)}`, {}, `tc-s${String(i)}`)),
+        ),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const results = context.toolResults();
+    expect(results).toHaveLength(malformed.length);
+    for (const [i, entry] of results.entries()) {
+      expect(entry.result.output).toBe(`payload-${String(i)}`);
+      expect(entry.result.isError).toBeUndefined();
+      expect('structured' in entry.result).toBe(false);
     }
   });
 
@@ -991,5 +1113,131 @@ describe('runTurn — unexecuted tool calls (abnormal step end)', () => {
     });
     expect(context.toolCalls()).toEqual([]);
     expect(context.toolResults()).toEqual([]);
+  });
+});
+
+/**
+ * Lax providers may repeat a tool-call id within one response (kosong passes
+ * such duplicates through verbatim). The batch entry renames the Nth
+ * occurrence of an id to `<id>_N` — the loop-recorded id doubles as the
+ * tool_use id written to history, so the rename is provider-transparent while
+ * keeping transcript uuids unique.
+ */
+describe('runTurn — duplicate provider tool-call ids', () => {
+  /** Wire the host same-step dedup exactly like agent/turn does. */
+  function makeDedupHooks(): LoopHooks {
+    const deduper = new ToolCallDeduplicator();
+    deduper.beginStep();
+    return {
+      prepareToolExecution: async (ctx) => {
+        const cached = deduper.checkSameStep(ctx.toolCall.id, ctx.toolCall.name, ctx.args);
+        if (cached !== null) return { syntheticResult: cached };
+        return undefined;
+      },
+      finalizeToolResult: async (ctx) =>
+        deduper.finalizeResult(ctx.toolCall.id, ctx.toolCall.name, ctx.args, ctx.result),
+    };
+  }
+
+  it('resolves same-id same-args calls through dedup instead of deadlocking', async () => {
+    // The original failure mode: the duplicate's prepare registered the shared
+    // id as synthetic, so the original's finalize awaited its own deferred —
+    // an ESC-proof hang. With unique ids the first finalize resolves the
+    // deferred the second awaits. (Pre-fix this test times out.)
+    const echo = new EchoTool();
+    const { context, sink } = await runTurn({
+      tools: [echo],
+      hooks: makeDedupHooks(),
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('echo', { text: 'hi' }, 'tc-dup'),
+          makeToolCall('echo', { text: 'hi' }, 'tc-dup'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    // The deduper still works: one real execution, two paired results sharing
+    // the original's outcome, in provider order.
+    expect(echo.calls).toHaveLength(1);
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-dup', 'tc-dup_2']);
+    const results = context.toolResults();
+    expect(results.map((e) => e.toolCallId)).toEqual(['tc-dup', 'tc-dup_2']);
+    expect(results.map((e) => e.result.output)).toEqual(['hi', 'hi']);
+    expect(results.every((e) => e.result.isError !== true)).toBe(true);
+    expect(sink.byType('tool.result').map((e) => e.toolCallId)).toEqual(['tc-dup', 'tc-dup_2']);
+  });
+
+  it('executes and records both results for same-id different-args calls', async () => {
+    const echo = new EchoTool();
+    const { context } = await runTurn({
+      tools: [echo],
+      hooks: makeDedupHooks(),
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('echo', { text: 'a' }, 'tc-mix'),
+          makeToolCall('echo', { text: 'b' }, 'tc-mix'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(echo.calls).toHaveLength(2);
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-mix', 'tc-mix_2']);
+    const results = context.toolResults();
+    expect(results.map((e) => e.toolCallId)).toEqual(['tc-mix', 'tc-mix_2']);
+    expect(results.map((e) => e.result.output)).toEqual(['a', 'b']);
+  });
+
+  it('passes already-unique ids through unchanged', async () => {
+    // Unique input — including an id that merely looks suffixed — must not be
+    // rewritten (second-pass stability of the rename mapping).
+    const echo = new EchoTool();
+    const { log, entries } = makeTestLogger();
+    const { context } = await runTurn({
+      tools: [echo],
+      log,
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('echo', { text: 'a' }, 'tc-a'),
+          makeToolCall('echo', { text: 'b' }, 'tc-a_2'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(echo.calls.map((c) => c.id)).toEqual(['tc-a', 'tc-a_2']);
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-a', 'tc-a_2']);
+    expect(context.toolResults().map((e) => e.toolCallId)).toEqual(['tc-a', 'tc-a_2']);
+    expect(entries.filter((e) => e.level === 'warn')).toEqual([]);
+  });
+
+  it('maps repeated ids deterministically to <id>_2, <id>_3 in provider order', async () => {
+    const makeDupBatchTurn = (log: ReturnType<typeof makeTestLogger>['log']) =>
+      runTurn({
+        tools: [new EchoTool()],
+        log,
+        responses: [
+          makeToolUseResponse([
+            makeToolCall('echo', { text: 'a' }, 'tc'),
+            makeToolCall('echo', { text: 'b' }, 'tc'),
+            makeToolCall('echo', { text: 'c' }, 'tc'),
+          ]),
+          makeEndTurnResponse('done'),
+        ],
+      });
+
+    const first = await makeDupBatchTurn(makeTestLogger().log);
+    expect(first.context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc', 'tc_2', 'tc_3']);
+    expect(first.context.toolResults().map((e) => e.toolCallId)).toEqual(['tc', 'tc_2', 'tc_3']);
+    expect(first.context.toolResults().map((e) => e.result.output)).toEqual(['a', 'b', 'c']);
+
+    // Same input, same output: a replayed attempt renames identically.
+    const second = await makeDupBatchTurn(makeTestLogger().log);
+    expect(second.context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc', 'tc_2', 'tc_3']);
+
+    const { log, entries } = makeTestLogger();
+    await makeDupBatchTurn(log);
+    expect(entries.filter((e) => e.level === 'warn')).toHaveLength(1);
   });
 });

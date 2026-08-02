@@ -35,7 +35,7 @@ export function StateTab({ state, importMeta }: StateTabProps) {
   const createdMs = parseIso(s.createdAt);
   const updatedMs = parseIso(s.updatedAt);
   const agentIds = s.agents !== undefined ? Object.keys(s.agents) : [];
-  const importedFromKimiCli = s.custom?.imported_from_kimi_cli === true;
+  const importedFromCloudCodeCli = s.custom?.imported_from_kimi_cli === true;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -48,7 +48,7 @@ export function StateTab({ state, importMeta }: StateTabProps) {
         <CopyButton value={JSON.stringify(s, null, 2)} label="copy json" />
       </div>
 
-      {importedFromKimiCli ? (
+      {importedFromCloudCodeCli ? (
         <div className="mt-3 border border-[var(--color-sev-warning)] bg-[color-mix(in_oklab,var(--color-sev-warning)_10%,transparent)] px-3 py-2 font-mono text-[11px] text-[var(--color-sev-warning)]">
           warning · this session is marked
           <code className="mx-1 px-1 bg-surface-0">imported_from_kimi_cli</code>
@@ -163,7 +163,7 @@ function ManifestCard({ meta }: { meta: ImportInfo }) {
   const m = meta.manifest;
   const candidates: [string, string | undefined][] = [
     ['original session', m?.sessionId],
-    ['kimi-code version', m?.kimiCodeVersion],
+    ['cloud-code version', m?.kimiCodeVersion],
     ['wire protocol', m?.wireProtocolVersion],
     ['os', m?.os],
     ['node', m?.nodejsVersion],

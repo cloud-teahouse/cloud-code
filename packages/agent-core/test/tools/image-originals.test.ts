@@ -98,17 +98,17 @@ describe('persistOriginalImage', () => {
 });
 
 describe('originalImageCacheDir', () => {
-  it('defaults to a kimi-code cache directory under the OS temp dir', () => {
+  it('defaults to a cloud-code cache directory under the OS temp dir', () => {
     const dir = originalImageCacheDir();
     expect(dir.startsWith(tmpdir())).toBe(true);
-    expect(dir).toContain('kimi-code');
+    expect(dir).toContain('cloud-code');
   });
 });
 
 describe('sessionMediaOriginalsDir', () => {
   it('nests the originals dir inside the session dir', () => {
-    expect(sessionMediaOriginalsDir('/home/u/.kimi-code/sessions/ws/abc')).toBe(
-      '/home/u/.kimi-code/sessions/ws/abc/media-originals',
+    expect(sessionMediaOriginalsDir('/home/u/.cloud-code/sessions/ws/abc')).toBe(
+      '/home/u/.cloud-code/sessions/ws/abc/media-originals',
     );
   });
 });

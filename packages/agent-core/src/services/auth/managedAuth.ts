@@ -1,24 +1,29 @@
+import { join } from 'node:path';
+
 import { readConfigFile, writeConfigFile } from '../../config';
-import type { KimiConfig, OAuthRef } from '../../config';
+import type { CloudCodeConfig, OAuthRef } from '../../config';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
 import {
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,
-  KIMI_CODE_PROVIDER_NAME,
-  KimiOAuthToolkit,
+  ChatGptOAuthManager,
+  CLOUD_CODE_PROVIDER_NAME,
+  FileTokenStorage,
+  isChatGptCodexProvider,
+  CloudCodeOAuthToolkit,
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
   type BearerTokenProvider,
-  type KimiHostIdentity,
-  type KimiOAuthLoginOptions,
+  type CloudCodeHostIdentity,
+  type CloudCodeOAuthLoginOptions,
   type ManagedKimiConfigShape,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/oauth';
 
 import type { IEnvironmentService } from '../environment/environment';
 
-type ServicesManagedConfig = KimiConfig & ManagedKimiConfigShape;
+type ServicesManagedConfig = CloudCodeConfig & ManagedKimiConfigShape;
 
-type ServicesAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'>;
+type ServicesAuthLoginOptions = Omit<CloudCodeOAuthLoginOptions, 'provisionConfig'>;
 
 interface ServicesAuthLoginResult {
   readonly providerName: string;
@@ -47,13 +52,14 @@ export interface ServicesAuthFacade {
 }
 
 class ServicesManagedAuthFacade implements ServicesAuthFacade {
-  private readonly toolkit: KimiOAuthToolkit<ServicesManagedConfig>;
+  private readonly toolkit: CloudCodeOAuthToolkit<ServicesManagedConfig>;
+  private chatGptManager: ChatGptOAuthManager | undefined;
 
   constructor(
     private readonly options: Pick<IEnvironmentService, 'homeDir' | 'configPath'>,
-    identity?: KimiHostIdentity,
+    identity?: CloudCodeHostIdentity,
   ) {
-    this.toolkit = new KimiOAuthToolkit<ServicesManagedConfig>({
+    this.toolkit = new CloudCodeOAuthToolkit<ServicesManagedConfig>({
       homeDir: options.homeDir,
       identity,
       configAdapter: {
@@ -68,8 +74,21 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     });
   }
 
+  /**
+   * Lazily-created ChatGPT Codex token manager. Shares the Kimi credential
+   * directory (`{homeDir}/credentials`) and lock root so both managers
+   * coordinate cross-process through the same mechanism.
+   */
+  private chatGpt(): ChatGptOAuthManager {
+    this.chatGptManager ??= new ChatGptOAuthManager({
+      storage: new FileTokenStorage(join(this.options.homeDir, 'credentials')),
+      configDir: this.options.homeDir,
+    });
+    return this.chatGptManager;
+  }
+
   async login(
-    providerName: string | undefined = KIMI_CODE_PROVIDER_NAME,
+    providerName: string | undefined = CLOUD_CODE_PROVIDER_NAME,
     options: ServicesAuthLoginOptions = {},
   ): Promise<ServicesAuthLoginResult> {
     const auth = this.resolveManagedAuth(providerName);
@@ -115,6 +134,9 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     providerName?: string,
     oauthRef?: OAuthRef | undefined,
   ): Promise<string | undefined> {
+    if (isChatGptCodexProvider(providerName, oauthRef)) {
+      return this.chatGpt().getCachedAccessToken();
+    }
     return this.toolkit.getCachedAccessToken(
       providerName,
       this.runtimeOAuthRef(providerName, oauthRef),
@@ -125,6 +147,16 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
+    if (isChatGptCodexProvider(providerName, oauthRef)) {
+      // ChatGPT Codex: JSON-body refresh, JWT-exp expiry, and the
+      // `ChatGPT-Account-ID` per-request header — handled by the dedicated
+      // manager, never the Kimi device-flow one.
+      const manager = this.chatGpt();
+      return {
+        getAccessToken: (options) => manager.ensureFresh(options),
+        getAuthHeaders: () => manager.getAuthHeaders(),
+      };
+    }
     return this.toolkit.tokenProvider(
       providerName,
       this.runtimeOAuthRef(providerName, oauthRef),
@@ -135,7 +167,7 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     readonly oauthRef?: OAuthRef | undefined;
     readonly baseUrl?: string | undefined;
   } {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     const config = readConfigFile(this.options.configPath);
     const provider = config.providers[name];
     return {
@@ -159,7 +191,7 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     providerName: string | undefined,
     oauthRef?: OAuthRef | undefined,
   ): OAuthRef | undefined {
-    if ((providerName ?? KIMI_CODE_PROVIDER_NAME) !== KIMI_CODE_PROVIDER_NAME) {
+    if ((providerName ?? CLOUD_CODE_PROVIDER_NAME) !== CLOUD_CODE_PROVIDER_NAME) {
       return oauthRef;
     }
     const auth = this.resolveManagedAuth(providerName);
@@ -172,7 +204,7 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
 
 export function createManagedAuthFacade(
   env: Pick<IEnvironmentService, 'homeDir' | 'configPath'>,
-  identity?: KimiHostIdentity,
+  identity?: CloudCodeHostIdentity,
 ): ServicesAuthFacade {
   return new ServicesManagedAuthFacade(env, identity);
 }

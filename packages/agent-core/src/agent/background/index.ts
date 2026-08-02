@@ -10,17 +10,18 @@
  * registration, lifecycle state, persistence, output, and notifications.
  */
 
-import { randomBytes } from 'node:crypto';
-
 import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
 import type { Agent } from '../..';
 import { errorMessage } from '../../loop/errors';
 import { resettableTimeoutOutcome, timeoutOutcome, type ResettableTimeoutPromise } from '../../utils/promise';
+import { generateBase36Id } from '../../utils/random-id';
 import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
+import { renderTaskNotification } from '../coordinator/task-notification';
+import type { AgentBackgroundTaskInfo } from './agent-task';
 import { type BackgroundTaskPersistence } from './persist';
 import {
   TERMINAL_STATUSES,
@@ -42,11 +43,11 @@ export function isBackgroundTaskTerminal(status: BackgroundTaskStatus): boolean 
   return TERMINAL_STATUSES.has(status);
 }
 
-const MAX_RUNNING_TASKS_ENV = 'KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS';
+const MAX_RUNNING_TASKS_ENV = 'CLOUD_CODE_BACKGROUND_MAX_RUNNING_TASKS';
 
 /**
  * Resolve the effective background-task concurrency cap. Precedence:
- * `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` (positive integer) → config
+ * `CLOUD_CODE_BACKGROUND_MAX_RUNNING_TASKS` (positive integer) → config
  * (`background.max_running_tasks`) → `undefined` (no cap). An invalid env
  * value is ignored.
  */
@@ -65,6 +66,8 @@ export { ProcessBackgroundTask } from './process-task';
 export type { ProcessBackgroundTaskInfo } from './process-task';
 export { QuestionBackgroundTask } from './question-task';
 export type { QuestionBackgroundTaskInfo } from './question-task';
+export { ShellSessionTask } from '../shell-session/task';
+export type { ShellSessionBackgroundTaskInfo } from '../shell-session/task';
 export { BackgroundTaskPersistence } from './persist';
 export type {
   BackgroundTaskInfo,
@@ -137,6 +140,12 @@ interface ManagedTask {
  */
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+/**
+ * Tail cap for a worker's `<task-notification>` `<result>` section
+ * (coordinator mode): generous enough to carry a full final summary, bounded
+ * so a runaway worker log cannot flood the coordinator's context.
+ */
+const TASK_NOTIFICATION_RESULT_TAIL_CHARS = 8_000;
 
 /**
  * Hard ceiling on the combined output a single shell command may stream before
@@ -149,6 +158,17 @@ const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
  * always be persisted, so they are intentionally not capped here.
  */
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+
+/**
+ * Disk-write ceiling for persistent PTY session logs. Sessions are exempt
+ * from the 16 MiB kill ceiling above (a long-lived REPL / dev server
+ * legitimately produces more total output than a one-shot command — the
+ * per-poll head/tail buffer already bounds what reaches the model). Instead,
+ * once `output.log` would grow past this cap the manager stops appending to
+ * it; the process keeps running and recent output stays available through
+ * the 1 MiB ring buffer and the session's own head/tail buffer.
+ */
+const MAX_SESSION_OUTPUT_DISK_BYTES = 64 * 1024 * 1024; // 64 MiB
 
 /** Terminal `stopReason` recorded when a command trips the output ceiling. */
 function outputLimitReason(): string {
@@ -163,22 +183,9 @@ function outputLimitReason(): string {
 const SIGTERM_GRACE_MS = 5_000;
 const USER_INTERRUPT_REASON = 'Interrupted by user';
 
-const _ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
-
-/**
- * Generate `{prefix}-{8 base36 chars}`.
- *
- * `randomBytes(8) % 36` has a modest modulo bias (256 % 36 = 4) but
- * over an 8-char suffix yields ~36^8 ≈ 2.8e12 distinct ids which is
- * more than enough uniqueness for per-session task ids.
- */
+/** Generate `{kind}-{8 base36 chars}` (see `utils/random-id`). */
 function generateTaskId(kind: string): string {
-  const bytes = randomBytes(8);
-  let suffix = '';
-  for (let i = 0; i < 8; i++) {
-    suffix += _ALPHABET[bytes[i]! % 36];
-  }
-  return `${kind}-${suffix}`;
+  return generateBase36Id(`${kind}-`);
 }
 
 export interface BackgroundTaskOutputSnapshot {
@@ -284,18 +291,10 @@ export class BackgroundManager {
 
   private emitTaskStarted(info: BackgroundTaskInfo): void {
     this.agent.emitEvent({ type: 'background.task.started', info });
-    this.agent.telemetry.track('background_task_created', {
-      kind: info.kind === 'process' ? 'bash' : info.kind,
-    });
   }
 
   private emitTaskTerminated(info: BackgroundTaskInfo): void {
     this.agent.emitEvent({ type: 'background.task.terminated', info });
-    this.agent.telemetry.track('background_task_completed', {
-      kind: info.kind,
-      duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
-      status: info.status,
-    });
   }
 
   private assertCanRegister(startedInBackground: boolean): void {
@@ -575,7 +574,7 @@ export class BackgroundManager {
   /**
    * Wait until no active (non-terminal) task matching `predicate` remains.
    *
-   * Used by print-mode (`kimi -p`) turn draining to hold a turn open while
+   * Used by print-mode (`cloud-code -p`) turn draining to hold a turn open while
    * background subagents are still running. Re-enumerates after each batch
    * settles so tasks registered during the wait (fan-out) are picked up.
    * Resolves immediately when nothing matches. Bounded by `timeoutMs`; once
@@ -725,21 +724,27 @@ export class BackgroundManager {
     // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
     // process tasks (foreground and background): subagent and user-question tasks
     // append their bounded result in one shot and must always persist it, so they
-    // are intentionally not capped here.
-    if (
-      !entry.outputLimitTripped &&
-      entry.task.kind === 'process' &&
-      entry.outputSizeBytes > MAX_TASK_OUTPUT_BYTES
-    ) {
-      entry.outputLimitTripped = true;
-      void this.stop(entry.taskId, outputLimitReason());
+    // are intentionally not capped here. Persistent PTY sessions are exempt from
+    // the kill (see MAX_SESSION_OUTPUT_DISK_BYTES) and only stop disk appends.
+    if (!entry.outputLimitTripped) {
+      if (entry.task.kind === 'process' && entry.outputSizeBytes > MAX_TASK_OUTPUT_BYTES) {
+        entry.outputLimitTripped = true;
+        void this.stop(entry.taskId, outputLimitReason());
+      } else if (
+        entry.task.kind === 'pty-session' &&
+        entry.outputSizeBytes > MAX_SESSION_OUTPUT_DISK_BYTES
+      ) {
+        entry.outputLimitTripped = true;
+      }
     }
 
-    // Once the cap has tripped the task is being terminated: keep only the
-    // bounded in-memory ring buffer above and stop feeding the (unbounded) disk
-    // write chain. A producer that ignores SIGTERM could otherwise keep the
-    // chain — and the chunk strings each pending write retains — growing through
-    // the grace window until SIGKILL, re-introducing the OOM this cap prevents.
+    // Once the cap has tripped, keep only the bounded in-memory ring buffer
+    // above and stop feeding the (unbounded) disk write chain. For a process
+    // task the task is being terminated: a producer that ignores SIGTERM could
+    // otherwise keep the chain — and the chunk strings each pending write
+    // retains — growing through the grace window until SIGKILL, re-introducing
+    // the OOM this cap prevents. For a PTY session the process survives; only
+    // the on-disk log stops growing.
     if (entry.outputLimitTripped) return;
 
     if (this.persistence === undefined) return;
@@ -831,18 +836,71 @@ export class BackgroundManager {
       source_kind: 'background_task',
       source_id: info.taskId,
       agent_id: info.kind === 'agent' ? info.agentId : undefined,
-      title: `Background ${info.kind} ${info.status}`,
+      title:
+        info.kind === 'pty-session'
+          ? `Shell session ${info.status}`
+          : `Background ${info.kind} ${info.status}`,
       severity: info.status === 'completed' ? 'info' : 'warning',
       body: buildBackgroundTaskNotificationBody(info),
       children: backgroundTaskNotificationChildren(output),
     };
+    const text = await this.renderNotificationText(info, notification, output);
     const content = [
       {
         type: 'text',
-        text: renderNotificationXml(notification),
+        text,
       },
     ] as const;
     return { content, origin, notification };
+  }
+
+  /**
+   * Notification text for the chat-history injection. Coordinator mode
+   * swaps the generic `<notification>` envelope for the `<task-notification>`
+   * worker-result schema when the terminal task is a worker (agent task) —
+   * same delivery path (steer/restore/dedup/hook), coordinator-shaped payload.
+   */
+  private async renderNotificationText(
+    info: BackgroundTaskInfo,
+    notification: BackgroundTaskNotification,
+    output: BackgroundTaskOutputSnapshot,
+  ): Promise<string> {
+    if (info.kind !== 'agent' || info.agentId === undefined) {
+      return renderNotificationXml(notification);
+    }
+    if (!this.agent.coordinatorMode.isActive) {
+      return renderNotificationXml(notification);
+    }
+    const result = await this.coordinatorWorkerResult(info, output);
+    return renderTaskNotification({
+      agentId: info.agentId,
+      status: info.status,
+      summary: coordinatorWorkerSummary(info),
+      result,
+      usage: info.usage,
+      toolUses: info.toolUses,
+      durationMs: info.endedAt === null ? undefined : info.endedAt - info.startedAt,
+    });
+  }
+
+  /**
+   * The `<result>` body of a worker `<task-notification>`: the worker's final
+   * output, tail-capped; only an ACTUAL truncation appends the pointer line
+   * (byte-vs-char size heuristics would false-positive on multibyte output).
+   */
+  private async coordinatorWorkerResult(
+    info: BackgroundTaskInfo & { readonly kind: 'agent' },
+    output: BackgroundTaskOutputSnapshot,
+  ): Promise<string | undefined> {
+    const full = (await this.readOutput(info.taskId)).trim();
+    if (full.length === 0) return undefined;
+    if (full.length <= TASK_NOTIFICATION_RESULT_TAIL_CHARS) return full;
+    const pointer =
+      output.outputPath !== undefined ? ` Full output: ${output.outputPath}` : '';
+    return (
+      `${full.slice(-TASK_NOTIFICATION_RESULT_TAIL_CHARS)}\n\n` +
+      `[Output truncated to the last ${String(TASK_NOTIFICATION_RESULT_TAIL_CHARS)} characters.${pointer}]`
+    );
   }
 
   private fireNotificationHook(notification: BackgroundTaskNotification): void {
@@ -862,6 +920,35 @@ export class BackgroundManager {
 
   markDeliveredNotification(origin: BackgroundTaskOrigin): void {
     this.deliveredNotificationKeys.add(notificationKey(origin));
+  }
+
+  /**
+   * Test hook: settle every task's pending state/output writes.
+   *
+   * `persistLive` and `appendTaskOutput` are deliberately fire-and-forget —
+   * production never waits on them, and the session directory outlives the
+   * manager. A test that deletes its temporary session directory does not
+   * have that luxury: `rm -rf` racing a queued `mkdir`/`appendFile` fails
+   * with ENOTEMPTY when a file reappears between the readdir and the rmdir.
+   * Await this before removing the directory.
+   *
+   * Queues are re-read after awaiting because a settling write can enqueue
+   * the next one; the loop ends once a full pass adds nothing new.
+   */
+  async _drainPersistenceForTests(): Promise<void> {
+    for (;;) {
+      const pending = [...this.tasks.values()].flatMap((entry) => [
+        entry.persistWriteQueue,
+        entry.outputWriteQueue,
+      ]);
+      if (pending.length === 0) return;
+      await Promise.all(pending);
+      const settled = [...this.tasks.values()].every(
+        (entry) =>
+          pending.includes(entry.persistWriteQueue) && pending.includes(entry.outputWriteQueue),
+      );
+      if (settled) return;
+    }
   }
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {
@@ -1063,7 +1150,66 @@ function notificationKey(origin: BackgroundTaskOrigin): string {
   return `${origin.taskId}\0${origin.status}\0${origin.notificationId}`;
 }
 
+function sessionStatusWord(status: BackgroundTaskStatus): string {
+  switch (status) {
+    case 'completed':
+      return 'exited';
+    case 'failed':
+      return 'exited with a non-zero status';
+    case 'timed_out':
+      return 'timed out';
+    case 'killed':
+      return 'was killed';
+    case 'lost':
+      return 'was lost with the previous CLI process';
+    default:
+      return status;
+  }
+}
+
+/**
+ * `<summary>` line of a worker `<task-notification>` (coordinator mode):
+ * "completed" / "failed: {error}" / "was stopped", with the precise cause
+ * kept for the statuses the schema collapses onto `failed`.
+ */
+function coordinatorWorkerSummary(info: AgentBackgroundTaskInfo): string {
+  const label = `Agent "${info.description}"`;
+  switch (info.status) {
+    case 'completed':
+      return `${label} completed`;
+    case 'killed':
+      return `${label} was stopped`;
+    case 'timed_out':
+      return `${label} failed: timed out`;
+    case 'lost':
+      return `${label} failed: lost with the previous CLI process`;
+    default:
+      return `${label} failed${info.stopReason !== undefined ? `: ${info.stopReason}` : ''}`;
+  }
+}
+
 function buildBackgroundTaskNotificationBody(info: BackgroundTaskInfo): string {
+  if (info.kind === 'pty-session') {
+    // A persistent interactive session ending is not "a background command
+    // completed" — word it as a session exit so the model does not treat it
+    // as task output it forgot to collect. WriteStdin on this id now returns
+    // the exit code; the full log remains on disk.
+    const exitDetail = info.exitCode !== null ? ` (exit code ${String(info.exitCode)})` : '';
+    const reason = info.stopReason !== undefined ? `: ${info.stopReason}` : '';
+    const lostGuidance =
+      info.status === 'lost'
+        ? // RFC §3.5 v2 resume accounting: sessions are in-memory only and
+          // die with the CLI process, so the model must rebuild — not retry.
+          ' Sessions do not survive a CLI restart: start a new one with ' +
+          'ExecSession and rebuild any env/cwd state.'
+        : '';
+    return (
+      `Interactive shell session "${info.description}" ${sessionStatusWord(info.status)}` +
+      `${exitDetail}${reason}. Its output log is preserved; the session id can no longer be written to.` +
+      lostGuidance
+    );
+  }
+
   const baseLine =
     info.status === 'timed_out'
       ? `${info.description} timed out.`

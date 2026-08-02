@@ -76,6 +76,58 @@ describe('AgentTool', () => {
     });
   });
 
+  it('accepts an optional model selection', () => {
+    const parsed = AgentToolInputSchema.parse({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'secondary',
+    });
+
+    expect(parsed).toMatchObject({ model: 'secondary' });
+  });
+
+  it('forwards the requested model to spawn and resume', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion: Promise.resolve({ result: 'spawned result' }),
+      }),
+      resume: vi.fn().mockResolvedValue({
+        agentId: 'agent-existing',
+        profileName: 'coder',
+        resumed: true,
+        completion: Promise.resolve({ result: 'resumed result' }),
+      }),
+    });
+    const tool = agentTool(host);
+
+    const spawned = await executeTool(tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        model: 'secondary',
+      }),
+    );
+    expect(spawned.isError).toBeUndefined();
+    expect(host.spawn).toHaveBeenCalledWith(expect.objectContaining({ model: 'secondary' }));
+
+    const resumed = await executeTool(tool,
+      context({
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+        model: 'fast-alias',
+      }),
+    );
+    expect(resumed.isError).toBeUndefined();
+    expect(host.resume).toHaveBeenCalledWith(
+      'agent-existing',
+      expect.objectContaining({ model: 'fast-alias' }),
+    );
+  });
+
   it('exposes run_in_background and not runInBackground in the JSON schema', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host);
@@ -95,9 +147,9 @@ describe('AgentTool', () => {
     ).properties;
 
     const subagentTypeDescription = properties['subagent_type']?.description ?? '';
-    // #7: the description states the default is coder
+    // The description states the default is coder
     expect(subagentTypeDescription).toContain('coder');
-    // #6: terminology aligned with the "Available agent types" prose heading —
+    // Terminology aligned with the "Available agent types" prose heading —
     // no longer "agent registry"
     expect(subagentTypeDescription).not.toContain('registry');
     expect(subagentTypeDescription).toContain('agent type');
@@ -136,28 +188,18 @@ describe('AgentTool', () => {
     expect(tool.description).toContain('Default to a foreground subagent');
   });
 
-  it('exposes a primary/secondary model parameter in the JSON schema when the experiment is enabled', () => {
+  it('exposes a model parameter documenting the secondary selection and profile pins', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host, createBackgroundManager().manager, undefined, {
       modelChoiceEnabled: true,
     });
     const properties = (
-      tool.parameters as {
-        properties: Record<string, { description?: string; enum?: string[] }>;
-      }
+      tool.parameters as { properties: Record<string, { description?: string }> }
     ).properties;
 
-    expect(properties['model']?.enum).toEqual(['primary', 'secondary']);
-    expect(properties['model']?.description).toContain('secondary');
-  });
-
-  it('strips the model parameter from the JSON schema by default', () => {
-    const host = mockSubagentHost({ spawn: vi.fn() });
-    const tool = agentTool(host);
-    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
-
-    expect(properties).not.toHaveProperty('model');
-    expect(properties).toHaveProperty('prompt');
+    const description = properties['model']?.description ?? '';
+    expect(description).toContain('secondary');
+    expect(description).toContain('profile');
   });
 
   it('appends the subagent model description only when provided', () => {
@@ -226,6 +268,119 @@ describe('AgentTool', () => {
         resume: 'agent-existing',
       }).subagent_type,
     ).toBeUndefined();
+  });
+
+  describe('inherit_context', () => {
+    it('parses inherit_context and leaves subagent_type unset for the default agent type', () => {
+      const parsed = AgentToolInputSchema.parse({
+        prompt: 'Deep-dive the findings so far',
+        description: 'Deep dive',
+        inherit_context: true,
+      });
+      expect(parsed.inherit_context).toBe(true);
+      expect(parsed.subagent_type).toBeUndefined();
+    });
+
+    it('still defaults subagent_type when inherit_context is not set', () => {
+      expect(
+        AgentToolInputSchema.parse({
+          prompt: 'Investigate',
+          description: 'Find cause',
+        }).subagent_type,
+      ).toBe('coder');
+    });
+
+    it('rejects inherit_context with an explicit subagent_type', async () => {
+      const host = mockSubagentHost({ spawn: vi.fn() });
+      const tool = agentTool(host);
+
+      const result = await executeTool(
+        tool,
+        context({
+          prompt: 'Deep-dive the findings so far',
+          description: 'Deep dive',
+          subagent_type: 'explore',
+          inherit_context: true,
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('inherit_context requires the default agent type');
+      expect(host.spawn).not.toHaveBeenCalled();
+    });
+
+    it('rejects inherit_context with resume', async () => {
+      const host = mockSubagentHost({ spawn: vi.fn() });
+      const tool = agentTool(host);
+
+      const result = await executeTool(
+        tool,
+        context({
+          prompt: 'Continue',
+          description: 'Continue work',
+          resume: 'agent-existing',
+          inherit_context: true,
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('inherit_context only applies when spawning');
+      expect(host.spawn).not.toHaveBeenCalled();
+      expect(host.resume).not.toHaveBeenCalled();
+    });
+
+    it('rejects inherit_context with a teammate name', async () => {
+      const host = mockSubagentHost({ spawn: vi.fn() });
+      const tool = agentTool(host);
+
+      const result = await executeTool(
+        tool,
+        context({
+          prompt: 'Deep-dive the findings so far',
+          description: 'Deep dive',
+          name: 'worker',
+          inherit_context: true,
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('inherit_context cannot spawn a teammate');
+      expect(host.spawn).not.toHaveBeenCalled();
+    });
+
+    it('forwards inheritContext to spawn and defaults it to false', async () => {
+      const host = mockSubagentHost({
+        spawn: vi.fn().mockResolvedValue({
+          agentId: 'agent-child',
+          profileName: 'coder',
+          resumed: false,
+          completion: Promise.resolve({ result: 'forked result' }),
+        }),
+      });
+      const tool = agentTool(host);
+
+      const forked = await executeTool(
+        tool,
+        context({
+          prompt: 'Deep-dive the findings so far',
+          description: 'Deep dive',
+          inherit_context: true,
+        }),
+      );
+      expect(forked.isError).toBeUndefined();
+      expect(host.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({ profileName: 'coder', inheritContext: true }),
+      );
+
+      const fresh = await executeTool(
+        tool,
+        context({ prompt: 'Investigate', description: 'Find cause' }),
+      );
+      expect(fresh.isError).toBeUndefined();
+      expect(host.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({ profileName: 'coder', inheritContext: false }),
+      );
+    });
   });
 
   it('describes configured subagent types', () => {
@@ -307,7 +462,7 @@ describe('AgentTool', () => {
     );
   });
 
-  it('passes the model choice through to spawn, but not to resume', async () => {
+  it('passes the model selection through to both spawn and resume', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -332,9 +487,11 @@ describe('AgentTool', () => {
       }),
     );
     expect(host.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({ modelChoice: 'primary' }),
+      expect.objectContaining({ model: 'primary' }),
     );
 
+    // Resume forwards the selection too: the host realigns the child's model
+    // with the spawn precedence on every resume/retry.
     await executeTool(tool,
       context({
         prompt: 'Continue',
@@ -345,7 +502,7 @@ describe('AgentTool', () => {
     );
     expect(host.resume).toHaveBeenCalledWith(
       'agent-existing',
-      expect.not.objectContaining({ modelChoice: expect.anything() }),
+      expect.objectContaining({ model: 'secondary' }),
     );
   });
 
@@ -536,9 +693,16 @@ describe('AgentTool', () => {
 
     expect(result.output).toContain('status: running');
     expect(result.output).toContain('agent_id: agent-child');
+    expect(result.structured).toMatchObject({
+      status: 'running',
+      agentId: 'agent-child',
+      subagentType: 'coder',
+    });
+    expect(result.display).toMatchObject({ key: 'toolResult.agent.backgroundLaunched' });
     if (typeof result.output !== 'string') throw new TypeError('expected string output');
     const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
     expect(taskId).toBeDefined();
+    expect(result.structured).toMatchObject({ taskId: taskId! });
     expect(background.getTask(taskId!)).toMatchObject({
       status: 'running',
       description: 'Find cause',
@@ -965,6 +1129,170 @@ describe('AgentTool', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('teammate spawns', () => {
+    function teammateHost(completion: Promise<{ result: string }> = new Promise(() => {})) {
+      return mockSubagentHost({
+        spawn: vi.fn().mockResolvedValue({
+          agentId: 'agent-child',
+          profileName: 'coder',
+          resumed: false,
+          completion,
+        }),
+      });
+    }
+
+    it('spawns a teammate as a detached task carrying the teammate identity', async () => {
+      const host = teammateHost();
+      const background = createBackgroundManager().manager;
+      const tool = new AgentTool(host, background);
+
+      const result = await executeTool(tool,
+        context({
+          prompt: 'Own the ingestion track',
+          description: 'Ingestion owner',
+          name: 'researcher',
+          team_name: 'core',
+        }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      // Teammates always run detached, even without run_in_background.
+      expect(host.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profileName: 'coder',
+          runInBackground: true,
+          teammate: { name: 'researcher', teamName: 'core' },
+        }),
+      );
+      expect(result.output).toContain('status: running');
+      expect(result.output).toContain('agent_id: agent-child');
+      expect(result.output).toContain('teammate: researcher');
+      expect(result.output).toContain('team: core');
+
+      if (typeof result.output !== 'string') throw new TypeError('expected string output');
+      const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
+      expect(taskId).toBeDefined();
+      expect(background.getTask(taskId!)).toMatchObject({
+        kind: 'agent',
+        status: 'running',
+        detached: true,
+        description: 'Ingestion owner',
+        teammate: { name: 'researcher', teamName: 'core' },
+      });
+    });
+
+    it('forces an explicitly foreground teammate into the background', async () => {
+      const host = teammateHost();
+      const background = createBackgroundManager().manager;
+      const tool = new AgentTool(host, background);
+
+      const result = await executeTool(tool,
+        context({
+          prompt: 'Own the ingestion track',
+          description: 'Ingestion owner',
+          name: 'researcher',
+          run_in_background: false,
+        }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(host.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({ runInBackground: true }),
+      );
+      expect(result.output).toContain('status: running');
+      expect(result.output).toContain('teammate: researcher');
+      expect(result.output).not.toContain('team:');
+      expect(background.list(false)[0]).toMatchObject({ detached: true });
+    });
+
+    it('rejects name together with resume', async () => {
+      const host = teammateHost();
+      const tool = agentTool(host);
+
+      const result = await executeTool(tool,
+        context({
+          prompt: 'Continue',
+          description: 'Continue work',
+          resume: 'agent-existing',
+          name: 'researcher',
+        }),
+      );
+
+      expect(result).toMatchObject({
+        isError: true,
+        output: 'Cannot set name when resuming an existing agent. Resume by agent id only.',
+      });
+      expect(host.spawn).not.toHaveBeenCalled();
+    });
+
+    it('rejects team_name without name', async () => {
+      const host = teammateHost();
+      const tool = agentTool(host);
+
+      const result = await executeTool(tool,
+        context({
+          prompt: 'Investigate',
+          description: 'Find cause',
+          team_name: 'core',
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('team_name requires name');
+      expect(host.spawn).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid teammate name', async () => {
+      const host = teammateHost();
+      const tool = agentTool(host);
+
+      const result = await executeTool(tool,
+        context({
+          prompt: 'Investigate',
+          description: 'Find cause',
+          name: 'bad name!',
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('Invalid teammate name');
+      expect(host.spawn).not.toHaveBeenCalled();
+    });
+
+    it('rejects teammate spawns when background agents are unavailable', async () => {
+      const host = teammateHost();
+      const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+        allowBackground: false,
+      });
+
+      const result = await executeTool(tool,
+        context({
+          prompt: 'Own the ingestion track',
+          description: 'Ingestion owner',
+          name: 'researcher',
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('Background agent execution is not available');
+      expect(host.spawn).not.toHaveBeenCalled();
+    });
+
+    it('prefixes the activity description with the teammate name', async () => {
+      const host = teammateHost();
+      const tool = agentTool(host);
+      const execution = await tool.resolveExecution({
+        prompt: 'Own the ingestion track',
+        description: 'Ingestion owner',
+        name: 'researcher',
+      });
+
+      expect(execution.isError).toBeFalsy();
+      if (execution.isError === true) throw new Error('expected runnable execution');
+      expect(execution.description).toBe('Launching teammate researcher coder agent: Ingestion owner');
+    });
   });
 });
 

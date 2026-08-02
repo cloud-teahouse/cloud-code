@@ -147,8 +147,10 @@ export class TextIndex {
   // Disk-base mode.
   private pf: PostingsFile | null = null;
 
-  // LRU cache of decoded base postings: term -> [docID, freq][]
-  private readonly cache = new Map<string, [number, number][]>();
+  // LRU cache of decoded base postings: term -> (docID -> freq). The Map form
+  // is cached directly (built once on miss) instead of rebuilding it from a
+  // cached pair array on every search.
+  private readonly cache = new Map<string, Map<number, number>>();
 
   /** Number of live indexed documents. */
   N = 0;
@@ -371,36 +373,43 @@ export class TextIndex {
   }
 
   /** Decoded base postings for a term (disk, cached; or memory). May still
-   *  contain tombstoned docIDs — callers filter via `removed`. */
+   *  contain tombstoned docIDs — callers filter via `removed`. The returned
+   *  map is the shared cached instance: callers must not mutate it. */
   private readBase(term: string): ReadonlyMap<number, number> {
     if (this.memBase) return this.memBase.get(term) ?? EMPTY_MAP;
 
-    let arr = this.cache.get(term);
-    if (arr) {
+    let m = this.cache.get(term);
+    if (m) {
       // LRU touch: move to most-recent.
       this.cache.delete(term);
-      this.cache.set(term, arr);
+      this.cache.set(term, m);
     } else {
       const entry = this.postings.get(term);
-      arr = entry && this.pf ? this.pf.read(entry) : [];
+      const arr = entry && this.pf ? this.pf.read(entry) : [];
+      m = new Map<number, number>();
+      for (const [id, f] of arr) m.set(id, f);
       if (this.cacheTerms > 0) {
-        this.cache.set(term, arr);
+        this.cache.set(term, m);
         if (this.cache.size > this.cacheTerms) {
           const oldest = this.cache.keys().next().value as string;
           this.cache.delete(oldest);
         }
       }
     }
-    const m = new Map<number, number>();
-    for (const [id, f] of arr) m.set(id, f);
     return m;
   }
 
   /** Live postings for a term = (base ∪ delta) minus tombstones. */
-  private livePostings(term: string): Map<number, number> {
-    const out = new Map<number, number>();
-    for (const [id, f] of this.readBase(term)) if (!this.removed.has(id)) out.set(id, f);
+  private livePostings(term: string): ReadonlyMap<number, number> {
+    const base = this.readBase(term);
     const d = this.delta.get(term);
+    // Fast path: nothing to filter or merge, so the shared (cached) base map
+    // can be handed out directly. search() is synchronous and only reads the
+    // maps, so no write can interleave or mutate it; the condition is
+    // re-evaluated per call, so write-then-search sequences still filter.
+    if (this.removed.size === 0 && !d) return base;
+    const out = new Map<number, number>();
+    for (const [id, f] of base) if (!this.removed.has(id)) out.set(id, f);
     if (d) for (const [id, f] of d) if (!this.removed.has(id)) out.set(id, f);
     return out;
   }
@@ -415,7 +424,7 @@ export class TextIndex {
     const op = opts.op ?? 'AND';
     const limit = opts.limit ?? 50;
 
-    const termMaps = new Map<string, Map<number, number>>();
+    const termMaps = new Map<string, ReadonlyMap<number, number>>();
     for (const t of qtokens) termMaps.set(t, this.livePostings(t));
 
     let candidates: Set<number>;

@@ -8,7 +8,7 @@
  * Kaos I/O.
  */
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@cloud-code/kaos';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';

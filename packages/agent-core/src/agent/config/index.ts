@@ -4,18 +4,19 @@ import {
   type ChatProvider,
   type ModelCapability,
   type ProviderConfig,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 
 import {
   applyAnthropicThinkingKeep,
-  applyKimiEnvSamplingParams,
-  applyKimiEnvThinkingKeep,
-  resolveKimiEnvThinkingEffort,
-} from '#/config/kimi-env-params';
+  applyCloudCodeEnvSamplingParams,
+  applyCloudCodeEnvThinkingKeep,
+  resolveCloudCodeEnvThinkingEffort,
+} from '#/config/cloud-code-env-params';
 
 import type { Agent } from '..';
-import { ErrorCodes, KimiError } from '../../errors';
-import type { AgentConfigData, AgentConfigUpdateData } from './types';
+import { ErrorCodes, CloudCodeError } from '../../errors';
+import { applyServiceTier, serviceTierFromConfig } from './service-tier';
+import type { AgentConfigData, AgentConfigUpdateData, ServiceTier } from './types';
 import {
   resolveThinkingEffort,
   supportsThinkingEffort,
@@ -26,6 +27,15 @@ import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 
 export * from './types';
 export { resolveThinkingEffort, type ThinkingEffort } from './thinking';
+export {
+  applyServiceTier,
+  FAST_SERVICE_TIER_ID,
+  isFastTierSupported,
+  serviceTierFromConfig,
+  type FastTierModelShape,
+  type FastTierProviderShape,
+  type FastTierResolvedModelShape,
+} from './service-tier';
 
 export class ConfigState {
   private _cwd: string;
@@ -38,10 +48,15 @@ export class ConfigState {
   private _unforcedThinkingEffort: ThinkingEffort | undefined;
   private _thinkingEffort: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
+  private _serviceTier: ServiceTier | undefined;
 
   constructor(protected readonly agent: Agent) {
     this._cwd = agent.kaos.getcwd();
     this._modelAlias = agent.modelProvider?.defaultModel;
+    // The persisted config.toml preference seeds every session (fresh and
+    // resumed); an explicit config.update — e.g. a /fast toggle replayed from
+    // the session records — overrides it afterwards.
+    this._serviceTier = serviceTierFromConfig(agent.kimiConfig?.serviceTier);
   }
 
   update(changed: AgentConfigUpdateData): void {
@@ -76,7 +91,7 @@ export class ConfigState {
     }
     if (unforcedThinkingEffort !== undefined) {
       thinkingEffort =
-        resolveKimiEnvThinkingEffort(unforcedThinkingEffort, kimiProvider) ??
+        resolveCloudCodeEnvThinkingEffort(unforcedThinkingEffort, kimiProvider) ??
         unforcedThinkingEffort;
     }
     const effectiveChanged =
@@ -109,6 +124,15 @@ export class ConfigState {
     }
     if (changed.systemPrompt !== undefined) {
       this._systemPrompt = changed.systemPrompt;
+      // Resume path: latch the fixed `CLOUD_CODE_NOW` value out of the restored
+      // prompt so later re-renders stay byte-identical to it. No-op on live
+      // renders, where `sessionNow` is already set before update() runs.
+      this.agent.latchSessionNowFromPrompt(changed.systemPrompt);
+    }
+    // `'serviceTier' in changed` (not a truthiness check): `null` is the
+    // explicit clear and must survive the JSON records round-trip.
+    if ('serviceTier' in changed) {
+      this._serviceTier = changed.serviceTier ?? undefined;
     }
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
@@ -125,12 +149,16 @@ export class ConfigState {
     if (!supportsThinkingEffort(effort, model, kimiProtocol)) {
       const efforts = model?.supportEfforts ?? [];
       const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.MODEL_CONFIG_INVALID,
         `Thinking effort "${effort}" is not supported by model "${this.modelAlias}". Supported efforts: ${supported}.`,
       );
     }
     this.update({ thinkingEffort: effort });
+  }
+
+  setServiceTier(serviceTier: ServiceTier | undefined): void {
+    this.update({ serviceTier: serviceTier ?? null });
   }
 
   data(): AgentConfigData {
@@ -144,6 +172,7 @@ export class ConfigState {
       subagentNames: this.subagentNames,
       thinkingEffort: this.thinkingEffort,
       systemPrompt: this.systemPrompt,
+      serviceTier: this._serviceTier,
     };
   }
 
@@ -162,7 +191,7 @@ export class ConfigState {
   get providerConfig(): ProviderConfig {
     const provider = this.resolvedProviderConfig?.provider;
     if (provider === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Provider not set');
+      throw new CloudCodeError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Provider not set');
     }
     return provider;
   }
@@ -188,26 +217,34 @@ export class ConfigState {
     //   - thinking.keep: env KIMI_MODEL_THINKING_KEEP > config thinking.keep > default "all"
     //     (only while thinking is on). Drives Kimi's `thinking.keep` and, on the
     //     Anthropic path, a `context_management` `clear_thinking_20251015` edit.
+    //   - service_tier: fast mode (`/fast`) on OpenAI Responses providers,
+    //     gated per model by the catalog-declared service tiers
     const providerConfig = this.providerConfig;
     const memoKey = JSON.stringify(providerConfig);
     if (this.providerMemo?.key !== memoKey) {
       this.providerMemo = { key: memoKey, provider: createProvider(providerConfig) };
     }
     const provider = this.providerMemo.provider.withThinking(this.thinkingEffort);
-    const withSampling = applyKimiEnvSamplingParams(provider);
+    const withSampling = applyCloudCodeEnvSamplingParams(provider);
     const configKeep = this.agent.kimiConfig?.thinking?.keep;
-    const withKimiKeep = applyKimiEnvThinkingKeep(
+    const withCloudCodeKeep = applyCloudCodeEnvThinkingKeep(
       withSampling,
       this.thinkingEffort,
       undefined,
       configKeep,
     );
-    return applyAnthropicThinkingKeep(withKimiKeep, this.thinkingEffort, undefined, configKeep);
+    const withThinkingKeep = applyAnthropicThinkingKeep(
+      withCloudCodeKeep,
+      this.thinkingEffort,
+      undefined,
+      configKeep,
+    );
+    return applyServiceTier(withThinkingKeep, this._serviceTier, this.tryResolvedProviderConfig());
   }
 
   get model(): string {
     if (this._modelAlias === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+      throw new CloudCodeError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     }
     return this._modelAlias;
   }
@@ -220,6 +257,10 @@ export class ConfigState {
     // Already resolved (with the always_thinking clamp applied) in update();
     // return it verbatim.
     return this._thinkingEffort;
+  }
+
+  get serviceTier(): ServiceTier | undefined {
+    return this._serviceTier;
   }
 
   private get currentModel(): ModelAlias | undefined {

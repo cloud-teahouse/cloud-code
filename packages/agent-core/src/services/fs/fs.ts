@@ -13,7 +13,7 @@ import type {
   FsStatManyRequest,
   FsStatManyResponse,
   FsStatRequest,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 export class FsPathNotFoundError extends Error {
   readonly inputPath: string;

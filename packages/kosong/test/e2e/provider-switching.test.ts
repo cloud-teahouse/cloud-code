@@ -195,7 +195,6 @@ describe('e2e: provider switching', () => {
           _history: Message[],
         ): Promise<StreamedMessage> {
           const myCount = ++callCount;
-          // Simulate slight delay
           await new Promise<void>((r) => setTimeout(r, 5));
           return {
             get id(): string | null {
@@ -310,7 +309,6 @@ describe('e2e: provider switching', () => {
         thinkingEffort: 'low',
       });
 
-      // First generate with an abort signal that gets aborted mid-stream
       const controller = new AbortController();
       let partCount = 0;
 
@@ -366,11 +364,9 @@ describe('e2e: provider switching', () => {
 
       await expect(abortedPromise).rejects.toThrow();
 
-      // Now do a normal generate with the same base provider
       const result = await generate(provider, '', [], []);
       expect(extractText(result.message)).toBe('test');
 
-      // Provider state should be unaffected
       expect(provider.thinkingEffort).toBe('low');
     });
   });

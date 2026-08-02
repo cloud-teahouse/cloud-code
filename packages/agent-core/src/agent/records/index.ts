@@ -57,6 +57,9 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'usage.record':
       agent.usage.record(input.model, input.usage, 'session');
       return;
+    case 'usage.rate_limit':
+      agent.usage.recordRateLimit(input.snapshot);
+      return;
     case 'full_compaction.begin':
       agent.fullCompaction.begin(input);
       return;
@@ -67,7 +70,12 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       agent.fullCompaction.markCompleted();
       return;
     case 'micro_compaction.apply':
-      agent.microCompaction.apply(input.cutoff);
+      // Legacy record from the removed MicroCompaction; identical semantics
+      // to the graduated chain's pinpoint-clear layer.
+      agent.graduatedCompaction.restoreLayerApply({ layer: 'pinpoint_clear', cutoff: input.cutoff });
+      return;
+    case 'graduated_compaction.apply':
+      agent.graduatedCompaction.restoreLayerApply(input);
       return;
     case 'plan_mode.enter':
       agent.planMode.restoreEnter(input);
@@ -78,11 +86,23 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'plan_mode.exit':
       agent.planMode.exit(input.id);
       return;
+    case 'worktree.enter':
+      agent.worktree.restoreEnter(input);
+      return;
+    case 'worktree.exit':
+      agent.worktree.restoreExit();
+      return;
     case 'swarm_mode.enter':
       agent.swarmMode.restoreEnter(input.trigger);
       return;
     case 'swarm_mode.exit':
       agent.swarmMode.exit();
+      return;
+    case 'coordinator_mode.enter':
+      agent.coordinatorMode.restoreEnter();
+      return;
+    case 'coordinator_mode.exit':
+      agent.coordinatorMode.restoreExit();
       return;
     case 'context.append_message':
       agent.context.appendMessage(input.message);
@@ -110,6 +130,15 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'context.undo':
       agent.context.undo(input.count);
+      return;
+    case 'context.withdraw_tail_input':
+      agent.context.withdrawUnansweredTailInput();
+      return;
+    case 'snapshot.track':
+      agent.snapshot.restoreTrack(input);
+      return;
+    case 'snapshot.rewind':
+      agent.snapshot.restoreRewind(input);
       return;
     case 'tools.register_user_tool':
       agent.tools.registerUserTool(input);
@@ -145,6 +174,29 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'mcp.tools_discovered':
       agent.tools.restoreMcpDiscovery(input.serverName, input.hash);
+      return;
+    case 'guardian.assessment':
+      // UI rebuild only (same role as `approval_result` during restore):
+      // re-push the replay event so a resumed session can render past
+      // assessments. No model call or breaker state replays.
+      agent.replayBuilder.push({
+        type: 'guardian_assessment',
+        record: input,
+      });
+      return;
+    case 'guardian.review_failed':
+    case 'guardian.circuit_breaker_tripped':
+      // Observability only: nothing to rebuild on resume.
+      return;
+    case 'shell_session.start':
+    case 'shell_session.exit':
+      // Observability only: sessions never survive a CLI restart. The
+      // lost-session reconcile (ghost → lost → notification) is driven by
+      // background task persistence in agent.resume(), not by these records.
+      return;
+    case 'session.meta':
+      // Observability only: session listing metadata mirror (the authoritative
+      // store is state.json, owned by the Session layer). Nothing to rebuild.
       return;
   }
 }

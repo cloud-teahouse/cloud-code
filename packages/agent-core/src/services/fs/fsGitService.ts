@@ -10,7 +10,7 @@ import type {
   FsGitStatusRequest,
   FsGitStatusResponse,
   FsPullRequest,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 import { ISessionService } from '../session/session';
 
 import { FsPathNotFoundError } from './fs';

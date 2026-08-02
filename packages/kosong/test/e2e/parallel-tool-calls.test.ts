@@ -136,7 +136,6 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
     const stream = createMockStream(parts);
     const provider = createMockProvider(stream);
 
-    // Track what arguments each handler actually observed.
     const observed: Record<string, JsonValue> = {};
     const dispatchOrder: string[] = [];
 

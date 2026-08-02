@@ -1,8 +1,8 @@
 /**
  * Small atomic JSON file store used by the MCP OAuth provider to persist
  * tokens, registered client info, and discovery state under
- * `<KIMI_CODE_HOME>/credentials/mcp/` (default
- * `~/.kimi-code/credentials/mcp/`).
+ * `<CLOUD_CODE_HOME>/credentials/mcp/` (default
+ * `~/.cloud-code/credentials/mcp/`).
  *
  * Write semantics: write to `<file>.tmp.<pid>.<rand>` → fsync → rename.
  * Atomic on POSIX; best-effort on Windows. Files land at mode 0600 (parent
@@ -27,12 +27,12 @@ import {
 import { homedir } from 'node:os';
 import { basename, join } from 'pathe';
 
-export function mcpCredentialsDir(kimiHomeDir: string): string {
-  return join(kimiHomeDir, 'credentials', 'mcp');
+export function mcpCredentialsDir(cloudCodeHomeDir: string): string {
+  return join(cloudCodeHomeDir, 'credentials', 'mcp');
 }
 
 export function defaultMcpCredentialsDir(): string {
-  return mcpCredentialsDir(join(homedir(), '.kimi-code'));
+  return mcpCredentialsDir(join(homedir(), '.cloud-code'));
 }
 
 export function sanitizeStoreKey(name: string): string {

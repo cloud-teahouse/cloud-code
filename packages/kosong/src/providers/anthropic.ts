@@ -9,6 +9,7 @@ import {
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { isToolDeclarationOnlyMessage } from '#/message';
+import { canonicalizeToolSchema } from '#/schema-canonicalize';
 import type {
   ChatProvider,
   FinishReason,
@@ -407,18 +408,33 @@ const SUPPORTED_B64_VIDEO_TYPES = new Set([
   'video/3gpp',
 ]);
 
+/**
+ * Bound a data URL for inclusion in an error message: the full base64
+ * payload can reach megabytes and these messages flow into logs, retry
+ * events and the WAL, so embed only a prefix plus the total size. The
+ * retained prefix keeps `isImageFormatError`/`isVideoFormatError` message
+ * matching intact (those patterns anchor on the static wording, not the
+ * URL).
+ */
+function truncateDataUrlForError(url: string): string {
+  const MAX_URL_PREFIX = 64;
+  return url.length <= MAX_URL_PREFIX
+    ? url
+    : `${url.slice(0, MAX_URL_PREFIX)}…(${String(url.length)} bytes)`;
+}
+
 function imageUrlPartToAnthropic(url: string): AnthropicImageBlock {
   if (url.startsWith('data:')) {
     const withoutScheme = url.slice(5);
     const parts = withoutScheme.split(';base64,', 2);
     if (parts.length !== 2 || parts[0] === undefined || parts[1] === undefined) {
-      throw new ChatProviderError(`Invalid data URL for image: ${url}`);
+      throw new ChatProviderError(`Invalid data URL for image: ${truncateDataUrlForError(url)}`);
     }
     const mediaType = parts[0];
     const data = parts[1];
     if (!SUPPORTED_B64_MEDIA_TYPES.has(mediaType)) {
       throw new ChatProviderError(
-        `Unsupported media type for base64 image: ${mediaType}, url: ${url}`,
+        `Unsupported media type for base64 image: ${mediaType}, url: ${truncateDataUrlForError(url)}`,
       );
     }
     return {
@@ -437,13 +453,13 @@ function videoUrlPartToAnthropic(url: string): AnthropicVideoBlock {
     const withoutScheme = url.slice(5);
     const parts = withoutScheme.split(';base64,', 2);
     if (parts.length !== 2 || parts[0] === undefined || parts[1] === undefined) {
-      throw new ChatProviderError(`Invalid data URL for video: ${url}`);
+      throw new ChatProviderError(`Invalid data URL for video: ${truncateDataUrlForError(url)}`);
     }
     const mediaType = parts[0];
     const data = parts[1];
     if (!SUPPORTED_B64_VIDEO_TYPES.has(mediaType)) {
       throw new ChatProviderError(
-        `Unsupported media type for base64 video: ${mediaType}, url: ${url}`,
+        `Unsupported media type for base64 video: ${mediaType}, url: ${truncateDataUrlForError(url)}`,
       );
     }
     return {
@@ -461,11 +477,37 @@ interface AnthropicToolParam extends AnthropicTool {
   cache_control?: { type: 'ephemeral' } | null;
 }
 
+/**
+ * Canonicalized tool schemas, memoized per Tool identity. Conversion runs per
+ * tool per request but `canonicalizeToolSchema` is pure and never mutates its
+ * input, so an entry is valid for as long as the producing `tool.parameters`
+ * reference is unchanged (identity-equal input yields identical output). The
+ * cached schema object is shared across requests by reference and must stay
+ * treated as immutable. Failures are never cached: a throw propagates before
+ * the entry is stored, exactly as an uncached call would.
+ */
+const anthropicToolSchemaCache = new WeakMap<
+  Tool,
+  { parameters: Tool['parameters']; inputSchema: AnthropicTool['input_schema'] }
+>();
+
 function convertTool(tool: Tool): AnthropicToolParam {
+  let cached = anthropicToolSchemaCache.get(tool);
+  if (cached === undefined || cached.parameters !== tool.parameters) {
+    cached = {
+      parameters: tool.parameters,
+      // Canonical form keeps the tools[] payload byte-stable across MCP
+      // reconnects / key-order drift so the cache_control breakpoints hold.
+      inputSchema: canonicalizeToolSchema(tool.parameters) as AnthropicTool['input_schema'],
+    };
+    anthropicToolSchemaCache.set(tool, cached);
+  }
+  // The wrapper is built fresh per request: the caller attaches cache_control
+  // to the last converted tool, so the wrapper itself must never be cached.
   return {
     name: tool.name,
     description: tool.description,
-    input_schema: tool.parameters as AnthropicTool['input_schema'],
+    input_schema: cached.inputSchema,
   };
 }
 function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResultBlockParam {
@@ -493,7 +535,7 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
     content: blocks,
   } as ToolResultBlockParam;
 }
-function convertMessage(message: Message, model: string): MessageParam {
+function convertMessage(message: Message, preserveUnsignedThinking: boolean): MessageParam {
   const role = message.role;
 
   // system role -> <system>...</system> wrapped user message
@@ -544,7 +586,7 @@ function convertMessage(message: Message, model: string): MessageParam {
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
-      } else if (shouldPreserveUnsignedThinking(model)) {
+      } else if (preserveUnsignedThinking) {
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     } else if (part.type === 'video_url') {
@@ -568,11 +610,15 @@ function convertMessage(message: Message, model: string): MessageParam {
           if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
             toolInput = parsed as Record<string, unknown>;
           } else {
-            throw new ChatProviderError('Tool call arguments must be a JSON object.');
+            throw new ChatProviderError(
+              `Tool call arguments must be a JSON object (tool: ${tc.name}, id: ${tc.id}).`,
+            );
           }
         } catch (error) {
           if (error instanceof ChatProviderError) throw error;
-          throw new ChatProviderError('Tool call arguments must be valid JSON.');
+          throw new ChatProviderError(
+            `Tool call arguments must be valid JSON (tool: ${tc.name}, id: ${tc.id}).`,
+          );
         }
       }
       blocks.push({
@@ -1012,6 +1058,10 @@ export class AnthropicChatProvider implements ChatProvider {
     // a tool result. The shared helper applies the asymmetric merge rule (see
     // mergeConsecutiveUserMessages) so this provider and Gemini/Vertex stay in
     // step.
+    // `_model` is assigned only in the constructor, so the unsigned-thinking
+    // policy is constant for the whole request — compute it once here rather
+    // than per thinking part inside convertMessage.
+    const preserveUnsignedThinking = shouldPreserveUnsignedThinking(this._model);
     const messages = mergeConsecutiveUserMessages(
       normalizeToolCallIdsForProvider(
         // Message-level tool declarations are a Kimi wire feature; here the
@@ -1020,7 +1070,7 @@ export class AnthropicChatProvider implements ChatProvider {
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
       )
-        .map((msg) => convertMessage(msg, this._model))
+        .map((msg) => convertMessage(msg, preserveUnsignedThinking))
         .filter(shouldKeepConvertedMessage),
       {
         isUser: (message) => message.role === 'user',

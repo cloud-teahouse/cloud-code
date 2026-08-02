@@ -1,16 +1,21 @@
 import { homedir } from 'node:os';
 import { join } from 'pathe';
-import type { Kaos } from '@moonshot-ai/kaos';
-import type { SessionWarning } from '@moonshot-ai/protocol';
+import type { Kaos } from '@cloud-code/kaos';
+import type { SessionWarning, TeamWire } from '@cloud-code/protocol';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import type { Logger, SessionLogHandle } from '#/logging/types';
-import type { KimiConfig, SDKSessionRPC } from '#/rpc';
+import type { CloudCodeConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
 import { renderPluginSessionStartReminder } from '../agent/injection/plugin-session-start';
+import type { TeammateIdentity } from '../agent/swarm/teammate-context';
+import { MailboxService, mailboxActivityPreview, type MailboxServiceOptions } from '../agent/swarm/mailbox-service';
+import type { TeammateKeepAliveOptions } from '../agent/swarm/teammate-keepalive';
+import { TeamStore } from '../agent/swarm/team-store';
+import { resolveCloudCodeHome } from '../config/path';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import {
@@ -27,6 +32,7 @@ import {
 } from '../config';
 import { makeErrorPayload } from '../errors';
 import {
+  McpAuthCache,
   McpConnectionManager,
   McpOAuthService,
   resolveMcpStartupTimeoutMs,
@@ -34,21 +40,32 @@ import {
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
-import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '../plugin';
+import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginAgentDir, PluginCommandDef, PluginOutputStyleDir } from '../plugin';
 import {
   AgentProfileCatalogSnapshotSchema,
   DEFAULT_AGENT_PROFILE_NAME,
+  DEFAULT_AGENT_PROFILES,
   DEFAULT_INIT_PROMPT,
+  formatMcpServerInstructions,
   SessionAgentProfileCatalog,
   loadAgentsMd,
+  loadCustomAgentProfiles,
+  loadOutputStyles,
+  normalizeOutputStyleName,
+  onUserLanguageChange,
   prepareSystemPromptContext,
+  resolveDefaultAgentProfiles,
+  resolveOutputStyle,
+  summarizeOutputStyle,
   type AgentFileRoot,
   type AgentProfileCatalogSnapshot,
+  type OutputStyleDefinition,
+  type OutputStyleSummary,
   type ResolvedAgentProfile,
 } from '../profile';
 import type { ProviderManager } from './provider-manager';
 import {
-  resolveSecondaryModel,
+  resolveSecondaryModelRecipe,
   wrapSubagentModelError,
 } from './subagent-binding';
 import {
@@ -63,7 +80,6 @@ import {
   type SkillRoot,
   type SkillSummary,
 } from '../skill';
-import { noopTelemetryClient, type TelemetryClient, withTelemetryProperties } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
 import { sessionMediaOriginalsDir } from '../tools/support/image-originals';
 import type { ToolServices } from '../tools/support/services';
@@ -75,10 +91,10 @@ import { resolveMainAgentProfile } from './main-agent-profile';
 export interface SessionOptions {
   readonly kaos: Kaos;
   readonly persistenceKaos?: Kaos;
-  readonly config?: KimiConfig;
+  readonly config?: CloudCodeConfig;
   readonly id?: string | undefined;
   readonly homedir: string;
-  readonly kimiHomeDir?: string;
+  readonly cloudCodeHomeDir?: string;
   readonly rpc: SDKSessionRPC;
   readonly toolServices?: ToolServices;
   readonly initializeMainAgent?: boolean | undefined;
@@ -89,9 +105,12 @@ export interface SessionOptions {
   readonly skills?: SessionSkillConfig;
   readonly agents?: SessionAgentCatalogConfig;
   readonly mcpConfig?: SessionMcpConfig;
-  readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
+  /** Plugin-provided agent dirs (`plugin/manager.ts` `pluginAgentDirs()`). */
+  readonly pluginAgentDirs?: readonly PluginAgentDir[];
+  /** Plugin-provided output-style dirs (`plugin/manager.ts` `pluginOutputStyleDirs()`). */
+  readonly pluginOutputStyleDirs?: readonly PluginOutputStyleDir[];
   readonly pluginSystemPrompts?: readonly EnabledPluginSystemPrompt[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
@@ -99,16 +118,28 @@ export interface SessionOptions {
   readonly imageLimits?: ImageLimits;
   readonly additionalDirs?: readonly string[];
   /**
-   * Print-mode (`kimi -p`) only: hold the main turn open while background
+   * Print-mode (`cloud-code -p`) only: hold the main turn open while background
    * subagents (`kind === 'agent'`) are still running, idle-waiting until they
    * finish before the run exits. Set via the SDK `createSession` option.
    */
   readonly drainAgentTasksOnStop?: boolean;
+  /**
+   * Mailbox tuning: delivery poll interval and the shutdown wrap-up
+   * grace window. Defaults are production values; tests shrink them.
+   */
+  readonly mailbox?: MailboxServiceOptions;
+  /**
+   * Teammate runtime tuning (idle keep-alive): how long a
+   * settled teamed teammate waits for new team work before exiting, and the
+   * work-check poll cadence. Defaults are production values; tests shrink
+   * them. `idleTimeoutMs: 0` disables keep-alive.
+   */
+  readonly teammate?: TeammateKeepAliveOptions;
 }
 
 export interface SessionSkillConfig {
   readonly userHomeDir?: string;
-  /** Brand data dir (KIMI_CODE_HOME); user brand skills live under `<brandHomeDir>/skills`. */
+  /** Brand data dir (CLOUD_CODE_HOME); user brand skills live under `<brandHomeDir>/skills`. */
   readonly brandHomeDir?: string;
   readonly explicitDirs?: readonly string[];
   readonly extraDirs?: readonly string[];
@@ -120,7 +151,7 @@ export interface SessionSkillConfig {
 /**
  * File-defined agent (agentfile) discovery for a session. Mirrors the skill
  * discovery layout: user brand dir `<kimiHomeDir>/agents` and
- * `~/.agents/agents`, project `.kimi-code/agents` and `.agents/agents`, plus
+ * `~/.agents/agents`, project `.cloud-code/agents` and `.agents/agents`, plus
  * configured extra dirs and explicit single files (`--agent-file`, fatal
  * when invalid). `profileName` selects the main agent's profile (`--agent`).
  */
@@ -142,6 +173,13 @@ export interface AgentMeta {
   readonly type: AgentType;
   readonly parentAgentId?: string | null;
   readonly swarmItem?: string;
+  /**
+   * Set when this agent is an in-process teammate: the stable
+   * teammate identity, persisted so resume/retry runs and restored sessions
+   * re-establish the AsyncLocalStorage teammate context and the topology
+   * latch.
+   */
+  readonly teammate?: TeammateIdentity;
 }
 
 interface ResumedAgent {
@@ -155,6 +193,7 @@ export interface CreateAgentOptions {
   readonly profile?: ResolvedAgentProfile;
   readonly parentAgentId?: string;
   readonly swarmItem?: string;
+  readonly teammate?: TeammateIdentity;
   readonly persistMetadata?: boolean;
 }
 
@@ -182,7 +221,7 @@ interface PersistedSessionState extends SessionMeta {
   readonly agentProfileCatalog?: unknown;
 }
 
-const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
+const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'CLOUD_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
 const ACTIVE_TURN_CLOSE_TIMEOUT_MS = 8_000;
 
 async function waitForSettlementOrTimeout(
@@ -210,9 +249,33 @@ async function waitForSettlementOrTimeout(
   }
 }
 
+/**
+ * Compaction-boundary metadata tail re-append (fires during compaction
+ * and at exit): wraps the
+ * session RPC so a live `compaction.completed` event from the MAIN agent
+ * schedules a re-append, keeping the lite reader's tail window
+ * self-describing between the close-time re-appends of a long session.
+ * Replay emissions never reach here (`Agent.emitEvent` gates on
+ * `records.restoring`); subagent compactions are ignored because
+ * `session.meta` only lives on the main agent's wire.
+ */
+function wrapSessionRpcForCompactionReappend(
+  rpc: SDKSessionRPC,
+  scheduleReappend: () => void,
+): SDKSessionRPC {
+  return {
+    ...rpc,
+    emitEvent: (event) => {
+      if (event.type === 'compaction.completed' && event.agentId === 'main') {
+        scheduleReappend();
+      }
+      return rpc.emitEvent(event);
+    },
+  };
+}
+
 export class Session {
   readonly rpc: SDKSessionRPC;
-  readonly telemetry: TelemetryClient;
   readonly skills: SessionSkillRegistry;
   readonly agents: Map<string, AgentEntry> = new Map();
   readonly mcp: McpConnectionManager;
@@ -221,6 +284,19 @@ export class Session {
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
   readonly imageLimits: ImageLimits;
+  /**
+   * Session-shared team store: team files + shared task lists at
+   * `<sessionDir>/teams/`. One instance is handed to every agent the session
+   * creates, and to the subagent host for spawn-time team bookkeeping.
+   */
+  readonly teamStore: TeamStore;
+  /**
+   * Session-shared mailbox service: per-team inboxes, delivery
+   * watchers, and the shutdown protocol. One instance is handed to every
+   * agent the session creates, and to the subagent host for teammate
+   * delivery wiring.
+   */
+  readonly mailbox: MailboxService;
   readonly agentCatalog: SessionAgentProfileCatalog;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
@@ -230,6 +306,16 @@ export class Session {
   private pluginSystemPrompts: readonly EnabledPluginSystemPrompt[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
+  private agentProfiles: Record<string, ResolvedAgentProfile> = DEFAULT_AGENT_PROFILES;
+  private readonly customAgentsReady: Promise<void>;
+  /**
+   * Output-style registry (`profile/output-style.ts`): builtin styles plus
+   * user/project/plugin dirs, loaded once at session start. Agents read it
+   * live through the provider passed at construction; `listOutputStyles` and
+   * `setOutputStyle` await `outputStylesReady` first.
+   */
+  private outputStyles: readonly OutputStyleDefinition[] = [];
+  private readonly outputStylesReady: Promise<void>;
   metadata: SessionMeta = {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -241,18 +327,28 @@ export class Session {
   private writeMetadataPromise = Promise.resolve();
   private agentProfileSnapshot: AgentProfileCatalogSnapshot | undefined;
   private agentsMdWarning: string | undefined;
+  // Aggregated MCP server instructions last rendered into agent system
+  // prompts; compared in `refreshAgentsOnMcpInstructionsChange`.
+  private lastMcpInstructionsBlock = '';
+  // True while the startup `connectAll` is still in flight: per-server status
+  // events arrive one by one, and refreshing on each would bust every ready
+  // agent's prompt-cache prefix several times in a row. Refreshes are gated
+  // until the initial load settles, then a single aggregated refresh runs.
+  private mcpInitialLoadPending = false;
   private printSteerDeadline: number | undefined;
   private printSteerTurns = 0;
+  private readonly unsubscribeUserLanguage: () => void;
   /**
    * The session's live config snapshot. Initialized from `options.config`;
-   * updated in place by {@link setSecondaryModelConfig} so mid-session secondary-model
-   * switches reach the spawn-binding and tool-description readers without
+   * updated in place by {@link setSecondaryModelConfig} and
+   * {@link setOutputStyle} so mid-session switches reach the readers of the
+   * snapshot (spawn-binding, tool descriptions, agent construction) without
    * recreating the session.
    */
-  private runtimeConfig: KimiConfig | undefined;
+  private runtimeConfig: CloudCodeConfig | undefined;
 
   /** The session's current config snapshot (see {@link Session.runtimeConfig}). */
-  get kimiConfig(): KimiConfig | undefined {
+  get kimiConfig(): CloudCodeConfig | undefined {
     return this.runtimeConfig;
   }
 
@@ -271,37 +367,82 @@ export class Session {
     this.log =
       this.logHandle?.logger ??
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
-    this.rpc = options.rpc;
+    this.rpc = wrapSessionRpcForCompactionReappend(options.rpc, () => {
+      // Best-effort: a failed re-append must never break the event channel.
+      void this.reAppendSessionMetadata().catch((error: unknown) => {
+        this.log.warn('session metadata re-append after compaction failed', { error });
+      });
+    });
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
     this.imageLimits = options.imageLimits ?? new ImageLimits();
     this.hookEngine = new HookEngine(options.hooks, {
       cwd: options.kaos.getcwd(),
       sessionId: options.id,
     });
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
     this.pluginCommands = options.pluginCommands ?? [];
+    this.teamStore = new TeamStore(options.homedir, {
+      onChange: (teamName) => {
+        void this.emitTeamSnapshot(teamName).catch(() => {});
+      },
+    });
+    this.mailbox = new MailboxService(options.homedir, {
+      roster: () => this.metadata.agents,
+      leader: () => this.getReadyAgent('main'),
+      stopAgentTask: (agentId, reason) => this.stopAgentTask(agentId, reason),
+      emitActivity: (teamName, message) => {
+        void this.rpc.emitEvent({
+          type: 'mailbox.activity',
+          agentId: 'main',
+          message: {
+            id: message.id,
+            teamName,
+            from: message.from,
+            to: message.to,
+            kind: message.kind,
+            preview: mailboxActivityPreview(message),
+            createdAt: message.createdAt,
+          },
+        });
+      },
+    }, options.mailbox);
     this.pluginSystemPrompts = options.pluginSystemPrompts ?? [];
     this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
     this.mcp = new McpConnectionManager({
-      oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
+      oauthService: new McpOAuthService({ cloudCodeHomeDir: options.cloudCodeHomeDir }),
       log: this.log,
       stdioCwd: options.kaos.getcwd(),
       defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(options.config?.mcp?.startupTimeoutMs),
       defaultToolTimeoutMs: resolveMcpToolTimeoutMs(options.config?.mcp?.toolTimeoutMs),
+      // Anti-avalanche needs-auth cache: lives next to the OAuth
+      // credential store in the brand home.
+      authCache: new McpAuthCache({
+        path: join(resolveCloudCodeHome(options.cloudCodeHomeDir), 'mcp-needs-auth-cache.json'),
+      }),
     });
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
+    });
+    // Host-driven UI-language switches (`/language`): fan the new value out
+    // to every ready agent; each latches it and does a one-time system-prompt
+    // re-render (see Agent.setUserLanguage). Agents spawned afterwards pick
+    // up the current value at construction.
+    this.unsubscribeUserLanguage = onUserLanguageChange((language) => {
+      for (const agent of this.readyAgents()) {
+        agent.setUserLanguage(language).catch((error: unknown) => {
+          this.log.warn('system prompt refresh after language change failed', { error });
+        });
+      }
     });
     this.agentCatalog =
       options.agents?.catalog ??
       new SessionAgentProfileCatalog({
         workDir: options.kaos.getcwd(),
-        brandHomeDir: options.kimiHomeDir ?? join(homedir(), '.kimi-code'),
+        brandHomeDir: options.cloudCodeHomeDir ?? join(homedir(), '.cloud-code'),
         osHomeDir: options.agents?.userHomeDir ?? homedir(),
         extraDirs: options.agents?.extraDirs ?? options.config?.extraAgentDirs,
         explicitFiles: options.agents?.explicitFiles,
@@ -322,6 +463,16 @@ export class Session {
       .then(() => {
         this.refreshAgentBuiltinTools();
       });
+    this.customAgentsReady = this.loadCustomAgents()
+      .catch((error: unknown) => {
+        this.log.error('custom agents load failed', error);
+      })
+      .then(() => {
+        this.refreshAgentBuiltinTools();
+      });
+    this.outputStylesReady = this.loadOutputStyles().catch((error: unknown) => {
+      this.log.error('output styles load failed', error);
+    });
     void this.loadMcpServers().catch((error: unknown) => {
       this.emitInitialMcpLoadError(error);
     });
@@ -474,16 +625,23 @@ export class Session {
     const main = await this.ensureAgentResumed('main');
     const currentProfileName = main.config.profileName ?? DEFAULT_AGENT_PROFILE_NAME;
     if (currentProfileName === requestedProfileName) return;
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.REQUEST_INVALID,
       `agent is already bound to profile "${currentProfileName}"; cannot switch to "${requestedProfileName}" in this session`,
     );
   }
 
   async close(): Promise<void> {
+    this.unsubscribeUserLanguage();
     try {
+      await this.mailbox.close();
       await Promise.allSettled(
-        Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
+        Array.from(this.readyAgents(), async (agent) => {
+          // Drop any parked rate-limit auto-resume: a paused session
+          // being torn down must not come back to life after close.
+          agent.turn.cancelRateLimitResume();
+          await agent.cron?.stop();
+        }),
       );
       await this.cancelActiveTurnsOnClose();
       await this.stopBackgroundTasksOnExit();
@@ -499,9 +657,14 @@ export class Session {
   }
 
   async closeForReload(): Promise<void> {
+    this.unsubscribeUserLanguage();
     try {
+      await this.mailbox.close();
       await Promise.allSettled(
-        Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
+        Array.from(this.readyAgents(), async (agent) => {
+          agent.turn.cancelRateLimitResume();
+          await agent.cron?.stop();
+        }),
       );
       await this.flushMetadata();
     } finally {
@@ -585,7 +748,7 @@ export class Session {
 
   /**
    * Wait for all still-running background tasks (across every agent) to reach a
-   * terminal state before a `kimi -p` (print) run exits.
+   * terminal state before a `cloud-code -p` (print) run exits.
    *
    * Only runs when the resolved print background mode is `'drain'` (see
    * `resolvePrintBackgroundMode`): `print_background_mode = "drain"`, or the
@@ -654,7 +817,7 @@ export class Session {
   }
 
   /**
-   * Resolve the effective print-mode (`kimi -p`) background-task policy.
+   * Resolve the effective print-mode (`cloud-code -p`) background-task policy.
    *
    * `background.print_background_mode` is authoritative when set. Otherwise we
    * fall back to the legacy `background.keep_alive_on_exit` mapping so existing
@@ -685,7 +848,7 @@ export class Session {
   }
 
   /**
-   * Decide what the `kimi -p` driver should do after the main agent's turn ends
+   * Decide what the `cloud-code -p` driver should do after the main agent's turn ends
    * with `reason === 'completed'`. Returns `'finish'` when the run may exit, or
    * `'continue'` when the driver must stay alive so a background-task completion
    * can `turn.steer` the main agent into a new turn.
@@ -747,6 +910,7 @@ export class Session {
         type,
         parentAgentId,
         swarmItem: options.swarmItem,
+        teammate: options.teammate,
       };
       void this.writeMetadata();
     }
@@ -758,7 +922,7 @@ export class Session {
     const entry = this.agents.get(id);
     if (entry !== undefined) return (await this.resolveAgentEntry(entry)).agent;
     if (this.metadata.agents[id] === undefined) {
-      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${id}" was not found`);
+      throw new CloudCodeError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${id}" was not found`);
     }
     return (await this.resumeAgent(id)).agent;
   }
@@ -772,13 +936,16 @@ export class Session {
     agent: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
+    // Styles load asynchronously at session start; the first render must see
+    // them or a configured style would silently render as the stock prompt.
+    await this.outputStylesReady;
     const context = await prepareSystemPromptContext(
       this.systemContextKaos(agent.kaos.getcwd()),
-      this.options.kimiHomeDir,
-      { additionalDirs: this.additionalDirs },
+      this.options.cloudCodeHomeDir,
+      { additionalDirs: this.additionalDirs, includeGitStatus: true },
     );
     const subagentNames = Object.keys(this.agentCatalog.delegatableSubagents(profile.name));
-    agent.useProfile(profile, context, this.options.kimiHomeDir, subagentNames);
+    agent.useProfile(profile, context, this.options.cloudCodeHomeDir, subagentNames);
     const { agentsMdWarning } = context;
     if (agentsMdWarning !== undefined) {
       this.agentsMdWarning = agentsMdWarning;
@@ -816,17 +983,17 @@ export class Session {
    * that complete recipe and its model entries keeps spawn binding and provider
    * resolution aligned without live-applying unrelated session settings.
    */
-  setSecondaryModelConfig(config: KimiConfig): void {
+  setSecondaryModelConfig(config: CloudCodeConfig): void {
     const base = this.runtimeConfig;
     if (base === undefined) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         'Cannot set the secondary model: the session has no config.',
       );
     }
     const secondary = config.secondaryModel;
     if (secondary?.model === undefined) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         'Cannot set the secondary model: persist its recipe before applying it to a session.',
       );
@@ -868,7 +1035,7 @@ export class Session {
   private computeSecondaryModelWarnings(): SessionWarning[] {
     if (this.secondaryModelWarnings !== undefined) return [...this.secondaryModelWarnings];
     const warnings: SessionWarning[] = [];
-    const secondary = resolveSecondaryModel(this.kimiConfig, this.experimentalFlags);
+    const secondary = resolveSecondaryModelRecipe(this.kimiConfig);
     if (secondary?.model !== undefined) {
       const boundAlias =
         secondaryModelPatch(secondary) === undefined
@@ -913,7 +1080,7 @@ export class Session {
     try {
       const context = await prepareSystemPromptContext(
         this.systemContextKaos(this.toolKaos.getcwd()),
-        this.options.kimiHomeDir,
+        this.options.cloudCodeHomeDir,
         { additionalDirs: this.additionalDirs },
       );
       this.agentsMdWarning = context.agentsMdWarning;
@@ -938,14 +1105,14 @@ export class Session {
       });
       await handle.completion;
 
-      const agentsMd = await loadAgentsMd(mainAgent.kaos, this.options.kimiHomeDir);
+      const agentsMd = await loadAgentsMd(mainAgent.kaos, this.options.cloudCodeHomeDir);
       mainAgent.context.appendSystemReminder(initCompletionReminder(agentsMd), {
         kind: 'injection',
         variant: 'init',
       });
       await mainAgent.records.flush();
     } catch (error) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.SESSION_INIT_FAILED,
         error instanceof Error ? error.message : 'Init failed',
         { cause: error },
@@ -959,7 +1126,6 @@ export class Session {
    * persisted and visible on the wire. Used by the explicit `/reload` flow after
    * the session has been re-resumed with reloaded plugin state.
    *
-   * When no plugin session start is currently resolvable but an earlier
    * When no plugin session start is currently resolvable but the context may still
    * carry stale plugin guidance — either an earlier `<plugin_session_start>`
    * reminder, or a compaction summary that may have folded one in — appends a
@@ -1067,7 +1233,100 @@ export class Session {
   async flushMetadata() {
     await this.skillsReady;
     await this.writeMetadataPromise;
+    // Close-time metadata tail re-append: land the final title/lastPrompt
+    // at the wire EOF so the lite reader's tail window always carries them,
+    // then flush the wire writes behind it.
+    await this.reAppendSessionMetadata();
     await Promise.all(Array.from(this.readyAgents()).map((agent) => agent.records.flush()));
+  }
+
+  /**
+   * Best-effort merge of externally-mutated listing metadata (04i "absorb from
+   * the tail before re-appending", adapted: our metadata source of truth is
+   * `state.json`, not the wire tail). Another process holding this session (a
+   * second TUI, an SDK embedder) may have renamed it or moved lastPrompt since
+   * this process last wrote `state.json`; when the on-disk `updatedAt` is
+   * newer, the disk's listing fields are adopted so a later whole-file write
+   * from our stale cache does not clobber them. Runtime-owned fields (agents,
+   * custom, additionalDirs) always stay with the in-memory value.
+   *
+   * Fail-open: an unreadable or malformed `state.json` leaves the in-memory
+   * cache authoritative. Best-effort only — there is no cross-process lock, so
+   * this narrows but cannot eliminate the read-modify-write race window.
+   */
+  async absorbExternalMetadata(): Promise<void> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await this.persistenceKaos.readText(this.metadataPath));
+    } catch {
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return;
+    const disk = parsed as Record<string, unknown>;
+    const diskUpdatedAt =
+      typeof disk['updatedAt'] === 'string' ? Date.parse(disk['updatedAt']) : Number.NaN;
+    const memoryUpdatedAt = Date.parse(this.metadata.updatedAt);
+    // The disk must not be older than the cache: an older timestamp means the
+    // read raced this process's own queued write, so the cache is fresher.
+    if (!Number.isFinite(diskUpdatedAt) || diskUpdatedAt < memoryUpdatedAt) return;
+    const diskTitle = typeof disk['title'] === 'string' ? disk['title'] : undefined;
+    const diskIsCustomTitle =
+      typeof disk['isCustomTitle'] === 'boolean' ? disk['isCustomTitle'] : undefined;
+    const diskLastPrompt = typeof disk['lastPrompt'] === 'string' ? disk['lastPrompt'] : undefined;
+    const diskCustomTitle = typeof disk['customTitle'] === 'string' ? disk['customTitle'] : undefined;
+    // Absorb only when the listing fields actually moved. The timestamp check
+    // alone is not sufficient: the static SessionStore rename path (a second
+    // process with the session closed there but open here) does not bump
+    // updatedAt, so a field-level diff is the only reliable external-writer
+    // signal that covers every writer.
+    const moved =
+      (diskTitle !== undefined && diskTitle !== this.metadata.title) ||
+      (diskIsCustomTitle !== undefined && diskIsCustomTitle !== this.metadata.isCustomTitle) ||
+      (diskLastPrompt !== undefined && diskLastPrompt !== this.metadata.lastPrompt) ||
+      (diskCustomTitle !== undefined &&
+        diskCustomTitle !==
+          (this.metadata as SessionMeta & { customTitle?: string }).customTitle);
+    if (!moved) return;
+    this.metadata = {
+      ...this.metadata,
+      title: diskTitle ?? this.metadata.title,
+      isCustomTitle: diskIsCustomTitle ?? this.metadata.isCustomTitle,
+      lastPrompt: diskLastPrompt ?? this.metadata.lastPrompt,
+      // Legacy `customTitle` field (hasCustomTitle compat): carried along when
+      // an external writer sets it.
+      ...(diskCustomTitle === undefined ? {} : { customTitle: diskCustomTitle }),
+    } as SessionMeta;
+  }
+
+  /**
+   * Re-append the cached session listing metadata to the tail of the main
+   * agent's wire log as a `session.meta` record (04i metadata tail re-append).
+   * Keeps the wire tail window self-describing for the lite reader
+   * (`session/store/wire-lite.ts`) and lets title/lastPrompt travel with
+   * wire-only exports and migrations. External changes are absorbed first
+   * (see {@link absorbExternalMetadata}) so a stale in-memory cache never
+   * overwrites a fresher title.
+   *
+   * Trigger points (mirroring Claude's compaction + exit pair): live
+   * `compaction.completed` events (see `wrapSessionRpcForCompactionReappend`),
+   * rename-style RPC flows, and close via {@link flushMetadata} (the
+   * catch-all). No-op when the main agent is not materialized in this process
+   * (e.g. the first prompt has not created it yet). The write rides the
+   * normal records batch flush; callers do not flush explicitly except on
+   * close.
+   */
+  async reAppendSessionMetadata(): Promise<void> {
+    const main = this.getReadyAgent('main');
+    if (main === undefined) return;
+    await this.absorbExternalMetadata();
+    const { title, isCustomTitle, lastPrompt } = this.metadata;
+    if (title === undefined && lastPrompt === undefined) return;
+    main.records.logRecord({
+      type: 'session.meta',
+      ...(title === undefined ? {} : { title }),
+      ...(isCustomTitle ? { isCustomTitle: true } : {}),
+      ...(lastPrompt === undefined ? {} : { lastPrompt }),
+    });
   }
 
   async listSkills(): Promise<readonly SkillSummary[]> {
@@ -1079,11 +1338,97 @@ export class Session {
     return this.pluginCommands;
   }
 
+  /**
+   * Every output style visible to this session: the bundled styles plus
+   * user/project/plugin dirs (`profile/output-style.ts` precedence).
+   */
+  async listOutputStyles(): Promise<readonly OutputStyleSummary[]> {
+    await this.outputStylesReady;
+    return this.outputStyles.map(summarizeOutputStyle);
+  }
+
+  /**
+   * Live-switch the session's output style: every ready agent latches the new
+   * name and does a one-time system-prompt re-render (see
+   * `Agent.setOutputStyle`). The session's config snapshot moves with the
+   * switch so agents spawned afterwards seed the same style (they read
+   * `outputStyle` at construction); persistence to the config file stays with
+   * the host, like model selection. `default` (or an unknown name rejected
+   * below) restores the stock prompt.
+   */
+  async setOutputStyle(name: string): Promise<void> {
+    await this.outputStylesReady;
+    const normalized = normalizeOutputStyleName(name);
+    if (normalized !== undefined && resolveOutputStyle(this.outputStyles, normalized) === undefined) {
+      throw new CloudCodeError(
+        ErrorCodes.SESSION_OUTPUT_STYLE_NOT_FOUND,
+        `Unknown output style: "${name}"`,
+      );
+    }
+    if (normalized === undefined) {
+      if (this.runtimeConfig?.outputStyle !== undefined) {
+        const next = { ...this.runtimeConfig };
+        delete next.outputStyle;
+        this.runtimeConfig = next;
+      }
+    } else if (this.runtimeConfig?.outputStyle !== normalized) {
+      this.runtimeConfig = { ...(this.runtimeConfig ?? { providers: {} }), outputStyle: normalized };
+    }
+    await Promise.all(
+      [...this.readyAgents()].map((agent) => agent.setOutputStyle(normalized)),
+    );
+  }
+
+  private async loadOutputStyles(): Promise<void> {
+    this.outputStyles = await loadOutputStyles({
+      // The brand home already follows CLOUD_CODE_HOME (see resolveCloudCodeHome).
+      // Without it there is no user-level location to scan.
+      userDir:
+        this.options.cloudCodeHomeDir === undefined
+          ? undefined
+          : join(this.options.cloudCodeHomeDir, 'output-styles'),
+      projectDir: join(this.toolKaos.getcwd(), '.cloud-code', 'output-styles'),
+      pluginDirs: this.options.pluginOutputStyleDirs,
+      onWarning: (message) => this.log.warn(message),
+    });
+  }
+
+  /**
+   * Agent profiles available to this session: the bundled defaults plus any
+   * file-based custom agents (`.cloud-code/agents/*.md`). Starts as the
+   * defaults and is replaced once custom agents finish loading.
+   */
+  getAgentProfiles(): Record<string, ResolvedAgentProfile> {
+    return this.agentProfiles;
+  }
+
+  /** Resolves once file-based custom agents have been loaded and merged. */
+  async waitForCustomAgents(): Promise<void> {
+    await this.customAgentsReady;
+  }
+
+  private async loadCustomAgents(): Promise<void> {
+    const customProfiles = await loadCustomAgentProfiles({
+      // The brand home already follows CLOUD_CODE_HOME (see resolveCloudCodeHome).
+      // Without it there is no user-level location to scan.
+      userDir:
+        this.options.cloudCodeHomeDir === undefined
+          ? undefined
+          : join(this.options.cloudCodeHomeDir, 'agents'),
+      projectDir: join(this.toolKaos.getcwd(), '.cloud-code', 'agents'),
+      pluginDirs: this.options.pluginAgentDirs,
+      reservedNames: new Set(Object.keys(DEFAULT_AGENT_PROFILES)),
+      log: this.log,
+    });
+    if (customProfiles.length === 0) return;
+    this.agentProfiles = resolveDefaultAgentProfiles(customProfiles);
+  }
+
   private async loadSkills(): Promise<void> {
     const roots = await resolveSkillRoots({
       paths: {
         userHomeDir: this.options.skills?.userHomeDir ?? homedir(),
-        brandHomeDir: this.options.skills?.brandHomeDir ?? this.options.kimiHomeDir,
+        brandHomeDir: this.options.skills?.brandHomeDir ?? this.options.cloudCodeHomeDir,
         workDir: this.options.kaos.getcwd(),
       },
       explicitDirs: this.options.skills?.explicitDirs,
@@ -1099,25 +1444,14 @@ export class Session {
   private async loadMcpServers(): Promise<void> {
     const servers = this.options.mcpConfig?.servers;
     if (servers === undefined || Object.keys(servers).length === 0) return;
-    await this.mcp.connectAll(servers);
-    const entries = this.mcp.list().filter((entry) => entry.status !== 'disabled');
-    const totalCount = entries.length;
-    if (totalCount === 0) return;
-
-    const connectedCount = entries.filter((entry) => entry.status === 'connected').length;
-    if (connectedCount > 0) {
-      this.telemetry.track('mcp_connected', {
-        server_count: connectedCount,
-        total_count: totalCount,
-      });
-    }
-
-    const failedCount = entries.filter((entry) => entry.status === 'failed').length;
-    if (failedCount > 0) {
-      this.telemetry.track('mcp_failed', {
-        failed_count: failedCount,
-        total_count: totalCount,
-      });
+    this.mcpInitialLoadPending = true;
+    try {
+      await this.mcp.connectAll(servers);
+    } finally {
+      // Settled: run the instructions check once, aggregating every change
+      // that arrived during startup into at most one prompt refresh.
+      this.mcpInitialLoadPending = false;
+      this.refreshAgentsOnMcpInstructionsChange();
     }
   }
 
@@ -1145,6 +1479,48 @@ export class Session {
         error: entry.error,
       },
     });
+    this.refreshAgentsOnMcpInstructionsChange();
+  }
+
+  /**
+   * MCP servers connect asynchronously at session startup — usually AFTER
+   * the main agent's system prompt was first rendered — and can reconnect or
+   * drop at any time. Server instructions are immutable per connection, so
+   * whenever the aggregated block changes we re-render every ready agent's
+   * system prompt. This busts the prompt-cache prefix by design; connection
+   * changes are rare enough for that to be acceptable.
+   *
+   * Two guardrails keep the rare bust from becoming a storm:
+   * - startup: while the initial `connectAll` is in flight, per-server status
+   *   events only update the live manager — the refresh runs once, aggregated,
+   *   when the initial load settles (`loadMcpServers` finally block).
+   * - resume: `lastMcpInstructionsBlock` is primed from the restored system
+   *   prompt (`primeMcpInstructionsBaseline`), so the first status event
+   *   after a resume does not misread the already-rendered block as a change.
+   */
+  private refreshAgentsOnMcpInstructionsChange(): void {
+    if (this.mcpInitialLoadPending) return;
+    const current = formatMcpServerInstructions(this.mcp.serverInstructions());
+    if (current === this.lastMcpInstructionsBlock) return;
+    this.lastMcpInstructionsBlock = current;
+    for (const agent of this.readyAgents()) {
+      agent.refreshSystemPrompt().catch((error: unknown) => {
+        this.log.warn('system prompt refresh after MCP instructions change failed', { error });
+      });
+    }
+  }
+
+  /**
+   * Initialize the instructions-change baseline from a resumed agent's
+   * restored system prompt: the block that was rendered when the session was
+   * persisted. Without this the baseline (`''`) mismatches the restored
+   * render and the first MCP status event after resume triggers a full
+   * system-prompt refresh that changes nothing.
+   */
+  private primeMcpInstructionsBaseline(agent: Agent): void {
+    const block = extractMcpInstructionsBlock(agent.config.systemPrompt);
+    if (block === undefined) return;
+    this.lastMcpInstructionsBlock = block;
   }
 
   private refreshAgentBuiltinTools(): void {
@@ -1191,6 +1567,7 @@ export class Session {
       toolServices: this.options.toolServices,
       config: this.kimiConfig,
       homedir,
+      brandHomeDir: this.options.cloudCodeHomeDir,
       // Session-level, shared across agents: originals persisted for
       // compression captions live with the session, not the agent.
       mediaOriginalsDir: sessionMediaOriginalsDir(this.options.homedir),
@@ -1199,12 +1576,14 @@ export class Session {
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
       subagentHost,
+      teamStore: config.teamStore ?? this.teamStore,
+      mailbox: config.mailbox ?? this.mailbox,
       mcp: this.mcp,
       permission: this.permissionOptions(parentAgentId, config.permission),
-      telemetry: withTelemetryProperties(this.telemetry, { agent_id: id }),
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       pluginCommands: type === 'main' ? this.options.pluginCommands : undefined,
+      outputStylesProvider: () => this.outputStyles,
       pluginSystemPrompts: this.pluginSystemPrompts,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
@@ -1212,8 +1591,10 @@ export class Session {
       systemPromptContextProvider: () =>
         prepareSystemPromptContext(
           this.systemContextKaos(agent.kaos.getcwd()),
-          this.options.kimiHomeDir,
-          { additionalDirs: agent.getAdditionalDirs() },
+          this.options.cloudCodeHomeDir,
+          // Git status is main-loop only; the memoized snapshot keeps
+          // post-compaction re-renders byte-identical to the bootstrap one.
+          { additionalDirs: agent.getAdditionalDirs(), includeGitStatus: type === 'main' },
         ),
     });
     return agent;
@@ -1240,6 +1621,52 @@ export class Session {
     return entry instanceof Agent ? entry : undefined;
   }
 
+  /**
+   * Stop the background task backing an agent through its parent's
+   * BackgroundManager (the mailbox shutdown protocol): resolves the task by
+   * agent id and rides the ordinary TaskStop path, so the task settles
+   * `killed` with the given reason and the parent gets the usual terminal
+   * notification. Returns false when no live task backs the agent.
+   */
+  async stopAgentTask(agentId: string, reason: string): Promise<boolean> {
+    const parentAgentId = this.metadata.agents[agentId]?.parentAgentId;
+    const parent =
+      parentAgentId !== undefined && parentAgentId !== null
+        ? this.getReadyAgent(parentAgentId)
+        : undefined;
+    if (parent === undefined) return false;
+    const task = parent.background
+      .list(true)
+      .find((info) => info.kind === 'agent' && info.agentId === agentId);
+    if (task === undefined) return false;
+    await parent.background.stop(task.taskId, reason);
+    return true;
+  }
+
+  /**
+   * Publish the current team snapshot as a `team.updated` protocol event
+   * (read-only team viewers). Fired by the TeamStore
+   * change hook on every persisted task-list mutation, and directly by the
+   * subagent host after a teammate spawn — membership lives in the session
+   * metadata (the roster authority), not the team file, so a spawn is a
+   * team-view change the store cannot see.
+   */
+  async emitTeamSnapshot(teamName: string): Promise<void> {
+    const team = await this.teamStore.getTeam(teamName);
+    if (team === undefined) return;
+    const members = Object.entries(this.metadata.agents)
+      .filter(([, meta]) => meta.teammate?.teamName === teamName)
+      .map(([agentId, meta]) => ({ name: meta.teammate!.name, agentId }))
+      .toSorted((a, b) => a.name.localeCompare(b.name));
+    const wire: TeamWire = {
+      name: team.name,
+      createdBy: team.createdBy,
+      members,
+      tasks: team.tasks.map((task) => ({ ...task })),
+    };
+    void this.rpc.emitEvent({ type: 'team.updated', agentId: 'main', team: wire });
+  }
+
   *readyAgents(): Iterable<Agent> {
     for (const entry of this.agents.values()) {
       if (entry instanceof Agent) yield entry;
@@ -1256,7 +1683,7 @@ export class Session {
     stack: readonly string[] = [],
   ): Promise<ResumedAgent> {
     if (stack.includes(id)) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.SESSION_STATE_INVALID,
         `Session agent parent chain contains a cycle: ${[...stack, id].join(' -> ')}`,
       );
@@ -1275,9 +1702,10 @@ export class Session {
     stack: readonly string[] = [],
   ): Promise<ResumedAgent> {
     await this.skillsReady;
+    await this.customAgentsReady;
     const meta = this.metadata.agents[id];
     if (meta === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session agent "${id}" is missing`);
+      throw new CloudCodeError(ErrorCodes.SESSION_STATE_INVALID, `Session agent "${id}" is missing`);
     }
 
     const parentAgentId = meta.parentAgentId ?? null;
@@ -1296,6 +1724,7 @@ export class Session {
       );
       const result = await agent.resume();
       this.restoreAgentProfileHandle(agent, meta, parent?.agent);
+      this.primeMcpInstructionsBaseline(agent);
       this.agents.set(id, agent);
       return { agent, warning: parent?.warning ?? result.warning };
     } catch (error) {
@@ -1315,7 +1744,7 @@ export class Session {
     if (agent.config.systemPrompt === '') return;
     const profile = this.resolvePersistedProfile(agent, meta, parentAgent);
     if (profile === undefined) return;
-    agent.setActiveProfile(profile, this.options.kimiHomeDir);
+    agent.setActiveProfile(profile, this.options.cloudCodeHomeDir);
   }
 
   private resolvePersistedProfile(
@@ -1345,7 +1774,7 @@ export class Session {
   private requireMainAgent(): Agent {
     const agent = this.getReadyAgent('main');
     if (agent === undefined) {
-      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+      throw new CloudCodeError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
     return agent;
   }
@@ -1368,6 +1797,38 @@ export class Session {
 export * from './subagent-host';
 export * from './subagent-binding';
 export * from './store';
+export * from './session-title';
+
+/**
+ * Delimiters of the rendered MCP instructions block inside the default system
+ * prompt template (`profile/default/system.md`): the fixed intro line
+ * immediately precedes the `CLOUD_CODE_MCP_INSTRUCTIONS` body, and the
+ * `# Ultimate Reminders` section immediately follows it. Used to recover the
+ * block rendered into a persisted system prompt on resume.
+ */
+const MCP_INSTRUCTIONS_INTRO =
+  'The following MCP servers have provided instructions for how to use their tools and resources:\n\n';
+const MCP_INSTRUCTIONS_OUTRO = '\n\n# Ultimate Reminders';
+
+/**
+ * Recover the aggregated MCP instructions block rendered into a system
+ * prompt — the exact string `formatMcpServerInstructions` produced for it —
+ * or `undefined` when the prompt carries no MCP section. Inverse of the
+ * template's `{% if CLOUD_CODE_MCP_INSTRUCTIONS %}` block; used to prime the
+ * instructions-change baseline from a persisted prompt on resume.
+ */
+export function extractMcpInstructionsBlock(systemPrompt: string): string | undefined {
+  const introIndex = systemPrompt.indexOf(MCP_INSTRUCTIONS_INTRO);
+  if (introIndex === -1) return undefined;
+  const blockStart = introIndex + MCP_INSTRUCTIONS_INTRO.length;
+  const blockEnd = systemPrompt.indexOf(MCP_INSTRUCTIONS_OUTRO, blockStart);
+  if (blockEnd === -1) return undefined;
+  let block = systemPrompt.slice(blockStart, blockEnd);
+  // The template puts exactly one newline between the rendered block and the
+  // following section; the live aggregate carries no trailing newline.
+  if (block.endsWith('\n')) block = block.slice(0, -1);
+  return block;
+}
 
 function initCompletionReminder(agentsMd: string): string {
   const latest =

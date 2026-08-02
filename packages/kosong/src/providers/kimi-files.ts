@@ -16,12 +16,12 @@ import {
   resolveAuthBackedClient,
 } from './request-auth';
 
-export interface KimiUploadOptions {
+export interface CloudCodeUploadOptions {
   auth?: ProviderRequestAuth;
   signal?: AbortSignal;
 }
 
-export interface KimiFilesOptions {
+export interface CloudCodeFilesOptions {
   apiKey?: string;
   baseUrl: string;
   defaultHeaders?: Record<string, string>;
@@ -45,7 +45,7 @@ export class KimiFiles {
   private readonly _client: OpenAI | undefined;
   private readonly _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
 
-  constructor(options: KimiFilesOptions) {
+  constructor(options: CloudCodeFilesOptions) {
     this._apiKey = options.apiKey;
     this._baseUrl = options.baseUrl;
     this._defaultHeaders = options.defaultHeaders;
@@ -75,7 +75,7 @@ export class KimiFiles {
    */
   async uploadVideo(
     input: string | VideoUploadInput,
-    options?: KimiUploadOptions,
+    options?: CloudCodeUploadOptions,
   ): Promise<VideoURLPart> {
     let file: unknown;
 

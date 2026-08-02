@@ -6,7 +6,7 @@ import {
   type ModelCapability,
   type StreamedMessagePart,
   type ToolCall,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -90,6 +90,61 @@ describe('KosongLLM streaming tool-call deltas', () => {
   });
 });
 
+describe('KosongLLM streaming tool-call readiness', () => {
+  it('forwards onToolCallReady from chat params to the kosong generate callbacks', async () => {
+    const readyCall: ToolCall = {
+      type: 'function',
+      id: 'call_read',
+      name: 'Read',
+      arguments: '{"path":"a.ts"}',
+    };
+    const generate: GenerateFn = async (_provider, _systemPrompt, _tools, _history, callbacks) => {
+      await callbacks?.onToolCallReady?.(readyCall);
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [], toolCalls: [readyCall] },
+        usage: emptyUsage(),
+        finishReason: 'tool_calls',
+        rawFinishReason: 'tool_calls',
+      };
+    };
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+
+    const received: ToolCall[] = [];
+    await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+      onToolCallReady: (toolCall) => {
+        received.push(toolCall);
+      },
+    });
+
+    expect(received).toEqual([readyCall]);
+  });
+
+  it('leaves the generate callback unset when the chat param is absent', async () => {
+    const generate: GenerateFn = async (_provider, _systemPrompt, _tools, _history, callbacks) => {
+      // The adapter must not synthesize a callback when the host passed none.
+      expect(callbacks?.onToolCallReady).toBeUndefined();
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+
+    await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+  });
+});
+
 describe('KosongLLM response id', () => {
   it('surfaces the provider response id from the generate result', async () => {
     const generate: GenerateFn = async () => ({
@@ -108,6 +163,56 @@ describe('KosongLLM response id', () => {
     });
 
     expect(response.messageId).toBe('chatcmpl-test');
+  });
+});
+
+describe('KosongLLM rate limit snapshot', () => {
+  it('surfaces the provider rate-limit snapshot from the generate result', async () => {
+    const rateLimit = {
+      planType: 'plus',
+      activeLimit: 'premium',
+      primary: { usedPercent: 26, windowMinutes: 10080, resetsAt: 1900000000 },
+      secondary: null,
+      credits: null,
+      capturedAt: 1900000000000,
+    };
+    const generate: GenerateFn = async () => ({
+      id: 'resp_rl',
+      message: { role: 'assistant', content: [], toolCalls: [] },
+      usage: emptyUsage(),
+      finishReason: 'completed',
+      rawFinishReason: 'completed',
+      rateLimit,
+    });
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+
+    const response = await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response.rateLimit).toEqual(rateLimit);
+  });
+
+  it('leaves rateLimit undefined when the provider reports none', async () => {
+    const generate: GenerateFn = async () => ({
+      id: 'resp_plain',
+      message: { role: 'assistant', content: [], toolCalls: [] },
+      usage: emptyUsage(),
+      finishReason: 'completed',
+      rawFinishReason: 'completed',
+      rateLimit: null,
+    });
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+
+    const response = await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response.rateLimit).toBeUndefined();
   });
 });
 
@@ -488,5 +593,87 @@ describe('downgradeUnsupportedMedia', () => {
     expect(captured?.[0]?.content).toEqual([
       { type: 'text', text: '[video omitted: current model has no video input]' },
     ]);
+  });
+});
+
+describe('KosongLLM completion budget override', () => {
+  function budgetTrackingProvider(): {
+    provider: ChatProvider;
+    caps: Array<number | undefined>;
+  } {
+    const caps: Array<number | undefined> = [];
+    const base: ChatProvider = {
+      name: 'test',
+      modelName: 'test-model',
+      thinkingEffort: null,
+      async generate() {
+        throw new Error('generate should be injected by the test');
+      },
+      withThinking() {
+        return this;
+      },
+      withMaxCompletionTokens(maxCompletionTokens: number) {
+        caps.push(maxCompletionTokens);
+        return this;
+      },
+    };
+    return { provider: base, caps };
+  }
+
+  function completedGenerate(): GenerateFn {
+    return async () => ({
+      id: 'response-1',
+      message: { role: 'assistant', content: [], toolCalls: [] },
+      usage: emptyUsage(),
+      finishReason: 'completed',
+      rawFinishReason: 'stop',
+    });
+  }
+
+  it('applies the hard-cap override to the next request only', async () => {
+    const { provider: tracked, caps } = budgetTrackingProvider();
+    const llm = new KosongLLM({
+      provider: tracked,
+      systemPrompt: '',
+      generate: completedGenerate(),
+      completionBudgetConfig: { fallback: 32_000 },
+    });
+
+    await llm.chat({ messages: [], tools: [], signal: new AbortController().signal });
+    llm.setCompletionBudgetHardCapOverride(64_000);
+    await llm.chat({ messages: [], tools: [], signal: new AbortController().signal });
+    llm.setCompletionBudgetHardCapOverride(undefined);
+    await llm.chat({ messages: [], tools: [], signal: new AbortController().signal });
+
+    expect(caps).toEqual([32_000, 64_000, 32_000]);
+  });
+
+  it('reports explicit hard caps and the current effective cap', () => {
+    const { provider: tracked } = budgetTrackingProvider();
+    const fallbackOnly = new KosongLLM({
+      provider: tracked,
+      systemPrompt: '',
+      generate: completedGenerate(),
+      completionBudgetConfig: { fallback: 32_000 },
+    });
+    expect(fallbackOnly.hasExplicitCompletionHardCap).toBe(false);
+    expect(fallbackOnly.currentCompletionCap()).toBe(32_000);
+
+    const hardCapped = new KosongLLM({
+      provider: tracked,
+      systemPrompt: '',
+      generate: completedGenerate(),
+      completionBudgetConfig: { hardCap: 8_000 },
+    });
+    expect(hardCapped.hasExplicitCompletionHardCap).toBe(true);
+    expect(hardCapped.currentCompletionCap()).toBe(8_000);
+
+    const noBudget = new KosongLLM({
+      provider: tracked,
+      systemPrompt: '',
+      generate: completedGenerate(),
+    });
+    expect(noBudget.hasExplicitCompletionHardCap).toBe(false);
+    expect(noBudget.currentCompletionCap()).toBeUndefined();
   });
 });

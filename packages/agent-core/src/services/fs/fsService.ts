@@ -16,7 +16,7 @@ import type {
   FsStatManyRequest,
   FsStatManyResponse,
   FsStatRequest,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 import ignore, { type Ignore } from 'ignore';
 
 import { ISessionService, SessionNotFoundError } from '../session/session';

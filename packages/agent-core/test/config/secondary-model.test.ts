@@ -11,7 +11,7 @@ import {
   stripSecondaryModelConfig,
 } from '../../src/config/secondary-model';
 import { parseConfigString } from '../../src/config/toml';
-import type { KimiConfig, ModelAlias } from '../../src/config/schema';
+import type { CloudCodeConfig, ModelAlias } from '../../src/config/schema';
 
 const baseAlias: ModelAlias = {
   provider: 'p1',
@@ -22,7 +22,7 @@ const baseAlias: ModelAlias = {
   defaultEffort: 'low',
 };
 
-function configWithSecondary(): KimiConfig {
+function configWithSecondary(): CloudCodeConfig {
   return {
     providers: {
       p1: { type: 'kimi', apiKey: 'sk-test' },
@@ -109,15 +109,15 @@ describe('applySecondaryModelConfig', () => {
 
   it('applies the env overrides without touching the on-disk section shape', () => {
     const config = applySecondaryModelConfig(getDefaultConfig(), {
-      KIMI_SECONDARY_MODEL: 'cheap',
-      KIMI_SECONDARY_EFFORT: 'low',
+      CLOUD_CODE_SECONDARY_MODEL: 'cheap',
+      CLOUD_CODE_SECONDARY_EFFORT: 'low',
     });
     expect(config.secondaryModel).toEqual({ model: 'cheap', defaultEffort: 'low' });
   });
 
   it('lets the env override the configured recipe fields', () => {
     const config = applySecondaryModelConfig(configWithSecondary(), {
-      KIMI_SECONDARY_MODEL: 'main',
+      CLOUD_CODE_SECONDARY_MODEL: 'main',
     });
     expect(config.secondaryModel?.model).toBe('main');
     // Untouched recipe fields survive the env overlay.
@@ -143,30 +143,30 @@ describe('stripSecondaryModelConfig', () => {
       ].join('\n'),
     );
     const runtime = applySecondaryModelConfig(onDisk, {
-      KIMI_SECONDARY_MODEL: 'main',
-      KIMI_SECONDARY_EFFORT: 'high',
+      CLOUD_CODE_SECONDARY_MODEL: 'main',
+      CLOUD_CODE_SECONDARY_EFFORT: 'high',
     });
     expect(runtime.secondaryModel).toEqual({ model: 'main', defaultEffort: 'high' });
     const stripped = stripSecondaryModelConfig(runtime, {
-      KIMI_SECONDARY_MODEL: 'main',
-      KIMI_SECONDARY_EFFORT: 'high',
+      CLOUD_CODE_SECONDARY_MODEL: 'main',
+      CLOUD_CODE_SECONDARY_EFFORT: 'high',
     });
     expect(stripped.secondaryModel).toEqual({ model: 'cheap', defaultEffort: 'low' });
   });
 
   it('keeps a genuinely new selection that differs from the env values', () => {
-    // `/secondary_model` under KIMI_SECONDARY_MODEL: the picked recipe must
+    // `/secondary_model` under CLOUD_CODE_SECONDARY_MODEL: the picked recipe must
     // reach the disk; only overlay round-trips are restored from raw.
     const onDisk = parseConfigString(
       ['[secondary_model]', 'model = "cheap"', 'default_effort = "low"'].join('\n'),
     );
-    const picked: KimiConfig = {
+    const picked: CloudCodeConfig = {
       ...onDisk,
       secondaryModel: { model: 'main', defaultEffort: 'high' },
     };
     const stripped = stripSecondaryModelConfig(picked, {
-      KIMI_SECONDARY_MODEL: 'cheap',
-      KIMI_SECONDARY_EFFORT: 'low',
+      CLOUD_CODE_SECONDARY_MODEL: 'cheap',
+      CLOUD_CODE_SECONDARY_EFFORT: 'low',
     });
     expect(stripped.secondaryModel).toEqual({ model: 'main', defaultEffort: 'high' });
   });
@@ -177,13 +177,13 @@ describe('stripSecondaryModelConfig', () => {
     );
     // The model still carries the env value (restored from raw); the effort
     // is a new pick (persists).
-    const mixed: KimiConfig = {
+    const mixed: CloudCodeConfig = {
       ...onDisk,
       secondaryModel: { model: 'main', defaultEffort: 'high' },
     };
     const stripped = stripSecondaryModelConfig(mixed, {
-      KIMI_SECONDARY_MODEL: 'main',
-      KIMI_SECONDARY_EFFORT: 'low',
+      CLOUD_CODE_SECONDARY_MODEL: 'main',
+      CLOUD_CODE_SECONDARY_EFFORT: 'low',
     });
     expect(stripped.secondaryModel).toEqual({ model: 'cheap', defaultEffort: 'high' });
   });

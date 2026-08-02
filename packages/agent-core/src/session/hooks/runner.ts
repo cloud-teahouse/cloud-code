@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStd
 
 import { z } from 'zod';
 
-import type { HookResult } from './types';
+import type { HookPermissionDecision, HookResult } from './types';
 
 export interface RunHookOptions {
   readonly timeout: number;
@@ -49,6 +49,11 @@ const HookSpecificOutputSchema = z.preprocess(
       message: OptionalStringSchema,
       permissionDecision: z.unknown().optional(),
       permissionDecisionReason: OptionalStringSchema,
+      updatedInput: z.preprocess(
+        (value) => (isRecord(value) ? value : undefined),
+        z.record(z.string(), z.unknown()).optional(),
+      ),
+      additionalContext: OptionalStringSchema,
     })
     .optional(),
 );
@@ -150,6 +155,11 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
       stderr,
       exitCode,
       structuredOutput: structured.structuredOutput,
+      permissionDecision: structured.permissionDecision,
+      ...(structured.updatedInput !== undefined ? { updatedInput: structured.updatedInput } : {}),
+      ...(structured.additionalContext !== undefined
+        ? { additionalContext: structured.additionalContext }
+        : {}),
     };
   }
 
@@ -159,12 +169,27 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
     stderr,
     exitCode,
     structuredOutput: structured?.structuredOutput,
+    ...(structured?.permissionDecision !== undefined
+      ? { permissionDecision: structured.permissionDecision }
+      : {}),
+    ...(structured?.updatedInput !== undefined ? { updatedInput: structured.updatedInput } : {}),
+    ...(structured?.additionalContext !== undefined
+      ? { additionalContext: structured.additionalContext }
+      : {}),
   });
 }
 
-function structuredOutput(
-  stdout: string,
-): { action?: 'block'; reason?: string; message?: string; structuredOutput: true } | undefined {
+type StructuredHookOutput = {
+  readonly action?: 'block';
+  readonly reason?: string;
+  readonly message?: string;
+  readonly structuredOutput: true;
+  readonly permissionDecision?: HookPermissionDecision;
+  readonly updatedInput?: Record<string, unknown>;
+  readonly additionalContext?: string;
+};
+
+function structuredOutput(stdout: string): StructuredHookOutput | undefined {
   const text = stdout.trim();
   if (text.length === 0) return undefined;
 
@@ -174,22 +199,36 @@ function structuredOutput(
     if (!output.success) return undefined;
 
     const { message, hookSpecificOutput } = output.data;
-    const result = {
+    const permissionDecision = parsePermissionDecision(
+      hookSpecificOutput?.permissionDecision,
+    );
+    const result: StructuredHookOutput = {
       message: message ?? hookSpecificOutput?.message,
       structuredOutput: true as const,
+      ...(permissionDecision !== undefined ? { permissionDecision } : {}),
+      ...(hookSpecificOutput?.updatedInput !== undefined
+        ? { updatedInput: hookSpecificOutput.updatedInput }
+        : {}),
+      ...(hookSpecificOutput?.additionalContext !== undefined
+        ? { additionalContext: hookSpecificOutput.additionalContext }
+        : {}),
     };
-    if (hookSpecificOutput?.permissionDecision !== 'deny') {
+    if (permissionDecision !== 'deny') {
       return result;
     }
     return {
+      ...result,
       action: 'block',
       message: result.message,
-      reason: hookSpecificOutput.permissionDecisionReason,
-      structuredOutput: true,
+      reason: hookSpecificOutput?.permissionDecisionReason,
     };
   } catch {
     return undefined;
   }
+}
+
+function parsePermissionDecision(value: unknown): HookPermissionDecision | undefined {
+  return value === 'allow' || value === 'deny' || value === 'ask' ? value : undefined;
 }
 
 function allowResult(input: {
@@ -199,6 +238,9 @@ function allowResult(input: {
   readonly exitCode?: number;
   readonly timedOut?: boolean;
   readonly structuredOutput?: boolean;
+  readonly permissionDecision?: HookPermissionDecision;
+  readonly updatedInput?: Record<string, unknown>;
+  readonly additionalContext?: string;
 }): HookResult {
   return {
     action: 'allow',
@@ -208,6 +250,9 @@ function allowResult(input: {
     exitCode: input.exitCode,
     timedOut: input.timedOut,
     structuredOutput: input.structuredOutput,
+    permissionDecision: input.permissionDecision,
+    updatedInput: input.updatedInput,
+    additionalContext: input.additionalContext,
   };
 }
 

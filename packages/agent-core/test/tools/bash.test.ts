@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
-import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
-import { describe, expect, it, vi } from 'vitest';
+import type { Environment, KaosProcess } from '@cloud-code/kaos';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type BashInput, BashInputSchema, BashTool } from '../../src/tools/builtin/shell/bash';
+import { ensureBashParser } from '../../src/tools/support/shell-ast/parser';
 import { createBackgroundManager, registerProcess } from '../agent/background/helpers';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
@@ -261,6 +262,13 @@ function bashTool(
 }
 
 describe('BashTool', () => {
+  beforeAll(async () => {
+    // resolveExecution runs the tree-sitter analysis lazily on first use;
+    // initialize the wasm parser up front so fake-timer tests register their
+    // process tasks at fake t=0 instead of waiting on a real-time wasm init.
+    await ensureBashParser();
+  });
+
   it('exposes current metadata and schema', () => {
     const tool = bashTool(createFakeKaos({ osEnv: posixEnv }), '/workspace');
 
@@ -373,6 +381,25 @@ describe('BashTool', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('falls back to the whole command string when the AST analysis degrades', async () => {
+    const tool = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+    );
+
+    // A bare variable assignment has no `command` nodes, so the analysis
+    // deterministically falls back to the degraded whole-string form.
+    const execution = await tool.resolveExecution({
+      command: 'FOO_DEGRADE_MARKER=1',
+      timeout: 60,
+    });
+
+    expect('execute' in execution && execution.ruleMatch?.subjects).toEqual([
+      'FOO_DEGRADE_MARKER=1',
+    ]);
   });
 
   it('renders the available commands section and the /tasks hint', () => {
@@ -1479,5 +1506,102 @@ describe('BashTool prompt / runtime consistency', () => {
     // The implementation reports failures as plain text inside the output
     // (`Command failed with exit code: N`), never via a system tag.
     expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
+  });
+});
+
+describe('BashTool wrapper-stripping rule matching (C3 P2)', () => {
+  beforeAll(async () => {
+    await ensureBashParser();
+  });
+
+  async function executionOf(command: string, options?: ConstructorParameters<typeof BashTool>[3]) {
+    const tool = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      options,
+    );
+    const execution = await tool.resolveExecution({ command, timeout: 60 });
+    if (!('execute' in execution) || execution.ruleMatch === undefined) {
+      throw new Error('expected a runnable execution with ruleMatch');
+    }
+    return execution;
+  }
+
+  it('generates approval rules from the unwrapped command', async () => {
+    const execution = await executionOf('sudo git push origin main');
+    expect(execution.approvalRules).toEqual(['Bash(git push *)']);
+  });
+
+  it('strips wrappers for allow rules too, but tries the original subject first', async () => {
+    const execution = await executionOf('sudo git push origin main');
+    const [subject] = execution.ruleMatch!.subjects;
+    expect(execution.ruleMatch!.matches('git push *', subject!, 'allow')).toBe(true);
+    // Legacy `Bash(sudo *)` rules keep hitting the raw subject.
+    expect(execution.ruleMatch!.matches('sudo *', subject!, 'allow')).toBe(true);
+  });
+
+  it('strips every leading assignment for deny/ask, only safe-listed ones for allow', async () => {
+    const execution = await executionOf('FOO=bar sudo rm x');
+    const [subject] = execution.ruleMatch!.subjects;
+    expect(execution.ruleMatch!.matches('rm *', subject!, 'deny')).toBe(true);
+    expect(execution.ruleMatch!.matches('rm *', subject!, 'ask')).toBe(true);
+    // FOO is not in the allow safe list — an allow rule must not ignore it.
+    expect(execution.ruleMatch!.matches('rm *', subject!, 'allow')).toBe(false);
+    // Without a decision the closure keeps pre-P2 original-subject matching.
+    expect(execution.ruleMatch!.matches('rm *', subject!)).toBe(false);
+
+    const safe = await executionOf('TZ=UTC sudo rm x');
+    const [safeSubject] = safe.ruleMatch!.subjects;
+    expect(safe.ruleMatch!.matches('rm *', safeSubject!, 'allow')).toBe(true);
+  });
+
+  it('never strips binary-hijack variables for allow rules', async () => {
+    const execution = await executionOf('DOCKER_HOST=evil docker ps -a');
+    const [subject] = execution.ruleMatch!.subjects;
+    expect(execution.ruleMatch!.matches('docker ps *', subject!, 'allow')).toBe(false);
+    expect(execution.ruleMatch!.matches('docker ps *', subject!, 'deny')).toBe(true);
+
+    const path = await executionOf('PATH=/evil ls -la');
+    const [pathSubject] = path.ruleMatch!.subjects;
+    expect(path.ruleMatch!.matches('ls *', pathSubject!, 'allow')).toBe(false);
+    expect(path.ruleMatch!.matches('ls *', pathSubject!, 'deny')).toBe(true);
+  });
+
+  it('refuses to strip timeout with an unsafe flag value (deny side included)', async () => {
+    const execution = await executionOf('timeout -k$(id) 10 ls');
+    expect(execution.ruleMatch!.matches('ls *', execution.ruleMatch!.subjects[0]!, 'deny')).toBe(
+      false,
+    );
+    // The substitution's inner command is still its own subject.
+    expect(execution.ruleMatch!.subjects).toContain('id');
+    expect(execution.ruleMatch!.matches('id', 'id', 'deny')).toBe(true);
+  });
+
+  it('does not apply stripping to negated rule patterns', async () => {
+    const execution = await executionOf('sudo rm x');
+    const [subject] = execution.ruleMatch!.subjects;
+    // `!rm *` negation is evaluated against the original subject only:
+    // `sudo rm x` is not `rm *`, so the negated rule still applies.
+    expect(execution.ruleMatch!.matches('!rm *', subject!, 'deny')).toBe(true);
+  });
+
+  it('restores pre-P2 behavior with wrapperStripping: false', async () => {
+    const execution = await executionOf('sudo git push origin main', {
+      wrapperStripping: false,
+    });
+    expect(execution.approvalRules).toEqual(['Bash(sudo *)']);
+    const [subject] = execution.ruleMatch!.subjects;
+    expect(execution.ruleMatch!.matches('git push *', subject!, 'allow')).toBe(false);
+    expect(execution.ruleMatch!.matches('git push *', subject!, 'deny')).toBe(false);
+    expect(execution.ruleMatch!.matches('sudo *', subject!, 'allow')).toBe(true);
+  });
+
+  it('keeps literal matching for the degraded whole-string form', async () => {
+    // A bare assignment has no `command` nodes → degraded analysis.
+    const execution = await executionOf('FOO_DEG_WRAPPER=1');
+    const [subject] = execution.ruleMatch!.subjects;
+    expect(execution.ruleMatch!.matches('FOO_DEG_WRAPPER=1', subject!, 'deny')).toBe(true);
+    expect(execution.ruleMatch!.matches('1', subject!, 'deny')).toBe(false);
   });
 });

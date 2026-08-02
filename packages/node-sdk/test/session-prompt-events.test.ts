@@ -10,11 +10,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
-import type * as KosongModule from '@moonshot-ai/kosong';
+import { CLOUD_CODE_PLATFORM } from '@cloud-code/oauth';
+import type * as KosongModule from '@cloud-code/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiHarness, type Event, type KimiHarness } from '#/index';
+import { createCloudCodeHarness, type Event, type CloudCodeHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
 
@@ -27,7 +27,7 @@ const fakeProviderState = vi.hoisted(() => ({
   responseText: 'hello from fake provider',
 }));
 
-vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
+vi.mock('@cloud-code/kosong', async (importOriginal) => {
   const actual = await importOriginal<typeof KosongModule>();
   return {
     ...actual,
@@ -38,6 +38,19 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
         modelName: 'fake-model',
         thinkingEffort: null,
         async generate(systemPrompt: string, _tools: unknown, history: unknown) {
+          // Session-title side-channel calls (kind:'title') are exercised in
+          // agent-core's own tests; here they must not consume scripted
+          // responses nor perturb call-order assertions. Return an empty
+          // stream so the refinement keeps the fallback truncated title.
+          if (systemPrompt.includes('sentence-case title')) {
+            return {
+              id: 'fake-title-response',
+              usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+              finishReason: 'completed',
+              rawFinishReason: 'stop',
+              async *[Symbol.asyncIterator]() {},
+            };
+          }
           fakeProviderState.calls.push({ systemPrompt, history });
           return {
             id: 'fake-response',
@@ -103,7 +116,7 @@ describe('Session.prompt events', () => {
   it('preserves existing custom metadata when an SDK metadata patch is resumed', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -135,7 +148,7 @@ describe('Session.prompt events', () => {
   it('persists sanitized prompt metadata without marking the title custom', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -211,7 +224,7 @@ describe('Session.prompt events', () => {
   it('emits mapped turn events through Session.onEvent', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -246,13 +259,13 @@ describe('Session.prompt events', () => {
           reason: 'completed',
         }),
       );
-      expect(fakeProviderState.calls[0]?.systemPrompt).toContain('You are Kimi Code CLI');
+      expect(fakeProviderState.calls[0]?.systemPrompt).toContain('You are Cloud Code CLI');
       expect(fakeProviderState.calls[0]?.systemPrompt).toContain('Available skills');
       expect(fakeProviderState.providerConfigs[0]).toMatchObject({
         type: 'kimi',
         defaultHeaders: expect.objectContaining({
-          'X-Msh-Platform': KIMI_CODE_PLATFORM,
-          'User-Agent': 'kimi-code-cli/0.0.0-test',
+          'X-Msh-Platform': CLOUD_CODE_PLATFORM,
+          'User-Agent': 'cloud-code-cli/0.0.0-test',
         }),
       });
       expect(existsSync(join(homeDir, 'device_id'))).toBe(true);
@@ -264,7 +277,7 @@ describe('Session.prompt events', () => {
   it('supports onEvent unsubscribe without touching runtime wire directly', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -291,7 +304,7 @@ describe('Session.prompt events', () => {
   it('runs init through generateAgentsMd RPC as a subagent system trigger without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -350,7 +363,7 @@ describe('Session.prompt events', () => {
   it('includes persisted subagent replay only when resume explicitly requests it', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -385,7 +398,7 @@ describe('Session.prompt events', () => {
   it('starts btw through RPC as a forked subagent without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -467,7 +480,7 @@ describe('Session.prompt events', () => {
   it('persists only conversation through the selected turn across resume', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -499,7 +512,7 @@ describe('Session.prompt events', () => {
   it('returns the requested identity for a historical fork', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -531,7 +544,7 @@ describe('Session.prompt events', () => {
   it('derives historical fork metadata from the selected turn', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -569,7 +582,7 @@ describe('Session.prompt events', () => {
   it('continues with the next turn id after a historical fork', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -592,7 +605,7 @@ describe('Session.prompt events', () => {
   it('omits subagents created after the selected historical turn', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -612,7 +625,7 @@ describe('Session.prompt events', () => {
   it('rejects a negative historical turn index with request.invalid', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       const source = await harness.createSession({ id: 'ses_turn_fork_negative', workDir });
@@ -620,7 +633,7 @@ describe('Session.prompt events', () => {
       await expect(
         harness.forkSession({ id: source.id, turnIndex: -1 }),
       ).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.invalid',
       });
     } finally {
@@ -631,7 +644,7 @@ describe('Session.prompt events', () => {
   it('rejects an out-of-range historical turn without creating the fork', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createCloudCodeHarness({ identity: TEST_IDENTITY, homeDir });
 
     try {
       await configureFakeProvider(harness);
@@ -645,7 +658,7 @@ describe('Session.prompt events', () => {
           turnIndex: 1,
         }),
       ).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.invalid',
         details: { turnIndex: 1, availableTurns: 1 },
       });
@@ -660,7 +673,7 @@ describe('Session.prompt events', () => {
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -668,7 +681,7 @@ describe('Session.prompt events', () => {
     try {
       const session = await harness.createSession({ id: 'ses_empty_prompt', workDir });
       await expect(session.prompt('   ')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'request.prompt_input_empty',
       });
     } finally {
@@ -713,7 +726,7 @@ function visibleReplayText(
   return entries;
 }
 
-async function configureFakeProvider(harness: KimiHarness): Promise<void> {
+async function configureFakeProvider(harness: CloudCodeHarness): Promise<void> {
   await harness.setConfig({
     providers: {
       local: {

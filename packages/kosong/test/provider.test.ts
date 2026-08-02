@@ -27,13 +27,11 @@ describe('MockChatProvider', () => {
 
     const provider = new MockChatProvider(inputParts);
 
-    // First call
     const parts1: StreamedMessagePart[] = [];
     for await (const part of await provider.generate('', [], [])) {
       parts1.push(part);
     }
 
-    // Second call
     const parts2: StreamedMessagePart[] = [];
     for await (const part of await provider.generate('', [], [])) {
       parts2.push(part);

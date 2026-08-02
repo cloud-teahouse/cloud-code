@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ErrorCodes, KimiError } from '../../src/errors';
+import { ErrorCodes, CloudCodeError } from '../../src/errors';
 import { createRPC } from '../../src/rpc';
 
 interface CoreSide {
@@ -43,7 +43,7 @@ describe('createRPC', () => {
     });
   });
 
-  it('binds prototype methods and rehydrates plain remote errors as KimiError(internal)', async () => {
+  it('binds prototype methods and rehydrates plain remote errors as CloudCodeError(internal)', async () => {
     class HostImpl implements HostSide {
       readonly approvals: string[] = [];
 
@@ -75,11 +75,11 @@ describe('createRPC', () => {
       message: 'host failed:boom',
       code: ErrorCodes.INTERNAL,
     });
-    await expect(hostProxy.fail({ code: 'boom' })).rejects.toBeInstanceOf(KimiError);
+    await expect(hostProxy.fail({ code: 'boom' })).rejects.toBeInstanceOf(CloudCodeError);
     expect(hostImpl.approvals).toEqual(['approval-2']);
   });
 
-  it('passes a thrown KimiError across the wire preserving code and details', async () => {
+  it('passes a thrown CloudCodeError across the wire preserving code and details', async () => {
     interface CallerSide {}
     interface RemoteSide {
       prompt(payload: { input: string }): Promise<void>;
@@ -89,7 +89,7 @@ describe('createRPC', () => {
     await connectRemote({
       async prompt(payload) {
         if (payload.input === '') {
-          throw new KimiError(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY, 'Prompt input cannot be empty', {
+          throw new CloudCodeError(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY, 'Prompt input cannot be empty', {
             details: { hint: 'pass at least one content part' },
             cause: new Error('local diagnostic — must not cross'),
           });
@@ -105,8 +105,8 @@ describe('createRPC', () => {
       (error: unknown) => error,
     );
 
-    expect(received).toBeInstanceOf(KimiError);
-    const error = received as KimiError;
+    expect(received).toBeInstanceOf(CloudCodeError);
+    const error = received as CloudCodeError;
     expect(error.code).toBe(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY);
     expect(error.message).toBe('Prompt input cannot be empty');
     expect(error.details).toEqual({ hint: 'pass at least one content part' });
@@ -128,7 +128,7 @@ describe('createRPC', () => {
           notFinite: Number.NaN,
           cause: new Error('detail failed'),
         };
-        throw new KimiError(ErrorCodes.INTERNAL, 'Remote failed', {
+        throw new CloudCodeError(ErrorCodes.INTERNAL, 'Remote failed', {
           details,
         });
       },
@@ -142,8 +142,8 @@ describe('createRPC', () => {
       (error: unknown) => error,
     );
 
-    expect(received).toBeInstanceOf(KimiError);
-    const error = received as KimiError;
+    expect(received).toBeInstanceOf(CloudCodeError);
+    const error = received as CloudCodeError;
     expect(error.details).toEqual({
       nested: { ok: true },
       at: '2026-05-18T00:00:00.000Z',
@@ -152,7 +152,7 @@ describe('createRPC', () => {
     });
   });
 
-  it('rehydrates provider.* codes as KimiError', async () => {
+  it('rehydrates provider.* codes as CloudCodeError', async () => {
     interface RemoteSide {
       callProvider(payload: { kind: string }): Promise<void>;
     }
@@ -160,7 +160,7 @@ describe('createRPC', () => {
     const remoteProxyPromise = connectCaller({});
     await connectRemote({
       async callProvider() {
-        throw new KimiError(ErrorCodes.PROVIDER_RATE_LIMIT, 'Upstream rate limit', {
+        throw new CloudCodeError(ErrorCodes.PROVIDER_RATE_LIMIT, 'Upstream rate limit', {
           details: { retryAfterMs: 1000 },
         });
       },
@@ -174,13 +174,13 @@ describe('createRPC', () => {
       (error: unknown) => error,
     );
 
-    expect(received).toBeInstanceOf(KimiError);
-    const error = received as KimiError;
+    expect(received).toBeInstanceOf(CloudCodeError);
+    const error = received as CloudCodeError;
     expect(error.code).toBe(ErrorCodes.PROVIDER_RATE_LIMIT);
     expect(error.details).toEqual({ retryAfterMs: 1000 });
   });
 
-  it('collapses non-Error throws to KimiError(internal)', async () => {
+  it('collapses non-Error throws to CloudCodeError(internal)', async () => {
     interface RemoteSide {
       misbehave(payload: {}): Promise<void>;
     }
@@ -198,6 +198,6 @@ describe('createRPC', () => {
       code: ErrorCodes.INTERNAL,
       message: 'not an error object',
     });
-    await expect(remoteProxy.misbehave({})).rejects.toBeInstanceOf(KimiError);
+    await expect(remoteProxy.misbehave({})).rejects.toBeInstanceOf(CloudCodeError);
   });
 });

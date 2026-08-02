@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Emitter } from '../../src';
-import type { Session } from '@moonshot-ai/protocol';
+import type { Session } from '@cloud-code/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {

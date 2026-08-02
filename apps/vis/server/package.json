@@ -1,6 +1,6 @@
 {
-  "name": "@moonshot-ai/vis-server",
-  "version": "0.1.1",
+  "name": "@cloud-code/vis-server",
+  "version": "0.1.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -29,8 +29,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "@moonshot-ai/agent-core": "workspace:^",
-    "@moonshot-ai/kosong": "workspace:^",
+    "@cloud-code/agent-core": "workspace:^",
+    "@cloud-code/kosong": "workspace:^",
     "hono": "^4.7.7",
     "yauzl": "^3.3.0"
   },

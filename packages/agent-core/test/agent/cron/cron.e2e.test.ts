@@ -92,10 +92,9 @@ describe('Cron — session E2E (P1.9)', () => {
 
     // Schedule via the full tool surface — the scheduling path goes
     // through validation (parse, 5-year window, cap, byte length) just
-    // like the LLM-driven path. A back-door `store.add(...)` would
-    // bypass `emitScheduled` telemetry and skip the byte-length /
-    // expression checks; that would not be the production code path
-    // this commit is meant to smoke.
+    // like the LLM-driven path. A back-door `store.add(...)` would skip
+    // the byte-length / expression checks; that would not be the
+    // production code path under test.
     const createTool = new CronCreateTool(ctx.agent.cron!);
     const execution = createTool.resolveExecution({
       cron: '*/5 * * * *',
@@ -146,9 +145,9 @@ describe('Cron — session E2E (P1.9)', () => {
   });
 
   it('CronCreate → CronList → CronDelete cycle returns sensible output', async () => {
-    // Optional second case from the P1.9 plan: prove the three-tool
-    // surface composes correctly end-to-end on the real manager. No
-    // clock manipulation needed — list/delete are time-invariant.
+    // Second case: prove the three-tool surface composes correctly
+    // end-to-end on the real manager. No clock manipulation needed —
+    // list/delete are time-invariant.
     const createTool = new CronCreateTool(ctx.agent.cron!);
     const listTool = new CronListTool(ctx.agent.cron!);
     const deleteTool = new CronDeleteTool(ctx.agent.cron!);

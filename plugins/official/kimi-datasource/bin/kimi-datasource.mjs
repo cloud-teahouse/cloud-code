@@ -2,7 +2,7 @@
 // Stdio MCP server for kimi-datasource.
 //
 // Speaks newline-delimited JSON-RPC 2.0 on stdin/stdout per the MCP "stdio"
-// transport. Implements the minimal surface the Kimi Code host calls:
+// transport. Implements the minimal surface the Cloud Code host calls:
 //   - initialize
 //   - notifications/initialized
 //   - tools/list
@@ -19,8 +19,8 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 const VERSION = '3.3.0';
-const DEFAULT_KIMI_CODE_OAUTH_HOST = 'https://auth.kimi.com';
-const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
+const DEFAULT_CLOUD_CODE_OAUTH_HOST = 'https://auth.kimi.com';
+const DEFAULT_CLOUD_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
 const API_URL = datasourceApiUrl();
 const REQUEST_TIMEOUT_MS = 30_000;
 const PROTOCOL_VERSION = '2025-06-18';
@@ -29,7 +29,7 @@ const TOOLS = [
   {
     name: 'call_data_source_tool',
     description:
-      "Dispatch one call to the data source selected for the user's request. Always call get_data_source_desc(name) first, then use an api_name and params from that description. For a simple lookup, use one specialized source and stop after its first successful result; do not query fallback or comparison sources unless the user explicitly asks for a cross-source comparison. When the user names a data source, use that source.",
+      "Dispatch one call to the data source selected for the user's request via the Cloud Code gateway. Always call get_data_source_desc(name) first, then use an api_name and params from that description. For a simple lookup, use one specialized source and stop after its first successful result; do not query fallback or comparison sources unless the user explicitly asks for a cross-source comparison. When the user names a data source, use that source.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -242,8 +242,8 @@ function appendTrace(text, trace) {
 }
 
 function resolveKimiHome() {
-  const explicit = process.env.KIMI_CODE_HOME?.trim();
-  return explicit && explicit.length > 0 ? explicit : path.join(homedir(), '.kimi-code');
+  const explicit = process.env.CLOUD_CODE_HOME?.trim();
+  return explicit && explicit.length > 0 ? explicit : path.join(homedir(), '.cloud-code');
 }
 
 function datasourceApiUrl() {
@@ -253,14 +253,14 @@ function datasourceApiUrl() {
 }
 
 function kimiCodeBaseUrl() {
-  return (process.env.KIMI_CODE_BASE_URL ?? DEFAULT_KIMI_CODE_BASE_URL).replace(/\/+$/, '');
+  return (process.env.CLOUD_CODE_BASE_URL ?? DEFAULT_CLOUD_CODE_BASE_URL).replace(/\/+$/, '');
 }
 
 function kimiCodeOAuthHost() {
   return normalizeEndpoint(
-    process.env.KIMI_CODE_OAUTH_HOST ??
+    process.env.CLOUD_CODE_OAUTH_HOST ??
       process.env.KIMI_OAUTH_HOST ??
-      DEFAULT_KIMI_CODE_OAUTH_HOST,
+      DEFAULT_CLOUD_CODE_OAUTH_HOST,
   );
 }
 
@@ -272,8 +272,8 @@ function resolveKimiCodeCredentialName() {
   const oauthHost = kimiCodeOAuthHost();
   const baseUrl = kimiCodeBaseUrl();
   if (
-    oauthHost === normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST) &&
-    baseUrl === DEFAULT_KIMI_CODE_BASE_URL
+    oauthHost === normalizeEndpoint(DEFAULT_CLOUD_CODE_OAUTH_HOST) &&
+    baseUrl === DEFAULT_CLOUD_CODE_BASE_URL
   ) {
     return 'kimi-code';
   }
@@ -299,21 +299,21 @@ async function loadAccessToken() {
   } catch (err) {
     if (isNotFound(err)) {
       throw new Error(
-        `Kimi Code credentials file not found: ${credentialsFile}\nRun /login in Kimi Code first.`,
+        `Cloud Code credentials file not found: ${credentialsFile}\nRun /login in Cloud Code first.`,
       );
     }
     if (err instanceof SyntaxError) {
-      throw new Error(`Failed to parse Kimi Code credentials file: ${err.message}`);
+      throw new Error(`Failed to parse Cloud Code credentials file: ${err.message}`);
     }
     throw err;
   }
 
   if (!isRecord(parsed)) {
-    throw new Error(`Invalid Kimi Code credentials file: ${credentialsFile}`);
+    throw new Error(`Invalid Cloud Code credentials file: ${credentialsFile}`);
   }
   const token = typeof parsed.access_token === 'string' ? parsed.access_token : '';
   if (token.length === 0) {
-    throw new Error('Kimi Code credentials do not contain access_token. Run /login again.');
+    throw new Error('Cloud Code credentials do not contain access_token. Run /login again.');
   }
   return { kimiHome, token };
 }
@@ -349,7 +349,7 @@ async function callKimiTool(method, params, trace = {}) {
     trace.requestId = extractRequestId(response.headers);
     if (!response.ok) {
       if (response.status === 401) {
-        throw new Error('Kimi Code access_token was rejected. Run /login again and retry.');
+        throw new Error('Cloud Code access_token was rejected. Run /login again and retry.');
       }
       throw new Error(`HTTP ${response.status} error: ${text}`);
     }

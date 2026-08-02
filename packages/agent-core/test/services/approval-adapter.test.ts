@@ -1,5 +1,5 @@
 /**
- * Approval adapter unit tests (W8.1 / Chain 5).
+ * Approval adapter unit tests.
  */
 
 import { describe, expect, it } from 'vitest';

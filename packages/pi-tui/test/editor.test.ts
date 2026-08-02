@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
 import { PasteBurst } from "../src/paste-burst.ts";
-import { TUI } from "../src/tui.ts";
+import { type MouseEvent, TUI } from "../src/tui.ts";
 import { visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -4397,7 +4397,7 @@ describe("Editor narrow width rendering", () => {
 		}
 	});
 
-	it("renders CJK text without crashing at widths 1-8 (paddingX 4, matches kimi-code)", () => {
+	it("renders CJK text without crashing at widths 1-8 (paddingX 4, matches Cloud Code)", () => {
 		for (let width = 1; width <= 8; width++) {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme, { paddingX: 4 });
 			editor.setText("你好，世界！");
@@ -4448,5 +4448,325 @@ describe("Editor narrow width rendering", () => {
 		editor.setText("你好世界");
 		assert.doesNotThrow(() => editor.render(0));
 		assert.doesNotThrow(() => editor.render(-1));
+	});
+});
+
+describe("Editor mouse wheel scroll", () => {
+	// 24 terminal rows → maxVisibleLines = max(5, floor(24 * 0.3)) = 7.
+	const wheel = (button: 64 | 65): MouseEvent => ({ type: "wheel", button, col: 5, row: 2, slotRelative: false });
+	const overflowingEditor = (options?: { mouseScroll?: boolean }) => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, options);
+		editor.setText(Array.from({ length: 20 }, (_, i) => `line-${i + 1}`).join("\n"));
+		return editor;
+	};
+	const frame = (editor: Editor): string => stripVTControlCharacters(editor.render(80).join("\n"));
+
+	it("is off unless the mouseScroll option opts in", () => {
+		const editor = overflowingEditor();
+		frame(editor); // 20 lines overflow the 7-row window
+		assert.strictEqual(editor.wantsMouseEvent?.(wheel(64)), false);
+		assert.strictEqual(editor.handleMouse(wheel(64)), false);
+	});
+
+	it("declines the wheel while the buffer fits the visible window", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { mouseScroll: true });
+		editor.setText("short");
+		frame(editor);
+		assert.strictEqual(editor.wantsMouseEvent?.(wheel(64)), false);
+		assert.strictEqual(editor.handleMouse(wheel(64)), false);
+	});
+
+	it("claims only the vertical wheel once the buffer overflows — presses still declined", () => {
+		const editor = overflowingEditor({ mouseScroll: true });
+		frame(editor);
+		assert.strictEqual(editor.wantsMouseEvent?.(wheel(64)), true);
+		assert.strictEqual(editor.wantsMouseEvent?.(wheel(65)), true);
+		assert.strictEqual(
+			editor.wantsMouseEvent?.({ type: "press", button: 0, col: 5, row: 2, slotRelative: false }),
+			false,
+		);
+		assert.strictEqual(
+			editor.wantsMouseEvent?.({ type: "wheel", button: 66, col: 5, row: 2, slotRelative: false }),
+			false,
+		);
+	});
+
+	it("pans the visible window three rows per tick without moving the cursor", () => {
+		const editor = overflowingEditor({ mouseScroll: true });
+		// Cursor sits at the end: follow mode shows the bottom, 13 lines hidden above.
+		assert.ok(frame(editor).includes("↑ 13 more"));
+
+		assert.notStrictEqual(editor.handleMouse(wheel(64)), false);
+		let out = frame(editor);
+		assert.ok(out.includes("↑ 10 more"), out);
+		assert.ok(out.includes("↓ 3 more"), out);
+
+		assert.notStrictEqual(editor.handleMouse(wheel(64)), false);
+		out = frame(editor);
+		assert.ok(out.includes("↑ 7 more"), out);
+		assert.ok(out.includes("↓ 6 more"), out);
+
+		// Cursor never left the end of the buffer.
+		assert.deepStrictEqual(editor.getCursor(), { line: 19, col: 7 });
+
+		editor.handleMouse(wheel(65));
+		editor.handleMouse(wheel(65));
+		assert.ok(frame(editor).includes("↑ 13 more"));
+	});
+
+	it("clamps at both ends and reports no-change with false", () => {
+		const editor = overflowingEditor({ mouseScroll: true });
+		frame(editor);
+		for (let i = 0; i < 10; i++) editor.handleMouse(wheel(64));
+		// Panned to the very top: nothing hidden above, 13 below.
+		const top = frame(editor);
+		assert.ok(!top.includes("↑"), top);
+		assert.ok(top.includes("↓ 13 more"), top);
+		assert.strictEqual(editor.handleMouse(wheel(64)), false);
+
+		for (let i = 0; i < 10; i++) editor.handleMouse(wheel(65));
+		assert.ok(frame(editor).includes("↑ 13 more"));
+		assert.strictEqual(editor.handleMouse(wheel(65)), false);
+	});
+
+	it("re-engages cursor-follow on the next keystroke", () => {
+		const editor = overflowingEditor({ mouseScroll: true });
+		frame(editor);
+		editor.handleMouse(wheel(64));
+		editor.handleMouse(wheel(64));
+		assert.ok(frame(editor).includes("↑ 7 more"));
+
+		editor.handleInput("x");
+		// Typing snaps the window back to the cursor at the end of the buffer.
+		const out = frame(editor);
+		assert.ok(out.includes("↑ 13 more"), out);
+		assert.ok(!out.includes("↓"), out);
+		assert.ok(out.includes("line-20"));
+	});
+
+	it("sends the wheel to the autocomplete menu while it is open", async () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { mouseScroll: true });
+		editor.setText(`${Array.from({ length: 19 }, (_, i) => `line-${i + 1}`).join("\n")}\n`);
+		const mockProvider: AutocompleteProvider = {
+			getSuggestions: async () => ({
+				items: [
+					{ value: "alpha", label: "alpha" },
+					{ value: "beta", label: "beta" },
+				],
+				prefix: "@",
+			}),
+			applyCompletion,
+		};
+		editor.setAutocompleteProvider(mockProvider);
+		// "@" at a token boundary auto-triggers the menu; the buffer overflows.
+		editor.handleInput("@");
+		// "@" completion debounces (ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS).
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await flushAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+		const open = frame(editor);
+		assert.ok(open.includes("→ alpha"), open);
+		assert.ok(open.includes("↑ 13 more"), open);
+
+		// The wheel drives the menu selection; the editor window stays put.
+		assert.strictEqual(editor.wantsMouseEvent?.(wheel(65)), true);
+		editor.handleMouse(wheel(65));
+		const after = frame(editor);
+		assert.ok(after.includes("→ beta"), after);
+		assert.ok(after.includes("↑ 13 more"), after);
+	});
+});
+
+describe("Editor click-to-position (mouseClickToPosition opt-in)", () => {
+	// Test editor: paddingX 0, so component col c maps to text cell c - 1 and
+	// rendered row 0 is the top border (content rows start at row 1).
+	const press = (col: number, row: number, button = 0): MouseEvent => ({
+		type: "press",
+		button,
+		col,
+		row,
+		slotRelative: false,
+	});
+	const clickingEditor = (text: string, options?: { mouseClickToPosition?: boolean }) => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, options);
+		editor.setText(text);
+		editor.render(80);
+		return editor;
+	};
+
+	it("is off unless the option opts in", () => {
+		const editor = clickingEditor("hello");
+		assert.strictEqual(editor.wantsMouseEvent?.(press(3, 1)), false);
+		assert.strictEqual(editor.handleMouse(press(3, 1)), false);
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 5 });
+	});
+
+	it("claims only left presses — not other buttons, not motion", () => {
+		const editor = clickingEditor("hello", { mouseClickToPosition: true });
+		assert.strictEqual(editor.wantsMouseEvent?.(press(3, 1)), true);
+		assert.strictEqual(editor.wantsMouseEvent?.(press(3, 1, 1)), false);
+		assert.strictEqual(
+			editor.wantsMouseEvent?.({ type: "motion", button: 3, col: 3, row: 1, slotRelative: false }),
+			false,
+		);
+		assert.strictEqual(editor.wantsMouseEvent?.({ type: "wheel", button: 64, col: 3, row: 1, slotRelative: false }), false);
+	});
+
+	it("moves the cursor before the clicked character and to line end past the text", () => {
+		const editor = clickingEditor("hello", { mouseClickToPosition: true });
+		// 'l' is the third character: a click on its cell lands before it.
+		assert.notStrictEqual(editor.handleMouse(press(3, 1)), false);
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 2 });
+		// First cell → line start.
+		editor.handleMouse(press(1, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+		// One cell past the last character (and far into the padding) → line end.
+		editor.handleMouse(press(6, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 5 });
+		editor.handleMouse(press(80, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 5 });
+	});
+
+	it("maps the clicked row to its logical line", () => {
+		const editor = clickingEditor("one\ntwo\nthree", { mouseClickToPosition: true });
+		// Rendered row 2 is the second content row: 'w' is the second cell.
+		editor.handleMouse(press(2, 2));
+		assert.deepStrictEqual(editor.getCursor(), { line: 1, col: 1 });
+		editor.handleMouse(press(6, 3));
+		assert.deepStrictEqual(editor.getCursor(), { line: 2, col: 5 });
+	});
+
+	it("declines presses on the borders and outside the text box", () => {
+		const editor = clickingEditor("one\ntwo", { mouseClickToPosition: true });
+		assert.strictEqual(editor.handleMouse(press(3, 0)), false); // top border
+		assert.strictEqual(editor.handleMouse(press(3, 3)), false); // bottom border
+		assert.strictEqual(editor.handleMouse(press(3, 9)), false); // below the box
+		assert.deepStrictEqual(editor.getCursor(), { line: 1, col: 3 });
+	});
+
+	it("snaps wide graphemes at their cell-span midpoint", () => {
+		// Cells: 世 0-1, a 2, 界 3-4.
+		const editor = clickingEditor("世a界", { mouseClickToPosition: true });
+		editor.handleMouse(press(1, 1)); // first cell of 世 → before it
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+		editor.handleMouse(press(2, 1)); // second cell of 世 → after it
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 1 });
+		editor.handleMouse(press(3, 1)); // 'a' → before it
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 1 });
+		editor.handleMouse(press(4, 1)); // first cell of 界 → before it
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 2 });
+		editor.handleMouse(press(5, 1)); // second cell of 界 → after it (line end)
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
+	});
+
+	it("maps clicks on wrapped visual chunks back to the logical line", () => {
+		// Width 10 → content 10, layout width 9: "aaa bbb ccc" wraps into the
+		// chunks "aaa bbb " (startIndex 0) and "ccc" (startIndex 8).
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { mouseClickToPosition: true });
+		editor.setText("aaa bbb ccc");
+		const lines = editor.render(10).map(stripVTControlCharacters);
+		assert.strictEqual(lines.length, 4, `expected border + 2 chunks + border, got: ${JSON.stringify(lines)}`);
+
+		// Click the third cell of the second visual chunk ("ccc"): chunk-relative
+		// boundary 2 → logical col 8 + 2 = 10, before the last 'c'.
+		editor.handleMouse(press(3, 2));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 10 });
+
+		// Click past the visual end of the first chunk lands on its end boundary
+		// (the first 'c' of the next chunk), still on the same logical line.
+		editor.handleMouse(press(9, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 8 });
+	});
+
+	it("maps clicks through the scroll window of an overflowing buffer", () => {
+		// 24 rows → 7 visible content rows; cursor at end leaves scrollOffset 13.
+		// (mouseScroll mirrors the app composer's option set so the wheel pans.)
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, {
+			mouseScroll: true,
+			mouseClickToPosition: true,
+		});
+		editor.setText(Array.from({ length: 20 }, (_, i) => `line-${i + 1}`).join("\n"));
+		const open = stripVTControlCharacters(editor.render(80).join("\n"));
+		assert.ok(open.includes("↑ 13 more"), open);
+
+		// First visible content row is logical line 13 ("line-14"): click its
+		// second cell (cell 1 → boundary 1).
+		editor.handleMouse(press(2, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 13, col: 1 });
+
+		// Wheel-pan up three rows, then click the same rendered row: the mapping
+		// follows the panned window (scrollOffset 10 → "line-11").
+		editor.handleMouse({ type: "wheel", button: 64, col: 5, row: 2, slotRelative: false });
+		editor.handleMouse(press(2, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 10, col: 1 });
+
+		// Typing re-engages follow-cursor at the clicked position: the inserted
+		// character lands on the clicked line and the window snaps back to it.
+		editor.handleInput("X");
+		assert.ok(editor.getLines()[10]?.startsWith("lXine-11"), editor.getLines()[10]);
+		const after = stripVTControlCharacters(editor.render(80).join("\n"));
+		assert.ok(after.includes("lXine-11"), after);
+	});
+
+	it("snaps clicks inside an atomic paste marker to its edges", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { mouseClickToPosition: true });
+		editor.handleInput("A");
+		// Large bracketed paste → buffer "A[paste #1 +20 lines]" (marker is 20 cells).
+		editor.handleInput(`\x1b[200~${"line\n".repeat(20).trimEnd()}\x1b[201~`);
+		const marker = editor.getText().match(/\[paste #\d+ \+\d+ lines\]/)![0];
+		editor.render(80);
+
+		// Cells: A=0, marker=1..20. Click left half of the marker → its start.
+		editor.handleMouse(press(5, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 1 });
+		// Click right half → its end (never inside it).
+		editor.handleMouse(press(16, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 1 + marker.length });
+	});
+
+	it("clamps past-end clicks onto the last grapheme in vim NORMAL mode", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { mouseClickToPosition: true });
+		editor.setVimEnabled(true);
+		editor.setText("hello");
+		editor.handleInput("\x1b"); // INSERT → NORMAL: cursor rests on 'o' (col 4)
+		assert.strictEqual(editor.getVimMode(), "NORMAL");
+		editor.render(80);
+
+		editor.handleMouse(press(9, 1)); // past the line end
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 4 });
+
+		// INSERT mode keeps the past-end position.
+		editor.handleInput("i"); // back to INSERT before 'o'
+		assert.strictEqual(editor.getVimMode(), "INSERT");
+		editor.handleMouse(press(9, 1));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 5 });
+	});
+
+	it("routes presses to the autocomplete menu while it is open", async () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { mouseClickToPosition: true });
+		editor.setText("/");
+		const mockProvider: AutocompleteProvider = {
+			getSuggestions: async () => ({
+				items: [
+					{ value: "alpha", label: "alpha" },
+					{ value: "beta", label: "beta" },
+				],
+				prefix: "/",
+			}),
+			applyCompletion,
+		};
+		editor.setAutocompleteProvider(mockProvider);
+		editor.handleInput("a");
+		await flushAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+		const frameLines = editor.render(80).map(stripVTControlCharacters);
+		const betaRow = frameLines.findIndex((line) => line.includes("beta"));
+		assert.ok(betaRow > 0);
+
+		// The press selects the menu row; the editor cursor stays put.
+		editor.handleMouse(press(3, betaRow));
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 2 });
+		const after = stripVTControlCharacters(editor.render(80).join("\n"));
+		assert.ok(after.includes("→ beta"), after);
 	});
 });

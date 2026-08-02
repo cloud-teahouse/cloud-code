@@ -1,6 +1,7 @@
 import {
   APIConnectionError,
   APIProviderQuotaExhaustedError,
+  APIQuotaExceededError,
   APITimeoutError,
   ChatProviderError,
   classifyBaseApiError,
@@ -12,6 +13,13 @@ import {
 import { extractText } from '#/message';
 import type { ContentPart, Message } from '#/message';
 import type { FinishReason } from '#/provider';
+import {
+  exhaustedRateLimitWindow,
+  parseCodexRateLimitHeaders,
+  parseCodexUsageLimitError,
+  parseCodexUsageLimitMessage,
+  rateLimitWindowLabel,
+} from '#/rate-limit';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import {
@@ -150,12 +158,53 @@ export function convertOpenAIError(
     const reqId = error.requestID ?? null;
     const retryAfterMs = parseRetryAfterMs(error.headers);
     const traceId = parseTraceId(error.headers);
+    // Quota exhaustion first: the Codex backend marks an exhausted plan with
+    // `error.type: "usage_limit_reached"` in the response body. The SDK
+    // unwraps that body (`error.error` is the INNER error object, not
+    // `{error: {...}}`), and the parser accepts both nesting levels. A 429
+    // whose body never parsed as JSON falls back to the machine token in the
+    // message. Either way the 429 is terminal — the plan cannot serve another
+    // request until the window resets — so it must classify ahead of the
+    // generic status mapping, which treats every 429 as a transient rate
+    // limit worth retrying. Non-Codex backends never send this body shape and
+    // keep the generic path.
+    const usageLimit =
+      error.status === 429
+        ? (parseCodexUsageLimitError(error.error) ?? parseCodexUsageLimitMessage(error.message))
+        : null;
+    if (usageLimit !== null) {
+      const rateLimit =
+        error.headers === undefined ? null : parseCodexRateLimitHeaders(error.headers);
+      const exhaustedWindow = exhaustedRateLimitWindow(rateLimit);
+      const quotaError = new APIQuotaExceededError(error.message, {
+        requestId: reqId,
+        retryAfterMs,
+        traceId,
+        planType: usageLimit.planType ?? rateLimit?.planType ?? null,
+        resetsAtMs:
+          usageLimit.resetsAtMs ??
+          (exhaustedWindow?.resetsAt !== null && exhaustedWindow?.resetsAt !== undefined
+            ? exhaustedWindow.resetsAt * 1000
+            : null),
+        quotaWindow: rateLimitWindowLabel(exhaustedWindow?.windowMinutes ?? null),
+      });
+      quotaError.rateLimit = rateLimit;
+      return quotaError;
+    }
     // Quota/balance exhaustion is a 429 but deterministic until the account
     // is recharged — it must not classify as a retryable rate limit.
     if (isOpenAIInsufficientQuotaError(error)) {
       return new APIProviderQuotaExhaustedError(error.message, reqId, retryAfterMs, traceId);
     }
-    return normalizeAPIStatusError(error.status, error.message, reqId, retryAfterMs, traceId);
+    const converted = normalizeAPIStatusError(error.status, error.message, reqId, retryAfterMs, traceId);
+    // A failed response still carries the Codex backend's `x-codex-*` quota
+    // headers (a 429 is exactly when they matter most); attach the parsed
+    // snapshot so hosts can refresh their rate-limit view from the error
+    // path instead of waiting for the next successful response. Backends
+    // that do not emit the family parse to `null`.
+    converted.rateLimit =
+      error.headers === undefined ? null : parseCodexRateLimitHeaders(error.headers);
+    return converted;
   }
   // Base APIError with no status and no body => transport-layer failure.
   // When the error has a body (e.g. SSE error events from the server),
@@ -276,6 +325,49 @@ export function normalizeOpenAIFinishReason(raw: string | null | undefined): {
  * - `null`: convert content parts to the standard OpenAI content-part array.
  */
 export type ToolMessageConversion = 'extract_text' | null;
+
+/**
+ * Per-provider policy for round-tripping reasoning (`think` parts) back to
+ * the server on later requests.
+ *
+ * - `'always'` (default): emit the reasoning field on every message that has
+ *   think parts — the historical behavior, required by contracts that
+ *   mandate reasoning echo.
+ * - `'tool-calls-only'` (the DeepSeek rule): emit ONLY on assistant messages
+ *   carrying tool calls, with the key always present — an empty string when
+ *   the turn produced no reasoning, because DeepSeek 400s on a missing
+ *   `reasoning_content` key and a uniform shape keeps the prefix byte-stable.
+ *   Reasoning on any other turn is dropped: the endpoint ignores it there,
+ *   so round-tripping it would only burn prompt tokens.
+ * - `'never'`: drop reasoning outright — for OpenAI-compatible endpoints
+ *   that do not consume reasoning at all.
+ */
+export type ReasoningRoundTrip = 'always' | 'tool-calls-only' | 'never';
+
+/** Facts {@link shouldRoundTripReasoning} needs, pre-extracted by the caller. */
+export interface ReasoningRoundTripFacts {
+  readonly role: string;
+  readonly hasToolCalls: boolean;
+  readonly hasReasoningPart: boolean;
+}
+
+/**
+ * Decide whether the outbound wire message carries the reasoning field. See
+ * {@link ReasoningRoundTrip} for the per-mode rules.
+ */
+export function shouldRoundTripReasoning(
+  policy: ReasoningRoundTrip,
+  facts: ReasoningRoundTripFacts,
+): boolean {
+  switch (policy) {
+    case 'always':
+      return facts.hasReasoningPart;
+    case 'tool-calls-only':
+      return facts.role === 'assistant' && facts.hasToolCalls;
+    case 'never':
+      return false;
+  }
+}
 
 /**
  * Shared wording for tool-result media that cannot live inside the tool

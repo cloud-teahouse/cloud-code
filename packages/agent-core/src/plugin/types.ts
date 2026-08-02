@@ -33,7 +33,8 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[]; // resolved absolute paths
-  readonly agents?: readonly string[]; // resolved absolute paths
+  readonly agents?: readonly string[]; // resolved absolute paths (agent .md dirs)
+  readonly outputStyles?: readonly string[]; // resolved absolute paths (style .md dirs)
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly hooks?: readonly HookDefConfig[];
@@ -41,6 +42,27 @@ export interface PluginManifest {
   readonly interface?: PluginInterface;
   readonly skillInstructions?: string;
   readonly systemPrompt?: string;
+}
+
+/**
+ * One plugin-provided directory of file-based agent definitions
+ * (`agents/*.md`). Flows into `loadCustomAgentProfiles` as the third source
+ * after user-level and project-level dirs; agent names are namespaced as
+ * `pluginId:agentName` so they can never shadow builtin or user profiles.
+ */
+export interface PluginAgentDir {
+  readonly pluginId: string;
+  readonly path: string;
+}
+
+/**
+ * One plugin-provided directory of output-style definitions
+ * (`outputStyles/*.md`). Flows into `loadOutputStyles` as a source below
+ * user/project dirs in precedence; styles keep the plugin id for attribution.
+ */
+export interface PluginOutputStyleDir {
+  readonly pluginId: string;
+  readonly path: string;
 }
 
 export interface PluginMcpServerState {
@@ -79,13 +101,22 @@ export interface PluginCommandDef {
  * (without the `.md` extension, using `/` separators), so a file at
  * `commands/frontend/component.md` yields the name `frontend/component`.
  * Frontmatter `name` in the file itself takes precedence over this at load time.
+ *
+ * Claude Code format plugins may also declare commands via the object-mapping
+ * form (`commands: { "about": { "source" | "content", ... } }`): `source`
+ * entries set `path` with the mapping key as `name`; `content` entries carry
+ * the markdown body inline and have no `path`.
  */
 export interface PluginCommandEntry {
-  readonly path: string;
+  readonly path?: string;
   readonly name: string;
+  /** Inline markdown body (Claude Code object-mapping `content` form). */
+  readonly content?: string;
+  /** Manifest-level description override (Claude Code object-mapping metadata). */
+  readonly description?: string;
 }
 
-export type PluginManifestKind = 'kimi-plugin-root' | 'kimi-plugin-dir';
+export type PluginManifestKind = 'kimi-plugin-root' | 'kimi-plugin-dir' | 'claude-plugin';
 export type PluginSource = 'local-path' | 'zip-url' | 'github';
 export type PluginState = 'ok' | 'error';
 
@@ -164,6 +195,18 @@ export interface ReloadSummary {
   readonly added: readonly string[];
   readonly removed: readonly string[];
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
+}
+
+/** Outcome of `PluginManager.update()`. */
+export interface PluginUpdateResult {
+  readonly id: string;
+  /** False when the resolved commit sha equals the recorded `installedSha`. */
+  readonly updated: boolean;
+  readonly previousSha?: string;
+  readonly sha: string;
+  /** The ref the update resolved to (may differ from the installed ref). */
+  readonly ref: PluginGithubRef;
+  readonly record: PluginRecord;
 }
 
 export const PLUGIN_NAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/;

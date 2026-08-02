@@ -43,15 +43,15 @@ describe('agent profile loader', () => {
     const systemPath = await write(
       'system.md',
       [
-        'os={{ KIMI_OS }}',
-        'cwd={{ KIMI_WORK_DIR }}',
-        'listing={{ KIMI_WORK_DIR_LS }}',
-        'agents={{ KIMI_AGENTS_MD }}',
-        'skills={{ KIMI_SKILLS }}',
+        'os={{ CLOUD_CODE_OS }}',
+        'cwd={{ CLOUD_CODE_WORK_DIR }}',
+        'listing={{ CLOUD_CODE_WORK_DIR_LS }}',
+        'agents={{ CLOUD_CODE_AGENTS_MD }}',
+        'skills={{ CLOUD_CODE_SKILLS }}',
         'parent={{ parentOnly }}',
         'child={{ childOnly }}',
         'role={{ ROLE_ADDITIONAL }}',
-        '{% if KIMI_OS == "macOS" %}nunjucks-ok{% endif %}',
+        '{% if CLOUD_CODE_OS == "macOS" %}nunjucks-ok{% endif %}',
       ].join('\n'),
     );
     await write(
@@ -188,15 +188,23 @@ describe('default agent profiles', () => {
       'CronList',
       'Edit',
       'EnterPlanMode',
+      'EnterWorktree',
       'ExitPlanMode',
+      'ExitWorktree',
       'Glob',
       'Grep',
       'Read',
       'ReadMediaFile',
+      'SaveMemory',
+      'SendMessage',
       'Skill',
       'TaskList',
       'TaskOutput',
       'TaskStop',
+      'TeamTaskClaim',
+      'TeamTaskCreate',
+      'TeamTaskList',
+      'TeamTaskUpdate',
       'TodoList',
       'WebSearch',
       'FetchURL',
@@ -249,11 +257,30 @@ describe('default agent profiles', () => {
       cwd: '/workspace/two',
     });
 
-    expect(first).toContain('You are Kimi Code CLI');
+    expect(first).toContain('You are Cloud Code CLI');
     expect(first).toContain('Available skills');
     expect(first).toContain('/workspace/one');
     expect(second).toContain('/workspace/two');
     expect(second).not.toContain('/workspace/one');
+  });
+
+  it('merges omitAgentsMd with extends inheritance (child overrides parent)', () => {
+    const profiles = loadAgentProfilesFromSources(['a.yaml', 'b.yaml', 'c.yaml'], {
+      'a.yaml': [
+        'name: a',
+        'systemPromptTemplate: "{% if CLOUD_CODE_AGENTS_MD %}agents={{ CLOUD_CODE_AGENTS_MD }}{% else %}no-agents{% endif %}"',
+        'omitAgentsMd: true',
+        '',
+      ].join('\n'),
+      'b.yaml': ['extends: a', 'name: b', ''].join('\n'),
+      'c.yaml': ['extends: a', 'name: c', 'omitAgentsMd: false', ''].join('\n'),
+    });
+
+    expect(profiles['a']?.systemPrompt(promptContext)).toBe('no-agents');
+    // Unset on the child: inherits the parent's true.
+    expect(profiles['b']?.systemPrompt(promptContext)).toBe('no-agents');
+    // Explicit false on the child wins over the parent's true.
+    expect(profiles['c']?.systemPrompt(promptContext)).toBe('agents=Project instructions.');
   });
 });
 

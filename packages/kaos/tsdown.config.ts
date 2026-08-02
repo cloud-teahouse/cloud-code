@@ -16,6 +16,8 @@ export default defineConfig({
   },
   deps: {
     alwaysBundle: [],
-    neverBundle: [],
+    // node-pty is a native module loaded lazily via dynamic import; bundling
+    // it would break the binary resolution and defeat the lazy-load fallback.
+    neverBundle: ['node-pty'],
   },
 });

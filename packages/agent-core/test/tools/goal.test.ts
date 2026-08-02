@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import { GoalMode } from '../../src/agent/goal';
+import type { CloudCodeConfig } from '../../src/config';
 import { ErrorCodes } from '../../src/errors';
 import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import {
@@ -18,18 +19,18 @@ import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
 
-function makeStore() {
-  return fakeAgent().goal;
+function makeStore(opts: { config?: CloudCodeConfig } = {}) {
+  return fakeAgent(opts).goal;
 }
 
-function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode } = {}): Agent {
+function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode; config?: CloudCodeConfig } = {}): Agent {
   const agent = {
     type: opts.type ?? 'main',
     records: { logRecord: () => {} },
     emitEvent: () => {},
-    telemetry: { track: () => {} },
     context: { appendSystemReminder: () => {} },
     permission: { mode: 'manual' },
+    kimiConfig: opts.config,
   } as unknown as Agent;
   (agent as { goal: GoalMode }).goal = opts.goal ?? new GoalMode(agent);
   return agent;
@@ -46,6 +47,7 @@ describe('CreateGoalTool', () => {
     const result = await executeTool(tool, ctx({ objective: 'Ship feature X' }));
     expect(result.isError).toBeFalsy();
     expect(store.getGoal().goal?.objective).toBe('Ship feature X');
+    expect(result.structured).toEqual({ status: 'active' });
   });
 
   it('omits the internal goalId from the model-facing output', async () => {
@@ -72,7 +74,9 @@ describe('CreateGoalTool', () => {
     const goal = store.getGoal().goal!;
     expect(goal.objective).toBe('second');
     expect(goal.completionCriterion).toBe('tests pass');
-    expect(goal.budget.tokenBudget).toBeNull();
+    // P3 tiered budgets: a short objective heuristically tiers `small`, which
+    // fills the default token cap (10 turns / 300k tokens) at creation.
+    expect(goal.budget.tokenBudget).toBe(300_000);
   });
 
   it('rejects empty and too-long objectives via the store', async () => {
@@ -103,6 +107,69 @@ describe('CreateGoalTool', () => {
         properties: Record<string, { description?: string }>;
       }).properties['replace']?.description) ?? '';
     expect(replaceDesc).toContain('blocked');
+  });
+});
+
+describe('CreateGoalTool tiered budgets (completion-gate P3)', () => {
+  it('maps sizeHint to the tier default budgets', async () => {
+    const store = makeStore();
+    const tool = new CreateGoalTool(fakeAgent({ goal: store }));
+    const result = await executeTool(
+      tool,
+      ctx({ objective: 'Refactor the module layout', sizeHint: 'large' }),
+    );
+    expect(result.isError).toBeFalsy();
+    const goal = store.getGoal().goal!;
+    expect(goal.budget.turnBudget).toBe(120);
+    expect(goal.budget.tokenBudget).toBe(6_000_000);
+    // Wall-clock deliberately gets no tiered default.
+    expect(goal.budget.wallClockBudgetMs).toBeNull();
+
+    const output = JSON.parse(result.output as string) as {
+      goal: { budget: { turnBudget: number; tokenBudget: number } };
+    };
+    expect(output.goal.budget.turnBudget).toBe(120);
+    expect(output.goal.budget.tokenBudget).toBe(6_000_000);
+  });
+
+  it.each([
+    ['x'.repeat(280), 10, 300_000],
+    ['x'.repeat(281), 40, 1_500_000],
+    ['x'.repeat(1200), 40, 1_500_000],
+    ['x'.repeat(1201), 120, 6_000_000],
+  ])(
+    'infers the tier from objective length %i chars -> %i turns / %i tokens',
+    async (objective, turnBudget, tokenBudget) => {
+      const store = makeStore();
+      const tool = new CreateGoalTool(fakeAgent({ goal: store }));
+      await executeTool(tool, ctx({ objective }));
+      expect(store.getGoal().goal?.budget.turnBudget).toBe(turnBudget);
+      expect(store.getGoal().goal?.budget.tokenBudget).toBe(tokenBudget);
+    },
+  );
+
+  it('lets an explicit budget override the tiered default', async () => {
+    const store = makeStore();
+    const agent = fakeAgent({ goal: store });
+    await executeTool(new CreateGoalTool(agent), ctx({ objective: 'work', sizeHint: 'small' }));
+    expect(store.getGoal().goal?.budget.turnBudget).toBe(10);
+
+    const result = await executeTool(new SetGoalBudgetTool(agent), ctx({ value: 2, unit: 'turns' }));
+    expect(result.isError).toBeFalsy();
+    // The explicit turn budget wins; the untouched tiered token cap stays.
+    expect(store.getGoal().goal?.budget.turnBudget).toBe(2);
+    expect(store.getGoal().goal?.budget.tokenBudget).toBe(300_000);
+  });
+
+  it('fills no budgets when tieredBudgets is disabled in config', async () => {
+    // The store's own agent carries the config — that is the one GoalMode reads.
+    const store = makeStore({ config: { providers: {}, goal: { tieredBudgets: false } } });
+    const tool = new CreateGoalTool(fakeAgent({ goal: store }));
+    await executeTool(tool, ctx({ objective: 'work', sizeHint: 'large' }));
+    const budget = store.getGoal().goal!.budget;
+    expect(budget.turnBudget).toBeNull();
+    expect(budget.tokenBudget).toBeNull();
+    expect(budget.wallClockBudgetMs).toBeNull();
   });
 });
 
@@ -144,9 +211,39 @@ describe('GetGoalTool', () => {
     expect(description).toContain('objective');
     expect(description).toContain('budget');
     // GoalSnapshot has no self-report / evaluator-verdict fields, so the
-    // description must not promise them (serialize.ts strips only goalId).
+    // description must not promise them (serialize.ts strips the UI-only
+    // fields: goalId and the reason code/detail).
     expect(description).not.toContain('self-report');
     expect(description).not.toContain('evaluator');
+  });
+
+  it('carries the status and coded terminal reason in the structured payload', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.pauseActiveGoal({
+      reason: 'Paused after provider API error: 400 boom',
+      reasonCode: 'provider_api',
+      reasonDetail: '400 boom',
+    });
+    const tool = new GetGoalTool(fakeAgent({ goal: store }));
+    const result = await executeTool(tool, ctx({}));
+    expect(result.structured).toEqual({
+      status: 'paused',
+      terminalReason: 'Paused after provider API error: 400 boom',
+      terminalReasonCode: 'provider_api',
+      terminalReasonDetail: '400 boom',
+    });
+    // The model-facing JSON keeps the human text but not the UI-only code.
+    const parsed = JSON.parse(result.output as string);
+    expect(parsed.goal.terminalReason).toBe('Paused after provider API error: 400 boom');
+    expect('terminalReasonCode' in parsed.goal).toBe(false);
+    expect('terminalReasonDetail' in parsed.goal).toBe(false);
+  });
+
+  it('omits the structured payload when there is no goal', async () => {
+    const tool = new GetGoalTool(fakeAgent({ goal: makeStore() }));
+    const result = await executeTool(tool, ctx({}));
+    expect(result.structured).toBeUndefined();
   });
 });
 
@@ -362,6 +459,7 @@ describe('UpdateGoalTool', () => {
     expect(execution).toMatchObject({
       isError: true,
       output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+      display: { key: 'toolResult.goal.invalidStatus' },
     });
     expect(store.getGoal().goal?.status).toBe('active');
   });
@@ -423,6 +521,94 @@ describe('UpdateGoalTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.stopTurn).toBeFalsy();
     expect(result.output).toBe(output);
+  });
+
+  it('accepts an optional evidence list of tool call ids in the schema', () => {
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'complete' }).success).toBe(true);
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'complete', evidence: ['a', 'b'] }).success).toBe(true);
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'blocked', evidence: [] }).success).toBe(true);
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'complete', evidence: 'a' }).success).toBe(false);
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'complete', evidence: [1] }).success).toBe(false);
+
+    const parameters = new UpdateGoalTool(fakeAgent()).parameters as {
+      properties: Record<string, { type?: string; items?: { type?: string } }>;
+    };
+    expect(parameters.properties['evidence']).toMatchObject({
+      type: 'array',
+      items: { type: 'string' },
+    });
+  });
+
+  it('documents the complete-time evidence requirement in the description', () => {
+    const description = new UpdateGoalTool(fakeAgent()).description;
+    expect(description).toContain('`evidence`');
+    expect(description).toContain('captured after your latest code change');
+    expect(description).toContain('rejected with a tool error');
+    expect(description).toContain('background task results are not recorded as evidence');
+  });
+
+  it('rejects evidence-free completion once a mutation was observed; the goal stays active', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    store.recordMutation();
+    const result = await executeTool(
+      new UpdateGoalTool(agentWithContext(store)),
+      ctx({ status: 'complete' }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.stopTurn).toBeFalsy();
+    expect(result.output as string).toContain('completion gate');
+    expect(result.output as string).toContain('still active');
+    expect(result.output as string).toContain('no usable receipts');
+    expect(store.getGoal().goal?.status).toBe('active');
+  });
+
+  it('rejects unknown citations with per-id reasons and the usable receipt list', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    store.recordMutation();
+    store.recordEvidence({
+      receiptId: 'b1',
+      toolName: 'Bash',
+      turnId: 1,
+      step: 1,
+      ok: true,
+      summary: 'pnpm test',
+    });
+
+    const rejected = await executeTool(
+      new UpdateGoalTool(agentWithContext(store)),
+      ctx({ status: 'complete', evidence: ['nope'] }),
+    );
+    expect(rejected.isError).toBe(true);
+    expect(rejected.output as string).toContain('Receipt "nope" is not in the goal evidence ledger');
+    expect(rejected.output as string).toContain('b1 (Bash: pnpm test)');
+    expect(store.getGoal().goal?.status).toBe('active');
+
+    // Citing the usable receipt then completes through the normal path.
+    const passed = await executeTool(
+      new UpdateGoalTool(agentWithContext(store)),
+      ctx({ status: 'complete', evidence: ['b1'] }),
+    );
+    expect(passed.isError).toBeFalsy();
+    expect(passed.stopTurn).toBe(true);
+    expect(passed.output as string).toContain('Goal completed successfully.');
+    expect(store.getGoal().goal).toBeNull();
+  });
+
+  it('completes without evidence when the gate is disabled in config', async () => {
+    const store = makeStore({ config: { providers: {}, goal: { completionGate: false } } });
+    await store.createGoal({ objective: 'work' });
+    store.recordMutation();
+    const result = await executeTool(
+      new UpdateGoalTool(agentWithContext(store)),
+      ctx({ status: 'complete' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output as string).toContain('Goal completed successfully.');
+    expect(store.getGoal().goal).toBeNull();
   });
 });
 
@@ -490,5 +676,13 @@ describe('CreateGoalToolInputSchema', () => {
         budgetLimits: { tokenBudget: 1 },
       }).success,
     ).toBe(false);
+  });
+
+  it('accepts a sizeHint tier and rejects unknown tiers', () => {
+    for (const sizeHint of ['small', 'medium', 'large']) {
+      expect(CreateGoalToolInputSchema.safeParse({ objective: 'x', sizeHint }).success).toBe(true);
+    }
+    expect(CreateGoalToolInputSchema.safeParse({ objective: 'x', sizeHint: 'tiny' }).success).toBe(false);
+    expect(CreateGoalToolInputSchema.safeParse({ objective: 'x', sizeHint: 1 }).success).toBe(false);
   });
 });

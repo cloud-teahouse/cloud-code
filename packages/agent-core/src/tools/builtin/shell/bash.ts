@@ -22,20 +22,22 @@
  *     foreground runs pass a callback to collect chunks for this call.
  */
 
-import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import { isLikelySandboxDenied, type Kaos, type KaosProcess } from '@cloud-code/kaos';
 import { z } from 'zod';
 
 import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
-import type { BuiltinTool } from '../../../agent/tool';
+import { TOOL_SNIP_HINT_SIDE_EFFECT, type BuiltinTool } from '../../../agent/tool/types';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
+import { literalRulePattern, matchesGlobRuleSubject, matchesWrapperAwareSubject } from '../../support/rule-match';
 import {
   type ExecutableToolResultBuilderResult,
   ToolResultBuilder,
 } from '../../support/result-builder';
+import { analyzeBashCommand } from '../../support/shell-ast';
 import bashDescriptionTemplate from './bash.md?raw';
+import { NONINTERACTIVE_TERM_ENV } from './shell-env';
 
 const MS_PER_SECOND = 1000;
 const DEFAULT_TIMEOUT_S = 60;
@@ -43,6 +45,58 @@ const MAX_TIMEOUT_S = 5 * 60;
 const DEFAULT_BACKGROUND_TIMEOUT_S = 10 * 60;
 const MAX_BACKGROUND_TIMEOUT_S = 24 * 60 * 60;
 const USER_INTERRUPT_REASON = 'Interrupted by user';
+
+/**
+ * Window after a background start during which an immediate exit is still
+ * attributed to launch-time conditions (e.g. a sandbox denial) and is
+ * eligible for one escalation retry. Long-running tasks are never retried
+ * — re-running them would duplicate side effects. Kept short on purpose:
+ * the started-result only returns once this window lapses, and sandbox
+ * denials surface within milliseconds of process start, so a 1s window
+ * catches them without noticeably delaying healthy background starts.
+ */
+const SANDBOX_BACKGROUND_ESCALATION_WINDOW_MS = 1_000;
+
+/** Prefix stamped on the output of an approved unsandboxed retry. */
+const UNSANDBOXED_RETRY_MARKER = '[sandbox: ran without sandbox after approval]';
+
+/** Subset of the execute context needed to route escalation approvals. */
+interface SandboxEscalationContext {
+  readonly turnId: string;
+  readonly toolCallId: string;
+}
+
+/** Fallback when a caller (tests, `!` shell commands) omits execution ids. */
+const EMPTY_ESCALATION_CONTEXT: SandboxEscalationContext = { turnId: '', toolCallId: '' };
+
+/**
+ * OS-sandbox wiring for the Bash tool (F1). The tool's `kaos` may be a
+ * sandbox-decorated handle; these options carry everything the tool needs
+ * to recognize sandbox denials and to retry — with approval — outside the
+ * sandbox.
+ */
+export interface BashSandboxOptions {
+  /**
+   * Fail-closed marker for `sandbox.mode = 'enforce'` on an environment
+   * that cannot be sandboxed (non-local kaos): every Bash call returns this
+   * message as an error instead of executing.
+   */
+  readonly unavailableReason?: string;
+  /** Original undecorated kaos, used for approved unsandboxed retries. */
+  readonly unsandboxedKaos?: Kaos;
+  /** Escalation posture from `sandbox.escalation` (treated as 'ask' when unset). */
+  readonly escalation?: 'ask' | 'never' | 'always';
+  /** Escalation approval channel, wired to `PermissionManager.requestSandboxEscalation`. */
+  readonly requestEscalation?: (info: {
+    command: string;
+    reason: string;
+    turnId: string;
+    toolCallId: string;
+    signal: AbortSignal;
+  }) => Promise<'once' | 'session' | 'reject'>;
+  /** Whether this exact process was spawned through the sandbox. */
+  readonly wasSandboxed?: (proc: KaosProcess) => boolean;
+}
 
 export const BashInputSchema = z
   .object({
@@ -197,6 +251,7 @@ function withoutBackgroundDefaultTimeoutInParameters(
 
 export class BashTool implements BuiltinTool<BashInput> {
   readonly name = 'Bash' as const;
+  readonly snipHint = TOOL_SNIP_HINT_SIDE_EFFECT;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
 
@@ -206,12 +261,30 @@ export class BashTool implements BuiltinTool<BashInput> {
 
   private readonly autoBackgroundOnTimeout: boolean;
 
+  private readonly sandbox: BashSandboxOptions | undefined;
+
+  /**
+   * Full command strings approved for unsandboxed execution for the rest of
+   * this session ("approve for session" on a sandbox-escalation prompt).
+   * Keyed by the complete command, not a glob: a `Bash(<glob>)` session rule
+   * would also waive the sandbox for future sandboxed runs of matching
+   * commands, which is not the intended semantics (design §4.3).
+   */
+  private readonly sessionUnsandboxedExemptions = new Set<string>();
+
   /**
    * Default deadline for background tasks when the call omits `timeout`, and
    * the re-armed deadline for foreground commands moved to the background.
    * `undefined` arms no timer at all (`background.bash_task_timeout_s = 0`).
    */
   private readonly backgroundTimeoutMs: number | undefined;
+
+  /**
+   * `permission.wrapper_stripping` (default true): peel safe wrappers
+   * (sudo/timeout/env/…) when generating approval rules and when matching
+   * them (design doc §3.2.A).
+   */
+  private readonly wrapperStripping: boolean;
 
   constructor(
     private readonly kaos: Kaos,
@@ -226,11 +299,15 @@ export class BashTool implements BuiltinTool<BashInput> {
        * {@link DEFAULT_BACKGROUND_TIMEOUT_S} when unset.
        */
       backgroundTimeoutS?: number;
+      sandbox?: BashSandboxOptions | undefined;
+      wrapperStripping?: boolean | undefined;
     },
   ) {
     this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
     this.allowBackground = options?.allowBackground ?? true;
     this.autoBackgroundOnTimeout = options?.autoBackgroundOnTimeout ?? true;
+    this.sandbox = options?.sandbox;
+    this.wrapperStripping = options?.wrapperStripping ?? true;
     const backgroundTimeoutS = options?.backgroundTimeoutS ?? DEFAULT_BACKGROUND_TIMEOUT_S;
     this.backgroundTimeoutMs =
       backgroundTimeoutS === 0 ? undefined : backgroundTimeoutS * MS_PER_SECOND;
@@ -250,8 +327,17 @@ export class BashTool implements BuiltinTool<BashInput> {
         : toInputJsonSchema(BashInputSchema);
   }
 
-  resolveExecution(args: BashInput): ToolExecution {
+  async resolveExecution(args: BashInput): Promise<ToolExecution> {
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
+    // Parse once up front: the analysis (pure data — subjects and per-segment
+    // approval rules) is captured by the closures below, so no tree-sitter
+    // object outlives this call and nothing leaks when approval is denied
+    // and `execute` never runs.
+    const analysis = await analyzeBashCommand(args.command, {
+      stripWrappers: this.wrapperStripping,
+    });
+    const ruleMatchSubjects = analysis.subjects;
+    const wrapperStripping = this.wrapperStripping;
     return {
       description: args.run_in_background
         ? `Starting background: ${preview}`
@@ -264,13 +350,35 @@ export class BashTool implements BuiltinTool<BashInput> {
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
+      approvalRules: analysis.approvalRules,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
-        this.execution(args, signal, onUpdate, onForegroundTaskStart),
+      ruleMatch: {
+        subjects: ruleMatchSubjects,
+        matches: (ruleArgs, subject, decision) =>
+          matchesWrapperAwareSubject(ruleArgs, subject, {
+            enabled: wrapperStripping,
+            degraded: analysis.degraded,
+            decision,
+          }),
+      },
+      astDegraded: analysis.degraded,
+      // Per-segment git classes for the git mutation gate (C3 P3): the
+      // analysis classified the wrapper-stripped view, so `sudo git push`
+      // reaches the gate as `shared-remote`.
+      gitClasses: analysis.segments.map((segment) => segment.gitClass),
+      execute: ({ signal, onUpdate, onForegroundTaskStart, turnId, toolCallId }) =>
+        this.execution(args, signal, onUpdate, onForegroundTaskStart, {
+          turnId,
+          toolCallId,
+        }),
     };
   }
 
-  private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
+  private spawn(
+    effectiveCwd: string,
+    command: string,
+    opts?: { readonly unsandboxed?: boolean },
+  ): Promise<KaosProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
     const shellArgs = [
       this.kaos.osEnv.shellPath,
@@ -279,8 +387,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     ];
 
     const noninteractiveEnv: Record<string, string> = {
-      NO_COLOR: '1',
-      TERM: 'dumb',
+      ...NONINTERACTIVE_TERM_ENV,
       // Default to '0' so git fails fast on private remotes if a TTY happens
       // to be inherited; honour an explicit ambient value when the user has
       // set one.
@@ -294,7 +401,14 @@ export class BashTool implements BuiltinTool<BashInput> {
       ...(process.env as Record<string, string>),
       ...noninteractiveEnv,
     };
-    return this.kaos.execWithEnv(shellArgs, mergedEnv);
+    // Approved sandbox-escalation retries re-run through the original
+    // undecorated kaos; everything else goes through the (possibly
+    // sandbox-decorated) primary handle.
+    const kaos =
+      opts?.unsandboxed === true && this.sandbox?.unsandboxedKaos !== undefined
+        ? this.sandbox.unsandboxedKaos
+        : this.kaos;
+    return kaos.execWithEnv(shellArgs, mergedEnv);
   }
 
   /**
@@ -312,6 +426,8 @@ export class BashTool implements BuiltinTool<BashInput> {
     signal: AbortSignal,
     onUpdate?: ((update: ToolUpdate) => void) | undefined,
     onForegroundTaskStart?: ((taskId: string) => void) | undefined,
+    execCtx: SandboxEscalationContext = EMPTY_ESCALATION_CONTEXT,
+    retryState?: { readonly unsandboxedRetry?: boolean },
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
@@ -330,7 +446,9 @@ export class BashTool implements BuiltinTool<BashInput> {
     const builder = new ToolResultBuilder();
     let proc: KaosProcess;
     try {
-      proc = await this.spawn(effectiveCwd, command);
+      proc = await this.spawn(effectiveCwd, command, {
+        unsandboxed: retryState?.unsandboxedRetry === true,
+      });
     } catch (error) {
       return {
         isError: true,
@@ -392,6 +510,32 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (!startsInBackground) onForegroundTaskStart?.(taskId);
 
     if (startsInBackground) {
+      // Sandbox-denied background commands typically die within milliseconds
+      // of launch. Give such fast failures one escalation chance; tasks that
+      // survive the window are never retried (avoid duplicate side effects).
+      const earlyDenial = await this.detectSandboxedEarlyDenial(taskId, proc, retryState);
+      if (earlyDenial !== undefined) {
+        const decision = await this.resolveSandboxEscalation(
+          args.command,
+          earlyDenial.reason,
+          signal,
+          execCtx,
+        );
+        if (decision === 'reject') {
+          return {
+            isError: true,
+            output:
+              `Background task ${taskId} exited shortly after start ` +
+              `(${earlyDenial.reason}); running it without the sandbox was not approved.\n\n` +
+              earlyDenial.output,
+          };
+        }
+        return this.annotateUnsandboxedRetry(
+          await this.execution(args, signal, onUpdate, onForegroundTaskStart, execCtx, {
+            unsandboxedRetry: true,
+          }),
+        );
+      }
       return this.backgroundStartedResult(taskId, proc, description, {
         title: 'Background task started',
         brief: `Started ${taskId}`,
@@ -422,7 +566,23 @@ export class BashTool implements BuiltinTool<BashInput> {
         );
       }
 
-      return await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
+      const result = await this.foregroundCompletionResult(
+        taskId,
+        proc,
+        builder,
+        foregroundTimeoutMs,
+      );
+      return await this.maybeRetrySandboxDenial({
+        args,
+        result,
+        proc,
+        taskId,
+        signal,
+        onUpdate,
+        onForegroundTaskStart,
+        execCtx,
+        retryState,
+      });
     } finally {
       collectForegroundOutput = false;
     }
@@ -433,6 +593,11 @@ export class BashTool implements BuiltinTool<BashInput> {
     signal: AbortSignal,
   ): ExecutableToolResult | undefined {
     if (signal.aborted) return { isError: true, output: 'Aborted before command started' };
+    // Fail closed: `sandbox.mode = 'enforce'` on an environment that cannot
+    // be sandboxed (e.g. SSH kaos) turns every Bash call into this error.
+    if (this.sandbox?.unavailableReason !== undefined) {
+      return { isError: true, output: this.sandbox.unavailableReason };
+    }
     if (args.command.length === 0) return { isError: true, output: 'Command cannot be empty.' };
     if (args.run_in_background !== true) return undefined;
     if (!this.allowBackground) {
@@ -483,6 +648,137 @@ export class BashTool implements BuiltinTool<BashInput> {
     return this.addForegroundOutputReference(taskId, result);
   }
 
+  /**
+   * Sandbox-denial gate for foreground runs (F1 §4). A failed result only
+   * qualifies when ALL of these hold: the run actually went through the
+   * sandbox, the task ended on a genuine non-zero exit (not a timeout,
+   * kill, or task-level spawn failure), the output matches the denial
+   * heuristic, and escalation is not disabled. Qualifying failures ask
+   * (per `sandbox.escalation`) and may re-run once without the sandbox.
+   */
+  private async maybeRetrySandboxDenial(params: {
+    readonly args: BashInput;
+    readonly result: ExecutableToolResult;
+    readonly proc: KaosProcess;
+    readonly taskId: string;
+    readonly signal: AbortSignal;
+    readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
+    readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
+    readonly execCtx: SandboxEscalationContext;
+    readonly retryState?: { readonly unsandboxedRetry?: boolean };
+  }): Promise<ExecutableToolResult> {
+    const { args, result, proc, taskId, signal, onUpdate, onForegroundTaskStart, execCtx } = params;
+    if (params.retryState?.unsandboxedRetry === true) return result;
+    if (result.isError !== true) return result;
+    if (!this.sandboxEscalationArmed()) return result;
+    if (this.sandbox?.wasSandboxed?.(proc) !== true) return result;
+
+    const finishedTask = this.backgroundManager.getTask(taskId);
+    if (finishedTask?.status !== 'failed' || finishedTask.stopReason !== undefined) return result;
+    const exitCode =
+      proc.exitCode ?? (finishedTask.kind === 'process' ? finishedTask.exitCode : null);
+    if (exitCode === null || exitCode === 0) return result;
+    if (typeof result.output !== 'string') return result;
+    if (!isLikelySandboxDenied({ exitCode, output: result.output })) return result;
+
+    const decision = await this.resolveSandboxEscalation(
+      args.command,
+      `exit code ${String(exitCode)}; output matches the sandbox-denial signature`,
+      signal,
+      execCtx,
+    );
+    if (decision === 'reject') return result;
+
+    return this.annotateUnsandboxedRetry(
+      await this.execution(args, signal, onUpdate, onForegroundTaskStart, execCtx, {
+        unsandboxedRetry: true,
+      }),
+    );
+  }
+
+  /**
+   * Detect a background task that died within the escalation window with a
+   * sandbox-denial signature. Returns `undefined` when the task is not
+   * eligible (not sandboxed, retries disabled, still running, or the exit
+   * does not look like a denial). The wait is bounded by
+   * {@link SANDBOX_BACKGROUND_ESCALATION_WINDOW_MS}.
+   */
+  private async detectSandboxedEarlyDenial(
+    taskId: string,
+    proc: KaosProcess,
+    retryState?: { readonly unsandboxedRetry?: boolean },
+  ): Promise<{ readonly exitCode: number; readonly output: string; readonly reason: string } | undefined> {
+    if (retryState?.unsandboxedRetry === true) return undefined;
+    if (!this.sandboxEscalationArmed()) return undefined;
+    if (this.sandbox?.wasSandboxed?.(proc) !== true) return undefined;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        proc.wait().then((code) => ({ kind: 'exited' as const, code })),
+        new Promise<{ kind: 'running' }>((resolve) => {
+          timer = setTimeout(() => {
+            resolve({ kind: 'running' });
+          }, SANDBOX_BACKGROUND_ESCALATION_WINDOW_MS);
+        }),
+      ]);
+      if (outcome.kind === 'running') return undefined;
+
+      const exitCode = outcome.code;
+      if (exitCode === 0) return undefined;
+      const output = await this.backgroundManager.readOutput(taskId).catch(() => '');
+      if (!isLikelySandboxDenied({ exitCode, output })) return undefined;
+      return {
+        exitCode,
+        output,
+        reason: `exit code ${String(exitCode)}; output matches the sandbox-denial signature`,
+      };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  /** Whether an unsandboxed retry could possibly be offered right now. */
+  private sandboxEscalationArmed(): boolean {
+    const sandbox = this.sandbox;
+    if (sandbox === undefined) return false;
+    if (sandbox.unavailableReason !== undefined) return false;
+    if ((sandbox.escalation ?? 'ask') === 'never') return false;
+    return sandbox.unsandboxedKaos !== undefined && sandbox.requestEscalation !== undefined;
+  }
+
+  /**
+   * Decide whether the command may be retried without the sandbox:
+   * session-exempted commands and `escalation = 'always'` skip the prompt;
+   * otherwise the request goes through the injected approval channel.
+   * `'session'` approvals are remembered by the full command string.
+   */
+  private async resolveSandboxEscalation(
+    command: string,
+    reason: string,
+    signal: AbortSignal,
+    execCtx: SandboxEscalationContext,
+  ): Promise<'once' | 'session' | 'reject'> {
+    const sandbox = this.sandbox;
+    if (sandbox?.requestEscalation === undefined) return 'reject';
+    if (this.sessionUnsandboxedExemptions.has(command)) return 'once';
+    if ((sandbox.escalation ?? 'ask') === 'always') return 'once';
+    const decision = await sandbox.requestEscalation({
+      command,
+      reason,
+      turnId: execCtx.turnId,
+      toolCallId: execCtx.toolCallId,
+      signal,
+    });
+    if (decision === 'session') this.sessionUnsandboxedExemptions.add(command);
+    return decision;
+  }
+
+  private annotateUnsandboxedRetry(result: ExecutableToolResult): ExecutableToolResult {
+    if (typeof result.output !== 'string') return result;
+    return { ...result, output: `${UNSANDBOXED_RETRY_MARKER}\n${result.output}` };
+  }
+
   private async addForegroundOutputReference(
     taskId: string,
     result: ExecutableToolResultBuilderResult,
@@ -500,7 +796,9 @@ export class BashTool implements BuiltinTool<BashInput> {
       `output_path: ${output.outputPath}\n` +
       `output_size_bytes: ${String(output.outputSizeBytes)}\n` +
       `next_step: Use Read with output_path to page through the full log${taskOutputHint}.`;
-    return { ...result, output: `${result.output}${reference}` };
+    // The referenced task id rides the structured channel too; unlike a
+    // backgrounded result this one is not marked `backgrounded`.
+    return { ...result, output: `${result.output}${reference}`, structured: { taskId } };
   }
 
   private backgroundStartedResult(
@@ -537,6 +835,11 @@ export class BashTool implements BuiltinTool<BashInput> {
       message,
       brief: labels.brief,
       truncated: foregroundResult.truncated,
+      // `backgrounded` distinguishes a detach-to-background result from
+      // results that merely reference a task id; the shell-command path in
+      // agent/tool keys off it (legacy: the `task_id: ` output prefix).
+      structured: { taskId, backgrounded: true, status },
+      display: { key: 'toolResult.bash.backgroundStarted', params: { taskId } },
     };
     return result;
   }

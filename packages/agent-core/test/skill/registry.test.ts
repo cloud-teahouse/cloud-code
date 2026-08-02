@@ -12,7 +12,7 @@ describe('skill registry prompt rendering', () => {
       makeSkill('extra-a', 'extra'),
     ]);
 
-    const rendered = registry.getKimiSkillsDescription();
+    const rendered = registry.getCloudCodeSkillsDescription();
 
     expect(rendered).toContain('### Project');
     expect(rendered).toContain('### User');
@@ -38,7 +38,7 @@ describe('skill registry prompt rendering', () => {
   it('omits scope headings that have no skills', () => {
     const registry = makeRegistry([makeSkill('alpha', 'user')]);
 
-    const rendered = registry.getKimiSkillsDescription();
+    const rendered = registry.getCloudCodeSkillsDescription();
 
     expect(rendered).toContain('### User');
     expect(rendered).not.toContain('### Project');
@@ -49,7 +49,7 @@ describe('skill registry prompt rendering', () => {
   it('renders a "No skills" placeholder for an empty registry', () => {
     const registry = new SessionSkillRegistry();
 
-    const rendered = registry.getKimiSkillsDescription();
+    const rendered = registry.getCloudCodeSkillsDescription();
 
     expect(rendered.trim()).not.toBe('');
     expect(/no skills/i.test(rendered)).toBe(true);
@@ -62,7 +62,7 @@ describe('skill registry prompt rendering', () => {
       makeSkill('mango', 'user'),
     ]);
 
-    const rendered = registry.getKimiSkillsDescription();
+    const rendered = registry.getCloudCodeSkillsDescription();
 
     const a = rendered.indexOf('alpha');
     const m = rendered.indexOf('mango');
@@ -77,7 +77,7 @@ describe('skill registry prompt rendering', () => {
       makeSkill('foo', 'project', 'project version', '/tmp/proj/foo/SKILL.md'),
     ]);
 
-    const rendered = registry.getKimiSkillsDescription();
+    const rendered = registry.getCloudCodeSkillsDescription();
 
     expect(rendered.match(/\n- foo\n/g) ?? []).toHaveLength(1);
     expect(sectionFor(rendered, '### Project')).toContain('foo');
@@ -90,7 +90,7 @@ describe('skill registry prompt rendering', () => {
       makeSkill('alpha', 'user', 'Alpha does things', '/tmp/user/alpha/SKILL.md'),
     ]);
 
-    const rendered = registry.getKimiSkillsDescription();
+    const rendered = registry.getCloudCodeSkillsDescription();
 
     expect(rendered).toContain('- alpha');
     expect(rendered).toContain('  - Path: /tmp/user/alpha/SKILL.md');

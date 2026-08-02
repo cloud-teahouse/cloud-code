@@ -1,12 +1,12 @@
 import { createDecorator } from '../../di';
-import { effectiveModelAlias, type KimiConfig, type ModelAlias, type ProviderConfig, type ProviderType } from '../../config';
+import { effectiveModelAlias, type CloudCodeConfig, type ModelAlias, type ProviderConfig, type ProviderType } from '../../config';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
   RefreshOAuthProviderModelsResponse,
   RefreshProviderModelsResponse,
   SetDefaultModelResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 export type RefreshProviderModelsScope = 'all' | 'oauth';
 
@@ -79,7 +79,7 @@ export interface ProviderCredentialState {
 export function toProtocolProvider(
   providerId: string,
   provider: ProviderConfig,
-  config: KimiConfig,
+  config: CloudCodeConfig,
   credential: ProviderCredentialState,
 ): ProviderCatalogItem {
   const models = modelIdsForProvider(config, providerId);
@@ -96,7 +96,7 @@ export function toProtocolProvider(
 }
 
 export function modelIdsForProvider(
-  config: KimiConfig,
+  config: CloudCodeConfig,
   providerId: string,
 ): string[] {
   const models = config.models ?? {};
@@ -106,7 +106,7 @@ export function modelIdsForProvider(
 }
 
 function globalDefaultForProvider(
-  config: KimiConfig,
+  config: CloudCodeConfig,
   providerId: string,
 ): string | undefined {
   const defaultModel = config.defaultModel;

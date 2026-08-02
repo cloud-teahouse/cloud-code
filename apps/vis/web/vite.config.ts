@@ -7,7 +7,7 @@ const apiPort = Number(process.env.PORT) || 5174;
 const webPort = Number(process.env.WEB_PORT) || 5173;
 
 // When set, build a single self-contained index.html (JS+CSS inlined) into
-// `dist-single/` so it can be embedded into the kimi CLI. The normal `dist/`
+// `dist-single/` so it can be embedded into the cloud-code CLI. The normal `dist/`
 // build is unaffected.
 const singlefile = process.env.VIS_SINGLEFILE === '1';
 

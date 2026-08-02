@@ -6,7 +6,7 @@ import type {
   FsGrepResponse,
   FsSearchRequest,
   FsSearchResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 export class FsGrepTimeoutError extends Error {
   readonly elapsedMs: number;

@@ -1,9 +1,9 @@
 import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
 import { getKeybindings } from "../keybindings.ts";
-import { decodePrintableKey, matchesKey } from "../keys.ts";
+import { decodePrintableKey, matchesKey, parseKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { PasteBurst } from "../paste-burst.ts";
-import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
+import { type Component, CURSOR_MARKER, type Focusable, type MouseEvent, type TUI } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
 	cjkBreakRegex,
@@ -13,6 +13,29 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "../utils.ts";
+import { Cursor, MeasuredText } from "../vim/cursor.ts";
+import { lastGrapheme } from "../vim/intl.ts";
+import {
+	executeIndent,
+	executeJoin,
+	executeOpenLine,
+	executeOperatorFind,
+	executeOperatorMotion,
+	executeOperatorTextObj,
+	executeReplace,
+	executeToggleCase,
+	executeX,
+	type OperatorContext,
+} from "../vim/operators.ts";
+import { transition, type TransitionContext } from "../vim/transitions.ts";
+import {
+	createInitialPersistentState,
+	createInitialVimState,
+	type PersistentState,
+	type RecordedChange,
+	type VimMode,
+	type VimState,
+} from "../vim/types.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
 import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
 
@@ -40,7 +63,7 @@ function isPasteMarker(segment: string): boolean {
 function segmentWithMarkers(
 	text: string,
 	baseSegmenter: Intl.Segmenter,
-	validIds: Set<number>,
+	validIds: ReadonlySet<number>,
 ): Iterable<Intl.SegmentData> {
 	// Fast path: no paste markers in the text or no valid IDs.
 	if (validIds.size === 0 || !text.includes("[paste #")) {
@@ -228,17 +251,37 @@ interface LayoutLine {
 	text: string;
 	hasCursor: boolean;
 	cursorPos?: number;
+	/** Logical line this layout row belongs to (index into state.lines). */
+	lineIndex: number;
+	/** Character offset of this row's first character within its logical line
+	 *  (0 for unwrapped lines; the wrap chunk's startIndex for wrapped ones). */
+	startIndex: number;
 }
 
 export interface EditorTheme {
 	borderColor: (str: string) => string;
 	selectList: SelectListTheme;
+	/** Paint for the empty-buffer placeholder (e.g. dim). Falls back to unpainted text. */
+	placeholderColor?: (str: string) => string;
 }
 
 export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
 	disablePasteBurst?: boolean;
+	/**
+	 * Let the mouse wheel pan the editor's visible window when the buffer is
+	 * taller than it (cursor-follow resumes on the next keystroke). Off by
+	 * default: the wheel keeps scrolling the host's transcript.
+	 */
+	mouseScroll?: boolean;
+	/**
+	 * Let a left press inside the text box move the cursor to the clicked
+	 * grapheme (press-only; drag selection is not tracked). Off by default:
+	 * presses keep falling through to the host. While autocomplete is open
+	 * presses always go to its menu instead.
+	 */
+	mouseClickToPosition?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -281,9 +324,38 @@ export class Editor implements Component, Focusable {
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
+	/**
+	 * Cursor-follow mode: render() keeps the cursor inside the visible
+	 * window. Wheel panning (mouseScroll option) suspends it so the window
+	 * stays where the user put it; any keystroke re-engages it.
+	 */
+	private followCursor: boolean = true;
+	/**
+	 * scrollOffset ceiling of the last rendered frame. wantsMouseEvent and
+	 * the wheel handler consume it, so event claiming matches what is on
+	 * screen (wheel only claimed when the buffer actually overflows).
+	 */
+	private lastMaxScrollOffset: number = 0;
+	private mouseScrollEnabled: boolean = false;
+	private mouseClickToPositionEnabled: boolean = false;
+	/**
+	 * Geometry of the last rendered text box, cached for click-to-position
+	 * row/col translation: the left padding in effect and the number of
+	 * visible content rows between the two borders. The layout lines
+	 * themselves come from the layout cache (same frame, same width).
+	 */
+	private lastClickGeometry: { paddingX: number; contentRows: number } = { paddingX: 0, contentRows: 0 };
 
 	// Border color (can be changed dynamically)
 	public borderColor: (str: string) => string;
+
+	/**
+	 * Placeholder rendered on the first content row while the buffer is empty.
+	 * Display-only: the buffer is never modified, and the placeholder vanishes
+	 * as soon as the user types. Set by the host (which owns wording/i18n);
+	 * painted with `theme.placeholderColor` when provided.
+	 */
+	public placeholderText: string = "";
 
 	// Autocomplete support
 	private autocompleteProvider?: AutocompleteProvider;
@@ -338,6 +410,18 @@ export class Editor implements Component, Focusable {
 
 	// Undo support
 	private undoStack = new UndoStack<EditorState>();
+	// Redo future for vim's Ctrl-R: populated by undo(), invalidated by any
+	// fresh edit (see pushUndoSnapshot). Not bound outside vim NORMAL mode.
+	private redoStack = new UndoStack<EditorState>();
+
+	// Vim modal editing. Disabled by default; when enabled, handleInput
+	// routes every keystroke through vimRouteInput() first. The state machine
+	// itself lives in ../vim/ (ported from Claude Code's src/vim/).
+	private vimEnabled = false;
+	private vimState: VimState = createInitialVimState();
+	private vimPersistent: PersistentState = createInitialPersistentState();
+	/** Called whenever the vim mode flips between INSERT and NORMAL. */
+	public onVimModeChange?: (mode: VimMode) => void;
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
@@ -368,16 +452,39 @@ export class Editor implements Component, Focusable {
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 		this.disablePasteBurst = options.disablePasteBurst ?? false;
+		this.mouseScrollEnabled = options.mouseScroll ?? false;
+		this.mouseClickToPositionEnabled = options.mouseClickToPosition ?? false;
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
-	private validPasteIds(): Set<number> {
-		return new Set(this.pastes.keys());
+	private validPasteIds(): ReadonlySet<number> {
+		// The empty case dominates (pastes only exist after large pastes);
+		// share a frozen set instead of allocating one per segment() call.
+		return this.pastes.size === 0 ? Editor.EMPTY_PASTE_IDS : new Set(this.pastes.keys());
 	}
+
+	private static readonly EMPTY_PASTE_IDS: ReadonlySet<number> = new Set<number>();
 
 	/** Segment text with paste-marker awareness, only merging markers with valid IDs. */
 	private segment(text: string, mode: "word" | "grapheme"): Iterable<Intl.SegmentData> {
 		return segmentWithMarkers(text, mode === "word" ? wordSegmenter : graphemeSegmenter, this.validPasteIds());
+	}
+
+	/** First grapheme of text (paste-marker aware), without materializing all segments. */
+	private firstGraphemeOf(text: string): string | undefined {
+		for (const seg of this.segment(text, "grapheme")) {
+			return seg.segment;
+		}
+		return undefined;
+	}
+
+	/** Last grapheme of text (paste-marker aware), without materializing all segments. */
+	private lastGraphemeOf(text: string): string | undefined {
+		let last: string | undefined;
+		for (const seg of this.segment(text, "grapheme")) {
+			last = seg.segment;
+		}
+		return last;
 	}
 
 	getPaddingX(): number {
@@ -445,16 +552,20 @@ export class Editor implements Component, Focusable {
 		return this.state.lines.length === 1 && this.state.lines[0] === "";
 	}
 
-	private isOnFirstVisualLine(): boolean {
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
-		const currentVisualLine = this.findCurrentVisualLine(visualLines);
+	private isOnFirstVisualLine(
+		visualLines?: Array<{ logicalLine: number; startCol: number; length: number }>,
+	): boolean {
+		const lines = visualLines ?? this.buildVisualLineMap(this.lastWidth);
+		const currentVisualLine = this.findCurrentVisualLine(lines);
 		return currentVisualLine === 0;
 	}
 
-	private isOnLastVisualLine(): boolean {
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
-		const currentVisualLine = this.findCurrentVisualLine(visualLines);
-		return currentVisualLine === visualLines.length - 1;
+	private isOnLastVisualLine(
+		visualLines?: Array<{ logicalLine: number; startCol: number; length: number }>,
+	): boolean {
+		const lines = visualLines ?? this.buildVisualLineMap(this.lastWidth);
+		const currentVisualLine = this.findCurrentVisualLine(lines);
+		return currentVisualLine === lines.length - 1;
 	}
 
 	private navigateHistory(direction: 1 | -1): void {
@@ -508,6 +619,7 @@ export class Editor implements Component, Focusable {
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
+				this.followCursor = true;
 				if (this.hostHistoryDraft !== undefined) {
 					this.onHistoryDraftRestore?.(this.hostHistoryDraft);
 					this.hostHistoryDraft = undefined;
@@ -537,6 +649,7 @@ export class Editor implements Component, Focusable {
 		this.setCursorCol(cursorPlacement === "start" ? 0 : this.state.lines[this.state.cursorLine]?.length || 0);
 		// Reset scroll - render() will adjust to show cursor
 		this.scrollOffset = 0;
+		this.followCursor = true;
 
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -572,19 +685,26 @@ export class Editor implements Component, Focusable {
 		let cursorLineIndex = layoutLines.findIndex((line) => line.hasCursor);
 		if (cursorLineIndex === -1) cursorLineIndex = 0;
 
-		// Adjust scroll offset to keep cursor visible
-		if (cursorLineIndex < this.scrollOffset) {
-			this.scrollOffset = cursorLineIndex;
-		} else if (cursorLineIndex >= this.scrollOffset + maxVisibleLines) {
-			this.scrollOffset = cursorLineIndex - maxVisibleLines + 1;
+		// Adjust scroll offset to keep cursor visible. Wheel panning suspends
+		// cursor-follow so the window stays where the user left it.
+		if (this.followCursor) {
+			if (cursorLineIndex < this.scrollOffset) {
+				this.scrollOffset = cursorLineIndex;
+			} else if (cursorLineIndex >= this.scrollOffset + maxVisibleLines) {
+				this.scrollOffset = cursorLineIndex - maxVisibleLines + 1;
+			}
 		}
 
 		// Clamp scroll offset to valid range
 		const maxScrollOffset = Math.max(0, layoutLines.length - maxVisibleLines);
 		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxScrollOffset));
+		this.lastMaxScrollOffset = maxScrollOffset;
 
 		// Get visible lines slice
 		const visibleLines = layoutLines.slice(this.scrollOffset, this.scrollOffset + maxVisibleLines);
+		// Cached for click-to-position translation in handleMouse (row 0 is the
+		// top border, so content row N sits at rendered row N + 1).
+		this.lastClickGeometry = { paddingX, contentRows: visibleLines.length };
 
 		const result: string[] = [];
 		const leftPadding = " ".repeat(paddingX);
@@ -609,6 +729,13 @@ export class Editor implements Component, Focusable {
 		// autocomplete (e.g. slash-command menu) is visible.
 		const emitCursorMarker = this.focused;
 
+		// Placeholder: an empty buffer has exactly one layout row; render the
+		// host-provided hint on it (behind the cursor block when focused).
+		const showPlaceholder =
+			this.placeholderText.length > 0 &&
+			this.state.lines.length === 1 &&
+			this.state.lines[0] === "";
+
 		for (const layoutLine of visibleLines) {
 			let displayText = layoutLine.text;
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
@@ -625,8 +752,7 @@ export class Editor implements Component, Focusable {
 				if (after.length > 0) {
 					// Cursor is on a character (grapheme) - replace it with highlighted version
 					// Get the first grapheme from 'after'
-					const afterGraphemes = [...this.segment(after, "grapheme")];
-					const firstGrapheme = afterGraphemes[0]?.segment || "";
+					const firstGrapheme = this.firstGraphemeOf(after) || "";
 					const restAfter = after.slice(firstGrapheme.length);
 					const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
 					displayText = before + marker + cursor + restAfter;
@@ -640,6 +766,16 @@ export class Editor implements Component, Focusable {
 					if (lineVisibleWidth > contentWidth && paddingX > 0) {
 						cursorInPadding = true;
 					}
+				}
+			}
+
+			if (showPlaceholder) {
+				const paint = this.theme.placeholderColor ?? ((s: string) => s);
+				const room = contentWidth - lineVisibleWidth;
+				if (room > 0) {
+					const shown = truncateToWidth(this.placeholderText, room, "…");
+					displayText += paint(shown);
+					lineVisibleWidth += visibleWidth(shown);
 				}
 			}
 
@@ -664,6 +800,8 @@ export class Editor implements Component, Focusable {
 		// Add autocomplete list if active
 		if (this.autocompleteState && this.autocompleteList) {
 			const autocompleteResult = this.autocompleteList.render(contentWidth);
+			// Cached for mouse press row translation in handleMouse.
+			this.autocompleteOffsetY = result.length;
 			for (const line of autocompleteResult) {
 				const lineWidth = visibleWidth(line);
 				const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
@@ -674,7 +812,120 @@ export class Editor implements Component, Focusable {
 		return result;
 	}
 
+	/**
+	 * Hover-to-scroll: while the autocomplete dropdown is open, the wheel
+	 * drives its selection (the dropdown renders inside the editor's slot
+	 * area). With mouseScroll enabled and a buffer taller than the visible
+	 * window, a vertical wheel over the editor pans its window instead.
+	 * With mouseClickToPosition enabled, a left press is claimed so the
+	 * cursor can move to the clicked grapheme. Otherwise the editor declines
+	 * mouse input and the TUI keeps its default transcript scrolling —
+	 * including when the buffer still fits.
+	 */
+	wantsMouseEvent(event: MouseEvent): boolean {
+		if (this.autocompleteState !== null && this.autocompleteList !== undefined) return true;
+		if (this.mouseClickToPositionEnabled && event.type === "press" && event.button === 0) return true;
+		const isVerticalWheel = event.type === "wheel" && (event.button === 64 || event.button === 65);
+		return this.mouseScrollEnabled && isVerticalWheel && this.lastMaxScrollOffset > 0;
+	}
+
+	/** First rendered row of the autocomplete dropdown, cached by render(). */
+	private autocompleteOffsetY = 0;
+
+	handleMouse(event: MouseEvent): void | boolean {
+		if (this.autocompleteState && this.autocompleteList) {
+			// Press/motion rows arrive relative to the editor's first line; the
+			// dropdown starts after the text box and its bottom border.
+			const row =
+				event.type === "press" || event.type === "motion"
+					? event.row - this.autocompleteOffsetY
+					: event.row;
+			return this.autocompleteList.handleMouse({ ...event, row });
+		}
+		if (event.type === "press" && event.button === 0 && this.mouseClickToPositionEnabled) {
+			return this.handleClickToPosition(event);
+		}
+		if (event.type !== "wheel" || !this.mouseScrollEnabled || this.lastMaxScrollOffset <= 0) {
+			return false;
+		}
+		// Pan the visible window three rows per tick (same convention as the
+		// transcript and btw panel) and suspend cursor-follow until the next
+		// keystroke. Clamped at both ends like the SelectList wheel.
+		const delta = event.button === 64 ? -3 : event.button === 65 ? 3 : 0;
+		if (delta === 0) return false;
+		const next = Math.max(0, Math.min(this.lastMaxScrollOffset, this.scrollOffset + delta));
+		if (next === this.scrollOffset) return false;
+		this.scrollOffset = next;
+		this.followCursor = false;
+	}
+
+	/**
+	 * Click-to-position (mouseClickToPosition option, press-only): translate a
+	 * component-relative press into the cursor's (line, col). Rendered row 0 is
+	 * the top border and the rows past the content window are the bottom
+	 * border — presses there (and anywhere outside the text box) are declined
+	 * so the host keeps its default handling. The layout lines come from the
+	 * layout cache at the last render's width, so the mapping always matches
+	 * what is on screen.
+	 */
+	private handleClickToPosition(event: MouseEvent): void | boolean {
+		const contentRow = event.row - 1;
+		if (contentRow < 0 || contentRow >= this.lastClickGeometry.contentRows) return false;
+		const layoutLines = this.layoutText(this.lastWidth);
+		const layoutLine = layoutLines[this.scrollOffset + contentRow];
+		if (layoutLine === undefined) return false;
+		const line = this.state.lines[layoutLine.lineIndex] ?? "";
+		const cell = event.col - this.lastClickGeometry.paddingX - 1;
+		let col = Math.min(layoutLine.startIndex + this.graphemeBoundaryAtCell(layoutLine.text, cell), line.length);
+		// Vim's NORMAL-mode cursor sits on a character, never past the line
+		// end: a click at/past the end of a non-empty line lands on its last
+		// grapheme instead (mirrors what $ does).
+		if (this.vimEnabled && this.vimState.mode === "NORMAL" && col === line.length && line.length > 0) {
+			col = line.length - (this.lastGraphemeOf(line)?.length ?? 1);
+		}
+		this.state.cursorLine = layoutLine.lineIndex;
+		this.setCursorCol(col);
+		// Re-engage cursor-follow so the window shows the clicked position
+		// (suspended by wheel panning, same as a keystroke does).
+		this.followCursor = true;
+	}
+
+	/**
+	 * Grapheme boundary (character offset into `text`) for a 0-based display
+	 * cell within it. A click left of the text maps to its start; a click at
+	 * or past its last cell maps to its end. Inside a grapheme's cell span the
+	 * boundary snaps to its start, or to its end once the click reaches the
+	 * span's midpoint — for single-cell graphemes that means always the start
+	 * ("click a character, land before it; click past the text, land at the
+	 * end"). Segmentation is paste-marker aware, so a click inside an atomic
+	 * paste marker snaps to one of its edges instead of splitting it.
+	 */
+	private graphemeBoundaryAtCell(text: string, cell: number): number {
+		if (cell <= 0) return 0;
+		let cellPos = 0;
+		for (const seg of this.segment(text, "grapheme")) {
+			const width = visibleWidth(seg.segment);
+			if (width <= 0) continue;
+			if (cell < cellPos + width) {
+				return cell >= cellPos + Math.ceil(width / 2) ? seg.index + seg.segment.length : seg.index;
+			}
+			cellPos += width;
+		}
+		return text.length;
+	}
+
 	handleInput(data: string): void {
+		// Any keystroke returns the window to the cursor after wheel panning.
+		this.followCursor = true;
+
+		// Vim mode: every keystroke goes through the vim state machine first.
+		// In NORMAL mode most keys are consumed here; in INSERT mode (and for
+		// paste streams, ctrl chords, Enter) this returns false and the input
+		// falls through to the regular handling below unchanged.
+		if (this.vimRouteInput(data)) {
+			return;
+		}
+
 		const kb = getKeybindings();
 
 		// Handle character jump mode (awaiting next character to jump to)
@@ -909,27 +1160,31 @@ export class Editor implements Component, Focusable {
 
 		// Arrow key navigation (with history support)
 		if (kb.matches(data, "tui.editor.cursorUp")) {
-			if (
-				this.isOnFirstVisualLine() &&
-				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)
-			) {
+			// The map is a pure function of (width, line contents); none of the
+			// branches mutate the buffer before moveCursor, so one build serves
+			// both checks and the move itself.
+			const visualLines = this.buildVisualLineMap(this.lastWidth);
+			const onFirstLine = this.isOnFirstVisualLine(visualLines);
+			if (onFirstLine && (this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)) {
 				this.navigateHistory(-1);
-			} else if (this.isOnFirstVisualLine()) {
+			} else if (onFirstLine) {
 				// Already at top - jump to start of line
 				this.moveToLineStart();
 			} else {
-				this.moveCursor(-1, 0);
+				this.moveCursor(-1, 0, visualLines);
 			}
 			return;
 		}
 		if (kb.matches(data, "tui.editor.cursorDown")) {
-			if (this.historyIndex > -1 && this.isOnLastVisualLine()) {
+			const visualLines = this.buildVisualLineMap(this.lastWidth);
+			const onLastLine = this.isOnLastVisualLine(visualLines);
+			if (this.historyIndex > -1 && onLastLine) {
 				this.navigateHistory(1);
-			} else if (this.isOnLastVisualLine()) {
+			} else if (onLastLine) {
 				// Already at bottom - jump to end of line
 				this.moveToLineEnd();
 			} else {
-				this.moveCursor(1, 0);
+				this.moveCursor(1, 0, visualLines);
 			}
 			return;
 		}
@@ -986,7 +1241,54 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
+	// Per-frame layout cache. render() runs once per TUI frame (e.g. spinner
+	// ticks at ~60fps) but the buffer rarely changes between frames; wrapping
+	// is the expensive part. The key is a snapshot of the per-line string
+	// references plus the cursor: every edit path replaces (or splices) line
+	// strings rather than mutating them in place, and the only other layout
+	// input — the valid paste-id set used by segment() — changes only
+	// together with a line-content change (handlePaste inserts the marker,
+	// submitValue resets the buffer). A hit costs O(lines) pointer compares.
+	private layoutCache: {
+		width: number;
+		lines: string[];
+		cursorLine: number;
+		cursorCol: number;
+		result: LayoutLine[];
+	} | null = null;
+
 	private layoutText(contentWidth: number): LayoutLine[] {
+		const cached = this.layoutCache;
+		if (
+			cached !== null &&
+			cached.width === contentWidth &&
+			cached.cursorLine === this.state.cursorLine &&
+			cached.cursorCol === this.state.cursorCol &&
+			cached.lines.length === this.state.lines.length
+		) {
+			let unchanged = true;
+			for (let i = 0; i < cached.lines.length; i++) {
+				if (cached.lines[i] !== this.state.lines[i]) {
+					unchanged = false;
+					break;
+				}
+			}
+			if (unchanged) {
+				return cached.result;
+			}
+		}
+		const result = this.layoutTextUncached(contentWidth);
+		this.layoutCache = {
+			width: contentWidth,
+			lines: [...this.state.lines],
+			cursorLine: this.state.cursorLine,
+			cursorCol: this.state.cursorCol,
+			result,
+		};
+		return result;
+	}
+
+	private layoutTextUncached(contentWidth: number): LayoutLine[] {
 		const layoutLines: LayoutLine[] = [];
 
 		if (this.state.lines.length === 0 || (this.state.lines.length === 1 && this.state.lines[0] === "")) {
@@ -995,6 +1297,8 @@ export class Editor implements Component, Focusable {
 				text: "",
 				hasCursor: true,
 				cursorPos: 0,
+				lineIndex: 0,
+				startIndex: 0,
 			});
 			return layoutLines;
 		}
@@ -1012,11 +1316,15 @@ export class Editor implements Component, Focusable {
 						text: line,
 						hasCursor: true,
 						cursorPos: this.state.cursorCol,
+						lineIndex: i,
+						startIndex: 0,
 					});
 				} else {
 					layoutLines.push({
 						text: line,
 						hasCursor: false,
+						lineIndex: i,
+						startIndex: 0,
 					});
 				}
 			} else {
@@ -1060,11 +1368,15 @@ export class Editor implements Component, Focusable {
 							text: chunk.text,
 							hasCursor: true,
 							cursorPos: adjustedCursorPos,
+							lineIndex: i,
+							startIndex: chunk.startIndex,
 						});
 					} else {
 						layoutLines.push({
 							text: chunk.text,
 							hasCursor: false,
+							lineIndex: i,
+							startIndex: chunk.startIndex,
 						});
 					}
 				}
@@ -1360,7 +1672,9 @@ export class Editor implements Component, Focusable {
 		this.pasteCounter = 0;
 		this.exitHistoryBrowsing();
 		this.scrollOffset = 0;
+		this.followCursor = true;
 		this.undoStack.clear();
+		this.redoStack.clear();
 		this.lastAction = null;
 
 		if (this.onChange) this.onChange("");
@@ -1379,9 +1693,8 @@ export class Editor implements Component, Focusable {
 			const beforeCursor = line.slice(0, this.state.cursorCol);
 
 			// Find the last grapheme in the text before cursor
-			const graphemes = [...this.segment(beforeCursor, "grapheme")];
-			const lastGrapheme = graphemes[graphemes.length - 1];
-			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
+			const lastGrapheme = this.lastGraphemeOf(beforeCursor);
+			const graphemeLength = lastGrapheme ? lastGrapheme.length : 1;
 
 			const before = line.slice(0, this.state.cursorCol - graphemeLength);
 			const after = line.slice(this.state.cursorCol);
@@ -1751,9 +2064,8 @@ export class Editor implements Component, Focusable {
 			const afterCursor = currentLine.slice(this.state.cursorCol);
 
 			// Find the first grapheme at cursor
-			const graphemes = [...this.segment(afterCursor, "grapheme")];
-			const firstGrapheme = graphemes[0];
-			const graphemeLength = firstGrapheme ? firstGrapheme.segment.length : 1;
+			const firstGrapheme = this.firstGraphemeOf(afterCursor);
+			const graphemeLength = firstGrapheme ? firstGrapheme.length : 1;
 
 			const before = currentLine.slice(0, this.state.cursorCol);
 			const after = currentLine.slice(this.state.cursorCol + graphemeLength);
@@ -1853,16 +2165,31 @@ export class Editor implements Component, Focusable {
 		return this.findVisualLineAt(visualLines, this.state.cursorLine, this.state.cursorCol);
 	}
 
-	private moveCursor(deltaLine: number, deltaCol: number): void {
+	private moveCursor(
+		deltaLine: number,
+		deltaCol: number,
+		prefetchedVisualLines?: Array<{ logicalLine: number; startCol: number; length: number }>,
+	): void {
 		this.lastAction = null;
-		const visualLines = this.buildVisualLineMap(this.lastWidth);
-		const currentVisualLine = this.findCurrentVisualLine(visualLines);
+		// The visual-line map is only needed for vertical moves (and for the
+		// sticky-column edge case at the very end of the buffer); it is built
+		// lazily so horizontal moves don't pay for it. Callers that already
+		// built a map for first/last-line checks pass it in — the map is a
+		// pure function of (width, line contents) and no mutation happens
+		// between those checks and this call.
+		let visualLines: Array<{ logicalLine: number; startCol: number; length: number }> | undefined;
+		const getVisualLines = (): Array<{ logicalLine: number; startCol: number; length: number }> => {
+			visualLines ??= prefetchedVisualLines ?? this.buildVisualLineMap(this.lastWidth);
+			return visualLines;
+		};
 
 		if (deltaLine !== 0) {
+			const lines = getVisualLines();
+			const currentVisualLine = this.findCurrentVisualLine(lines);
 			const targetVisualLine = currentVisualLine + deltaLine;
 
-			if (targetVisualLine >= 0 && targetVisualLine < visualLines.length) {
-				this.moveToVisualLine(visualLines, currentVisualLine, targetVisualLine);
+			if (targetVisualLine >= 0 && targetVisualLine < lines.length) {
+				this.moveToVisualLine(lines, currentVisualLine, targetVisualLine);
 			}
 		}
 
@@ -1873,16 +2200,16 @@ export class Editor implements Component, Focusable {
 				// Moving right - move by one grapheme (handles emojis, combining characters, etc.)
 				if (this.state.cursorCol < currentLine.length) {
 					const afterCursor = currentLine.slice(this.state.cursorCol);
-					const graphemes = [...this.segment(afterCursor, "grapheme")];
-					const firstGrapheme = graphemes[0];
-					this.setCursorCol(this.state.cursorCol + (firstGrapheme ? firstGrapheme.segment.length : 1));
+					const firstGrapheme = this.firstGraphemeOf(afterCursor);
+					this.setCursorCol(this.state.cursorCol + (firstGrapheme ? firstGrapheme.length : 1));
 				} else if (this.state.cursorLine < this.state.lines.length - 1) {
 					// Wrap to start of next logical line
 					this.state.cursorLine++;
 					this.setCursorCol(0);
 				} else {
 					// At end of last line - can't move, but set preferredVisualCol for up/down navigation
-					const currentVL = visualLines[currentVisualLine];
+					const lines = getVisualLines();
+					const currentVL = lines[this.findCurrentVisualLine(lines)];
 					if (currentVL) {
 						this.preferredVisualCol = this.state.cursorCol - currentVL.startCol;
 					}
@@ -1891,9 +2218,8 @@ export class Editor implements Component, Focusable {
 				// Moving left - move by one grapheme (handles emojis, combining characters, etc.)
 				if (this.state.cursorCol > 0) {
 					const beforeCursor = currentLine.slice(0, this.state.cursorCol);
-					const graphemes = [...this.segment(beforeCursor, "grapheme")];
-					const lastGrapheme = graphemes[graphemes.length - 1];
-					this.setCursorCol(this.state.cursorCol - (lastGrapheme ? lastGrapheme.segment.length : 1));
+					const lastGrapheme = this.lastGraphemeOf(beforeCursor);
+					this.setCursorCol(this.state.cursorCol - (lastGrapheme ? lastGrapheme.length : 1));
 				} else if (this.state.cursorLine > 0) {
 					// Wrap to end of previous logical line
 					this.state.cursorLine--;
@@ -2077,17 +2403,399 @@ export class Editor implements Component, Focusable {
 
 	private pushUndoSnapshot(): void {
 		this.undoStack.push(this.state);
+		// A fresh edit forks the timeline: the redo future no longer applies.
+		this.redoStack.clear();
 	}
 
 	private undo(): void {
 		this.exitHistoryBrowsing();
 		const snapshot = this.undoStack.pop();
 		if (!snapshot) return;
+		this.redoStack.push(this.state);
 		Object.assign(this.state, snapshot);
 		this.lastAction = null;
 		this.preferredVisualCol = null;
 		if (this.onChange) {
 			this.onChange(this.getText());
+		}
+	}
+
+	private redo(): void {
+		this.exitHistoryBrowsing();
+		const snapshot = this.redoStack.pop();
+		if (!snapshot) return;
+		this.undoStack.push(this.state);
+		Object.assign(this.state, snapshot);
+		this.lastAction = null;
+		this.preferredVisualCol = null;
+		if (this.onChange) {
+			this.onChange(this.getText());
+		}
+	}
+
+	// ============================================================================
+	// Vim modal editing
+	// ============================================================================
+	//
+	// The state machine lives in ../vim/ (ported from Claude Code's src/vim/).
+	// This section is the adapter between that flat-offset model and the
+	// editor's {line, col} cursor: getCursorOffset()/setCursorOffset() convert
+	// between the two, and vimRouteInput() is the single entry point that
+	// decides per keystroke whether vim consumes it.
+	//
+	// Key routing contract (vim enabled):
+	// - Paste streams, ctrl chords and Enter/newline always fall through in
+	//   both modes (paste pipeline, app shortcuts and submit keep working).
+	//   Sole exception: Ctrl-R in NORMAL mode is vim's redo and is consumed.
+	// - Escape in INSERT switches to NORMAL and is consumed; Escape in NORMAL
+	//   only cancels a pending vim command and falls through, so the host's
+	//   own Escape semantics (stream cancel, double-Esc undo) keep working.
+	// - INSERT mode tracks typed text for dot-repeat and falls through.
+	// - NORMAL mode consumes printable keys (motions/operators) and lets
+	//   non-printable keys (arrows in idle state, page up/down) fall through.
+
+	/** Enable or disable vim modal editing. */
+	setVimEnabled(enabled: boolean): void {
+		if (this.vimEnabled === enabled) return;
+		this.vimEnabled = enabled;
+		if (!enabled && this.vimState.mode === "NORMAL") {
+			// Disabling mid-NORMAL would strand the modal cursor semantics;
+			// drop back to INSERT so the editor behaves like a plain input.
+			this.vimState = createInitialVimState();
+			this.onVimModeChange?.("INSERT");
+		}
+	}
+
+	isVimEnabled(): boolean {
+		return this.vimEnabled;
+	}
+
+	/** Current vim mode, or null when vim mode is disabled. */
+	getVimMode(): VimMode | null {
+		return this.vimEnabled ? this.vimState.mode : null;
+	}
+
+	/**
+	 * Flat offset of the cursor into getText() (lines joined with "\n").
+	 * Inverse of setCursorOffset().
+	 */
+	getCursorOffset(): number {
+		let offset = 0;
+		for (let i = 0; i < this.state.cursorLine; i++) {
+			offset += (this.state.lines[i]?.length ?? 0) + 1; // +1 for newline
+		}
+		return offset + this.state.cursorCol;
+	}
+
+	/**
+	 * Set the cursor from a flat offset into getText(). Out-of-range offsets
+	 * are clamped; an offset pointing at a newline lands at the end of the
+	 * line above it. Inverse of getCursorOffset().
+	 */
+	setCursorOffset(offset: number): void {
+		let remaining = Math.max(0, offset);
+		for (let i = 0; i < this.state.lines.length; i++) {
+			const lineLength = (this.state.lines[i] ?? "").length;
+			if (remaining <= lineLength) {
+				this.state.cursorLine = i;
+				this.setCursorCol(remaining);
+				return;
+			}
+			remaining -= lineLength + 1; // +1 for newline
+		}
+		// Past the end: land on the end of the last line.
+		this.state.cursorLine = this.state.lines.length - 1;
+		this.setCursorCol((this.state.lines[this.state.cursorLine] ?? "").length);
+	}
+
+	/**
+	 * Route one input through the vim state machine. Returns true when vim
+	 * consumed it (the caller must not process it further). Returns false
+	 * when vim mode is disabled or the input should fall through to the
+	 * regular handling. Called at the top of handleInput(), and directly by
+	 * hosts that need vim to win over their own key handling (e.g. Escape).
+	 */
+	vimRouteInput(data: string): boolean {
+		if (!this.vimEnabled) return false;
+
+		// Never intercept paste streams; the paste pipeline in handleInput
+		// treats them as plain insertions in both modes.
+		if (this.isInPaste || data.includes("\x1b[200~")) return false;
+
+		const keyId = parseKey(data);
+
+		// Ctrl chords fall through to the regular bindings (both modes) — with
+		// one exception: Ctrl-R in NORMAL mode is vim's redo. It cancels any
+		// pending command and is consumed here; INSERT-mode Ctrl-R (register
+		// insertion) is not implemented and falls through like the rest.
+		if (keyId !== undefined && keyId.split("+").includes("ctrl")) {
+			if (keyId === "ctrl+r" && this.vimState.mode === "NORMAL") {
+				this.vimState = { mode: "NORMAL", command: { type: "idle" } };
+				this.redo();
+				return true;
+			}
+			return false;
+		}
+
+		// Escape: INSERT -> NORMAL is vim's own mode switch and consumed here.
+		// A NORMAL-mode Escape only cancels a pending vim command (replace,
+		// operator, …) and falls through so the host's cancel/double-Esc
+		// semantics still apply.
+		if (keyId === "escape") {
+			if (this.vimState.mode === "INSERT") {
+				this.vimSwitchToNormalMode();
+				return true;
+			}
+			this.vimState = { mode: "NORMAL", command: { type: "idle" } };
+			return false;
+		}
+
+		// Enter and newline combos always pass through: submitting (or adding a
+		// newline) works the same from NORMAL and INSERT.
+		if (
+			keyId === "enter" ||
+			keyId === "shift+enter" ||
+			keyId === "alt+enter" ||
+			data === "\r" ||
+			data === "\n"
+		) {
+			return false;
+		}
+
+		if (this.vimState.mode === "INSERT") {
+			// Track inserted text for dot-repeat, then fall through to typing.
+			const state = this.vimState;
+			if (keyId === "backspace" || keyId === "delete") {
+				if (state.insertedText.length > 0) {
+					this.vimState = {
+						mode: "INSERT",
+						insertedText: state.insertedText.slice(
+							0,
+							-(lastGrapheme(state.insertedText).length || 1),
+						),
+					};
+				}
+			} else {
+				const printable =
+					decodePrintableKey(data) ??
+					(data.length === 1 && data.charCodeAt(0) >= 32 ? data : undefined);
+				if (printable !== undefined) {
+					this.vimState = {
+						mode: "INSERT",
+						insertedText: state.insertedText + printable,
+					};
+				}
+			}
+			return false;
+		}
+
+		// NORMAL mode from here on.
+		const command = this.vimState.command;
+
+		// In idle state, delegate arrow keys to the base handler for cursor
+		// movement and history fallback.
+		const isArrow =
+			keyId === "up" || keyId === "down" || keyId === "left" || keyId === "right";
+		if (command.type === "idle" && isArrow) return false;
+
+		// Backspace/Delete are only mapped in motion-expecting states. In
+		// literal-char states (replace, find, operatorFind), mapping would turn
+		// r+Backspace into "replace with h" and df+Delete into "delete to next x".
+		// Delete additionally skips count state: in vim, N<Del> removes a count
+		// digit rather than executing Nx; we don't implement digit removal but
+		// should at least not turn a cancel into a destructive Nx.
+		const expectsMotion =
+			command.type === "idle" ||
+			command.type === "count" ||
+			command.type === "operator" ||
+			command.type === "operatorCount";
+
+		// Map arrow keys to vim motions in NORMAL mode.
+		let vimInput: string | undefined;
+		if (keyId === "left") vimInput = "h";
+		else if (keyId === "right") vimInput = "l";
+		else if (keyId === "up") vimInput = "k";
+		else if (keyId === "down") vimInput = "j";
+		else if (expectsMotion && (keyId === "backspace" || keyId === "shift+backspace"))
+			vimInput = "h";
+		else if (
+			expectsMotion &&
+			command.type !== "count" &&
+			(keyId === "delete" || keyId === "shift+delete")
+		)
+			vimInput = "x";
+		else {
+			// Single printable characters drive the state machine; anything else
+			// (page keys, function keys, multi-char IME commits) falls through.
+			const printable =
+				decodePrintableKey(data) ??
+				(data.length === 1 && data.charCodeAt(0) >= 32 ? data : undefined);
+			if (printable === undefined) return false;
+			vimInput = printable;
+		}
+
+		const ctx = this.vimCreateTransitionContext(false);
+		const result = transition(command, vimInput, ctx);
+
+		if (result.execute) {
+			result.execute();
+		}
+
+		// Update command state (only if execute didn't switch to INSERT)
+		if (this.vimState.mode === "NORMAL") {
+			if (result.next) {
+				this.vimState = { mode: "NORMAL", command: result.next };
+			} else if (result.execute) {
+				this.vimState = { mode: "NORMAL", command: { type: "idle" } };
+			}
+		}
+
+		// '?' in NORMAL idle primes the buffer with "?" — hosts that map a "?"
+		// submit to a help panel keep that gesture working from NORMAL mode.
+		if (vimInput === "?" && command.type === "idle" && !result.next && !result.execute) {
+			this.vimApplyText("?");
+			this.setCursorOffset(0);
+		}
+
+		return true;
+	}
+
+	/** Build the flat-offset cursor the vim engine operates on. */
+	private vimMakeCursor(text: string, offset: number): Cursor {
+		return new Cursor(new MeasuredText(text, Math.max(1, this.lastWidth)), offset);
+	}
+
+	private vimCreateTransitionContext(isReplay: boolean): TransitionContext {
+		const text = this.getText();
+		return {
+			cursor: this.vimMakeCursor(text, this.getCursorOffset()),
+			text,
+			setText: (newText: string) => this.vimApplyText(newText),
+			setOffset: (offset: number) => this.setCursorOffset(offset),
+			enterInsert: (offset: number) => this.vimEnterInsertMode(offset),
+			getRegister: () => this.vimPersistent.register,
+			setRegister: (content: string, linewise: boolean) => {
+				this.vimPersistent.register = content;
+				this.vimPersistent.registerIsLinewise = linewise;
+			},
+			getLastFind: () => this.vimPersistent.lastFind,
+			setLastFind: (type, char) => {
+				this.vimPersistent.lastFind = { type, char };
+			},
+			recordChange: isReplay
+				? () => {}
+				: (change: RecordedChange) => {
+						this.vimPersistent.lastChange = change;
+					},
+			onUndo: () => this.undo(),
+			onDotRepeat: () => this.vimReplayLastChange(),
+		};
+	}
+
+	/**
+	 * Apply text produced by a vim operation. Goes through setText() so the
+	 * change is normalized, becomes a single undo unit, and fires onChange.
+	 * setText() leaves the cursor at the end of the buffer; vim operations
+	 * always follow up with setOffset()/enterInsert() to place it correctly.
+	 */
+	private vimApplyText(text: string): void {
+		this.setText(text);
+	}
+
+	private vimEnterInsertMode(offset?: number): void {
+		if (offset !== undefined) {
+			this.setCursorOffset(offset);
+		}
+		this.vimState = { mode: "INSERT", insertedText: "" };
+		this.onVimModeChange?.("INSERT");
+	}
+
+	private vimSwitchToNormalMode(): void {
+		const current = this.vimState;
+		if (current.mode === "INSERT" && current.insertedText) {
+			this.vimPersistent.lastChange = {
+				type: "insert",
+				text: current.insertedText,
+			};
+		}
+
+		this.cancelAutocomplete();
+
+		// Vim behavior: move cursor left by 1 when exiting insert mode
+		// (unless at the start of the buffer or right after a newline).
+		const offset = this.getCursorOffset();
+		const text = this.getText();
+		if (offset > 0 && text[offset - 1] !== "\n") {
+			this.setCursorOffset(offset - 1);
+		}
+
+		this.vimState = { mode: "NORMAL", command: { type: "idle" } };
+		this.onVimModeChange?.("NORMAL");
+	}
+
+	private vimReplayLastChange(): void {
+		const change = this.vimPersistent.lastChange;
+		if (!change) return;
+
+		const ctx = this.vimCreateTransitionContext(true);
+
+		switch (change.type) {
+			case "insert": {
+				if (change.text) {
+					const newCursor = ctx.cursor.insert(change.text);
+					this.vimApplyText(newCursor.text);
+					this.setCursorOffset(newCursor.offset);
+				}
+				break;
+			}
+
+			case "x":
+				executeX(change.count, ctx);
+				break;
+
+			case "replace":
+				executeReplace(change.char, change.count, ctx);
+				break;
+
+			case "toggleCase":
+				executeToggleCase(change.count, ctx);
+				break;
+
+			case "indent":
+				executeIndent(change.dir, change.count, ctx);
+				break;
+
+			case "join":
+				executeJoin(change.count, ctx);
+				break;
+
+			case "openLine":
+				executeOpenLine(change.direction, ctx);
+				break;
+
+			case "operator":
+				executeOperatorMotion(change.op, change.motion, change.count, ctx);
+				break;
+
+			case "operatorFind":
+				executeOperatorFind(
+					change.op,
+					change.find,
+					change.char,
+					change.count,
+					ctx,
+				);
+				break;
+
+			case "operatorTextObj":
+				executeOperatorTextObj(
+					change.op,
+					change.scope,
+					change.objType,
+					change.count,
+					ctx,
+				);
+				break;
 		}
 	}
 

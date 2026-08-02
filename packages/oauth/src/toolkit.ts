@@ -1,12 +1,13 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { KIMI_CODE_FLOW_CONFIG } from './constants';
+import type { OAuthAccountSnapshot } from './account-snapshot';
+import { CLOUD_CODE_FLOW_CONFIG } from './constants';
 import { OAuthUnauthorizedError } from './errors';
 import {
-  assertKimiHostIdentity,
+  assertCloudCodeHostIdentity,
   createKimiDefaultHeaders,
-  type KimiHostIdentity,
+  type CloudCodeHostIdentity,
 } from './identity';
 import {
   fetchSubmitFeedback,
@@ -23,8 +24,8 @@ import {
   type FetchCreateFeedbackUploadUrlResult,
 } from './managed-feedback-upload';
 import {
-  KIMI_CODE_OAUTH_KEY,
-  KIMI_CODE_PROVIDER_NAME,
+  CLOUD_CODE_OAUTH_KEY,
+  CLOUD_CODE_PROVIDER_NAME,
   provisionManagedKimiCodeConfig,
   resolveKimiCodeOAuthKey,
   type ManagedKimiCodeProvisionResult,
@@ -47,6 +48,12 @@ import type { OAuthFlowConfig } from './types';
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean | undefined }): Promise<string>;
+  /**
+   * Optional per-request headers to send alongside the bearer token (e.g.
+   * `ChatGPT-Account-ID` for the ChatGPT Codex backend). Kimi providers do
+   * not implement this; callers must treat it as optional.
+   */
+  getAuthHeaders?(): Promise<Record<string, string> | undefined>;
 }
 
 export interface AuthProviderStatus {
@@ -58,8 +65,8 @@ export interface AuthStatus {
   readonly providers: readonly AuthProviderStatus[];
 }
 
-export interface KimiOAuthToolkitOptions<TConfig = unknown> {
-  readonly identity?: KimiHostIdentity | undefined;
+export interface CloudCodeOAuthToolkitOptions<TConfig = unknown> {
+  readonly identity?: CloudCodeHostIdentity | undefined;
   readonly homeDir?: string | undefined;
   readonly credentialsDir?: string | undefined;
   readonly storage?: TokenStorage | undefined;
@@ -73,25 +80,25 @@ export interface KimiOAuthToolkitOptions<TConfig = unknown> {
   readonly onRefresh?: OAuthManagerOptions['onRefresh'];
 }
 
-export interface KimiOAuthLoginOptions extends LoginOptions {
+export interface CloudCodeOAuthLoginOptions extends LoginOptions {
   readonly provisionConfig?: boolean | undefined;
   readonly baseUrl?: string | undefined;
-  readonly oauthRef?: KimiOAuthTokenRef | undefined;
+  readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
   readonly oauthHost?: string | undefined;
 }
 
-export interface KimiOAuthTokenRef {
+export interface CloudCodeOAuthTokenRef {
   readonly key?: string | undefined;
   readonly oauthHost?: string | undefined;
 }
 
-export interface KimiOAuthLoginResult {
+export interface CloudCodeOAuthLoginResult {
   readonly providerName: string;
   readonly ok: true;
   readonly provision?: ManagedKimiCodeProvisionResult | undefined;
 }
 
-export interface KimiOAuthLogoutResult {
+export interface CloudCodeOAuthLogoutResult {
   readonly providerName: string;
   readonly ok: true;
 }
@@ -107,9 +114,9 @@ export type AuthManagedUsageResult =
 
 export type AuthManagedUserInfoResult = ManagedUserInfoResult;
 
-export class KimiOAuthToolkit<TConfig = unknown> {
+export class CloudCodeOAuthToolkit<TConfig = unknown> {
   private readonly homeDir: string;
-  private readonly identity: KimiHostIdentity | undefined;
+  private readonly identity: CloudCodeHostIdentity | undefined;
   private readonly storage: TokenStorage;
   private readonly flowConfig: OAuthFlowConfig;
   private readonly configAdapter: ManagedKimiConfigAdapter<TConfig> | undefined;
@@ -121,13 +128,13 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   private readonly managers = new Map<string, OAuthManager>();
   private _identityHeaders: Record<string, string> | undefined;
 
-  constructor(options: KimiOAuthToolkitOptions<TConfig>) {
+  constructor(options: CloudCodeOAuthToolkitOptions<TConfig>) {
     this.identity =
-      options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
-    this.homeDir = options.homeDir ?? defaultKimiHome();
+      options.identity === undefined ? undefined : assertCloudCodeHostIdentity(options.identity);
+    this.homeDir = options.homeDir ?? defaultCloudCodeHome();
     const credentialsDir = options.credentialsDir ?? join(this.homeDir, 'credentials');
     this.storage = options.storage ?? new FileTokenStorage(credentialsDir);
-    this.flowConfig = options.flowConfig ?? KIMI_CODE_FLOW_CONFIG;
+    this.flowConfig = options.flowConfig ?? CLOUD_CODE_FLOW_CONFIG;
     this.configAdapter = options.configAdapter;
     this.fetchImpl = options.fetchImpl;
     this.managerOptions = {
@@ -141,9 +148,9 @@ export class KimiOAuthToolkit<TConfig = unknown> {
 
   async status(
     providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    oauthRef?: CloudCodeOAuthTokenRef | undefined,
   ): Promise<AuthStatus> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     return {
@@ -156,11 +163,25 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     };
   }
 
+  /**
+   * Network-free account snapshot (login state; no claims for Kimi tokens) —
+   * same provider/host resolution as {@link status}.
+   */
+  async getAccountSnapshot(
+    providerName?: string | undefined,
+    oauthRef?: CloudCodeOAuthTokenRef | undefined,
+  ): Promise<OAuthAccountSnapshot> {
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
+    const oauthHost = this.oauthHostFor(oauthRef);
+    const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
+    return this.managerFor(name, oauthKey, oauthHost).getAccountSnapshot();
+  }
+
   async login(
     providerName?: string | undefined,
-    options: KimiOAuthLoginOptions = {},
-  ): Promise<KimiOAuthLoginResult> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    options: CloudCodeOAuthLoginOptions = {},
+  ): Promise<CloudCodeOAuthLoginResult> {
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(options.oauthRef, options.oauthHost);
     const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(options.baseUrl, oauthHost);
     const manager = this.managerFor(name, oauthKey, oauthHost);
@@ -231,13 +252,13 @@ export class KimiOAuthToolkit<TConfig = unknown> {
 
   async logout(
     providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
-  ): Promise<KimiOAuthLogoutResult> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    oauthRef?: CloudCodeOAuthTokenRef | undefined,
+  ): Promise<CloudCodeOAuthLogoutResult> {
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     await this.managerFor(name, oauthKey, oauthHost).logout();
-    if (this.configAdapter?.remove !== undefined && name === KIMI_CODE_PROVIDER_NAME) {
+    if (this.configAdapter?.remove !== undefined && name === CLOUD_CODE_PROVIDER_NAME) {
       const config = await this.configAdapter.read();
       this.configAdapter.remove(config);
       await this.configAdapter.write(config);
@@ -249,10 +270,10 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     providerName?: string | undefined,
     options: {
       readonly force?: boolean | undefined;
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
     } = {},
   ): Promise<string> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(options.oauthRef);
     const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     return this.managerFor(name, oauthKey, oauthHost).ensureFresh(options);
@@ -260,9 +281,9 @@ export class KimiOAuthToolkit<TConfig = unknown> {
 
   async getCachedAccessToken(
     providerName?: string,
-    oauthRef?: KimiOAuthTokenRef,
+    oauthRef?: CloudCodeOAuthTokenRef,
   ): Promise<string | undefined> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     return this.managerFor(name, oauthKey, oauthHost).getCachedAccessToken();
@@ -270,9 +291,9 @@ export class KimiOAuthToolkit<TConfig = unknown> {
 
   tokenProvider(
     providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    oauthRef?: CloudCodeOAuthTokenRef | undefined,
   ): BearerTokenProvider {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     return {
@@ -283,11 +304,11 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   async getManagedUsage(
     providerName?: string | undefined,
     options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<AuthManagedUsageResult> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     try {
       const accessToken = await this.ensureFresh(name, {
         oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
@@ -311,11 +332,11 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   async getManagedUserInfo(
     providerName?: string | undefined,
     options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<AuthManagedUserInfoResult> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     try {
       const accessToken = await this.ensureFresh(name, {
         oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
@@ -335,7 +356,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     body: SubmitFeedbackBody,
     providerName?: string | undefined,
     options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<FetchSubmitFeedbackResult> {
@@ -349,12 +370,12 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   private async withAccessToken<T>(
     providerName: string | undefined,
     options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
     },
     run: (accessToken: string) => Promise<T>,
   ): Promise<T | { readonly kind: 'error'; readonly message: string }> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const name = providerName ?? CLOUD_CODE_PROVIDER_NAME;
     try {
       const accessToken = await this.ensureFresh(name, {
         oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
@@ -372,7 +393,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     body: CreateFeedbackUploadUrlBody,
     providerName?: string | undefined,
     options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<FetchCreateFeedbackUploadUrlResult> {
@@ -387,7 +408,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     body: CompleteFeedbackUploadBody,
     providerName?: string | undefined,
     options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly oauthRef?: CloudCodeOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<FetchCompleteFeedbackUploadResult> {
@@ -400,7 +421,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
 
   managerFor(
     providerName: string,
-    oauthKey = KIMI_CODE_OAUTH_KEY,
+    oauthKey = CLOUD_CODE_OAUTH_KEY,
     oauthHost?: string | undefined,
   ): OAuthManager {
     const storageName = resolveKimiTokenStorageName({ providerName, oauthKey });
@@ -424,7 +445,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
           : () =>
               // Full identity headers (User-Agent + X-Msh-*): the OAuth host
               // reads the platform for the client family and the UA (suffix)
-              // for the runtime surface, e.g. kimi web's `(web)`.
+              // for the runtime surface.
               createKimiDefaultHeaders({
                 homeDir: this.homeDir,
                 ...identity,
@@ -445,7 +466,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     });
   }
 
-  private defaultOAuthRef(baseUrl?: string | undefined): KimiOAuthTokenRef {
+  private defaultOAuthRef(baseUrl?: string | undefined): CloudCodeOAuthTokenRef {
     return {
       key: this.defaultOAuthKey(baseUrl, this.flowConfig.oauthHost),
       oauthHost: this.flowConfig.oauthHost,
@@ -453,7 +474,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   private oauthHostFor(
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    oauthRef?: CloudCodeOAuthTokenRef | undefined,
     oauthHost?: string | undefined,
   ): string {
     return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
@@ -473,8 +494,8 @@ export function resolveKimiTokenStorageName(input: {
   readonly providerName?: string | undefined;
   readonly oauthKey?: string | undefined;
 }): string {
-  const key = input.oauthKey ?? KIMI_CODE_OAUTH_KEY;
-  if (key === 'kimi-code' || key === KIMI_CODE_OAUTH_KEY) return 'kimi-code';
+  const key = input.oauthKey ?? CLOUD_CODE_OAUTH_KEY;
+  if (key === 'kimi-code' || key === CLOUD_CODE_OAUTH_KEY) return 'kimi-code';
 
   const prefix = 'oauth/';
   if (key.startsWith(prefix) && key.slice(prefix.length).length > 0) {
@@ -485,10 +506,10 @@ export function resolveKimiTokenStorageName(input: {
   throw new Error(`Invalid Kimi OAuth token key: "${key}".`);
 }
 
-function defaultKimiHome(): string {
-  const override = process.env['KIMI_CODE_HOME'];
+function defaultCloudCodeHome(): string {
+  const override = process.env['CLOUD_CODE_HOME'];
   if (override !== undefined && override.length > 0) return override;
-  return join(homedir(), '.kimi-code');
+  return join(homedir(), '.cloud-code');
 }
 
 function managedUsageUrl(baseUrl: string | undefined): string {

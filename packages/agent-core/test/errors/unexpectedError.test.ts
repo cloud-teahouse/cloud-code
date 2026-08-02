@@ -14,7 +14,7 @@ describe('onUnexpectedError + setUnexpectedErrorHandler', () => {
 
   it('default handler does not throw when passed a thrown error', () => {
     // Default handler is console.error; replace with a sink so the test
-    // output stays quiet, but verify the call shape doesn't throw.
+    // output stays quiet.
     let captured: unknown;
     setUnexpectedErrorHandler((err) => {
       captured = err;
@@ -47,7 +47,6 @@ describe('onUnexpectedError + setUnexpectedErrorHandler', () => {
     expect(seen).toHaveLength(1);
     resetUnexpectedErrorHandler();
     // After reset the custom handler should no longer see further errors.
-    // We re-install another to verify the custom path is empty.
     seen.length = 0;
     onUnexpectedError(new Error('after-reset'));
     expect(seen).toHaveLength(0);

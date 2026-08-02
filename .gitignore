@@ -17,7 +17,7 @@ coverage/
 .kimi-stash-dir
 plugins/cdn/
 .worktrees/
-.kimi-code/local.toml
+.cloud-code/local.toml
 .kimi-sandbox/
 .vscode/
 !apps/vscode/.vscode/
@@ -44,3 +44,9 @@ handover.md
 *-mockup.html
 *-demo.html
 *-demos.html
+
+# Phase 0 local toolchain/cache (project-internal)
+.tools/
+.npm-cache/
+.pnpm-store/
+.dev-home/

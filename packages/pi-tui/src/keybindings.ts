@@ -39,6 +39,11 @@ export interface Keybindings {
 	"tui.select.pageDown": true;
 	"tui.select.confirm": true;
 	"tui.select.cancel": true;
+	// Fullscreen transcript scrolling
+	"tui.scroll.up": true;
+	"tui.scroll.down": true;
+	"tui.scroll.top": true;
+	"tui.scroll.bottom": true;
 }
 
 export type Keybinding = keyof Keybindings;
@@ -46,6 +51,14 @@ export type Keybinding = keyof Keybindings;
 export interface KeybindingDefinition {
 	defaultKeys: KeyId | KeyId[];
 	description?: string;
+	/**
+	 * Optional context (e.g. "app/chat") gating when this binding is active.
+	 * Bindings without a context are always active. A context is active when
+	 * one of the manager's active contexts equals it or sits below it —
+	 * activating "app/chat" also activates its ancestor "app". See
+	 * {@link KeybindingsManager.setActiveContexts}.
+	 */
+	context?: string;
 }
 
 export type KeybindingDefinitions = Record<string, KeybindingDefinition>;
@@ -131,6 +144,19 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: ["escape", "ctrl+c"],
 		description: "Cancel selection",
 	},
+	"tui.scroll.up": { defaultKeys: "shift+pageUp", description: "Scroll transcript up (fullscreen)" },
+	"tui.scroll.down": {
+		defaultKeys: "shift+pageDown",
+		description: "Scroll transcript down (fullscreen)",
+	},
+	"tui.scroll.top": {
+		defaultKeys: "ctrl+home",
+		description: "Jump to the top of the transcript (fullscreen)",
+	},
+	"tui.scroll.bottom": {
+		defaultKeys: "ctrl+end",
+		description: "Jump to the bottom of the transcript (fullscreen)",
+	},
 } as const satisfies KeybindingDefinitions;
 
 export interface KeybindingConflict {
@@ -157,6 +183,7 @@ export class KeybindingsManager {
 	private userBindings: KeybindingsConfig;
 	private keysById = new Map<Keybinding, KeyId[]>();
 	private conflicts: KeybindingConflict[] = [];
+	private activeContexts: readonly string[] = [];
 
 	constructor(definitions: KeybindingDefinitions, userBindings: KeybindingsConfig = {}) {
 		this.definitions = definitions;
@@ -192,11 +219,42 @@ export class KeybindingsManager {
 	}
 
 	matches(data: string, keybinding: Keybinding): boolean {
+		const definition = this.definitions[keybinding];
+		if (definition === undefined || !this.isContextActive(definition.context)) return false;
 		const keys = this.keysById.get(keybinding) ?? [];
 		for (const key of keys) {
 			if (matchesKey(data, key)) return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Set the currently active contexts (e.g. ["app/chat"]).
+	 *
+	 * A binding whose definition carries a context only matches while that
+	 * context is active; context-less bindings always match. Activating a
+	 * context also activates its ancestors: with ["app/chat"] active, a
+	 * binding in context "app" matches too. An empty list leaves only
+	 * context-less bindings active.
+	 */
+	setActiveContexts(contexts: readonly string[]): void {
+		this.activeContexts = [...contexts];
+	}
+
+	getActiveContexts(): string[] {
+		return [...this.activeContexts];
+	}
+
+	private isContextActive(context: string | undefined): boolean {
+		if (context === undefined) return true;
+		for (const active of this.activeContexts) {
+			if (active === context || active.startsWith(`${context}/`)) return true;
+		}
+		return false;
+	}
+
+	hasDefinition(keybinding: string): boolean {
+		return keybinding in this.definitions;
 	}
 
 	getKeys(keybinding: Keybinding): KeyId[] {

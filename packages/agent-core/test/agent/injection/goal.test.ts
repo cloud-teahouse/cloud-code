@@ -4,19 +4,23 @@ import type { Agent } from '../../../src/agent';
 import { GoalMode } from '../../../src/agent/goal';
 import { GoalInjector } from '../../../src/agent/injection/goal';
 import { InMemoryAgentRecordPersistence } from '../../../src/agent/records';
+import type { CloudCodeConfig } from '../../../src/config';
 import { testAgent } from '../harness/agent';
 
-function makeStore() {
+function makeStore(config?: CloudCodeConfig) {
   const agent = {
     records: { logRecord: () => {} },
     emitEvent: () => {},
-    telemetry: { track: () => {} },
+    kimiConfig: config,
   } as unknown as Agent;
   return new GoalMode(agent);
 }
 
 /** Fake agent exposing a goal store and a capturing context, for getInjection tests. */
-function injectorAgent(store: GoalMode): {
+function injectorAgent(
+  store: GoalMode,
+  config?: CloudCodeConfig,
+): {
   agent: Agent;
   reminders: string[];
 } {
@@ -25,6 +29,7 @@ function injectorAgent(store: GoalMode): {
   const agent = {
     type: 'main',
     goal: store,
+    kimiConfig: config,
     context: {
       history,
       appendSystemReminder: (content: string) => {
@@ -36,8 +41,8 @@ function injectorAgent(store: GoalMode): {
   return { agent, reminders };
 }
 
-async function injectOnce(store: GoalMode): Promise<string | undefined> {
-  const { agent, reminders } = injectorAgent(store);
+async function injectOnce(store: GoalMode, config?: CloudCodeConfig): Promise<string | undefined> {
+  const { agent, reminders } = injectorAgent(store, config);
   await new GoalInjector(agent).inject();
   return reminders.at(-1);
 }
@@ -219,6 +224,60 @@ describe('GoalInjector content', () => {
     expect(text).toContain('SetGoalBudget');
     expect(text).toContain('Do not invent budgets');
     expect(text).toContain('not reasonable');
+  });
+
+  it('shows the completion-gate line with counts once the gate enforces', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    store.recordMutation();
+    store.recordEvidence({
+      receiptId: 'b1',
+      toolName: 'Bash',
+      turnId: 1,
+      step: 1,
+      ok: true,
+      summary: 'pnpm test',
+    });
+    store.recordEvidence({
+      receiptId: 'b2',
+      toolName: 'Bash',
+      turnId: 1,
+      step: 1,
+      ok: false,
+      summary: 'false',
+    });
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('Completion gate: complete requires UpdateGoal(evidence=[...])');
+    expect(text).toContain('younger than 5 turns / 30m00s');
+    expect(text).toContain('Usable receipts: 1; stale/expired: 1; changes observed: 1.');
+  });
+
+  it('omits the completion-gate line for a pure Q&A goal', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'just answer a question' });
+    const text = (await injectOnce(store))!;
+    expect(text).not.toContain('Completion gate:');
+  });
+
+  it('omits the completion-gate line when the gate is disabled in config', async () => {
+    const config: CloudCodeConfig = { providers: {}, goal: { completionGate: false } };
+    const store = makeStore(config);
+    await store.createGoal({ objective: 'work', completionCriterion: 'tests pass' });
+    store.recordMutation();
+    const text = (await injectOnce(store, config))!;
+    expect(text).not.toContain('Completion gate:');
+  });
+
+  it('renders configured evidence-lease values in the gate line', async () => {
+    const config: CloudCodeConfig = {
+      providers: {},
+      goal: { evidenceLeaseTurns: 9, evidenceLeaseMs: 60_000 },
+    };
+    const store = makeStore(config);
+    await store.createGoal({ objective: 'work' });
+    store.recordMutation();
+    const text = (await injectOnce(store, config))!;
+    expect(text).toContain('younger than 9 turns / 1m00s');
   });
 });
 

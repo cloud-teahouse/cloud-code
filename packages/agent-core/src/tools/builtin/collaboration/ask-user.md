@@ -1,4 +1,4 @@
-Use this tool when you need to ask the user questions with structured options during execution. This allows you to:
+Use this tool only when you are blocked on a decision that is genuinely the user's to make: one you cannot resolve from the request, the code, or sensible defaults. It asks the user questions with structured options during execution, so you can:
 1. Collect user preferences or requirements before proceeding
 2. Resolve ambiguous or underspecified instructions
 3. Let the user decide between implementation approaches as you work
@@ -9,6 +9,8 @@ Use this tool when you need to ask the user questions with structured options du
 - Trivial decisions that don't materially affect the outcome
 
 Overusing this tool interrupts the user's flow. Only use it when the user's input genuinely changes your next action.
+
+**Plan mode:** to switch into plan mode, use `EnterPlanMode`, not this tool. Once in plan mode, use this tool to clarify requirements or choose between approaches BEFORE finalizing your plan — never to ask "Is my plan ready?" or "Should I proceed?". The user cannot see the plan until you call `ExitPlanMode` for approval.
 
 **Usage notes:**
 - Users always have an "Other" option for custom input — don't create one yourself

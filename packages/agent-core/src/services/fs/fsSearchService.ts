@@ -13,13 +13,12 @@ import type {
   FsSearchHit,
   FsSearchRequest,
   FsSearchResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 import ignore, { type Ignore } from 'ignore';
 
 import { ISessionService } from '../session/session';
 
 import { ILogService } from '../logger/logger';
-import { noopTelemetryClient, type TelemetryClient } from '../../telemetry';
 import { IFsSearchService, FsGrepTimeoutError } from './fsSearch';
 
 const SEARCH_HARD_CAP = 500;
@@ -40,15 +39,11 @@ export class FsSearchService
 
   protected rgMissingWarned = false;
 
-  protected readonly telemetry: TelemetryClient;
-
   constructor(
-    telemetry: TelemetryClient,
     @ISessionService protected readonly sessions: ISessionService,
     @ILogService protected readonly logger: ILogService,
   ) {
     super();
-    this.telemetry = telemetry;
   }
 
   override dispose(): void {
@@ -124,7 +119,6 @@ export class FsSearchService
         );
         return out;
       }
-      this.telemetry.track('fs_grep_node_fallback', { reason: 'rg_missing' });
       const out = await this.grepWithNode(
         realCwd,
         req,
@@ -650,7 +644,4 @@ async function whichBinary(name: string): Promise<string | null> {
   return null;
 }
 
-registerSingleton(
-  IFsSearchService,
-  new SyncDescriptor(FsSearchService, [noopTelemetryClient], true),
-);
+registerSingleton(IFsSearchService, new SyncDescriptor(FsSearchService, [], true));

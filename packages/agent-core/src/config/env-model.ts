@@ -1,8 +1,8 @@
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import { parseBooleanEnv } from './resolve';
 import {
   validateConfig,
-  type KimiConfig,
+  type CloudCodeConfig,
   type ModelAlias,
   type ProviderConfig,
   type ProviderType,
@@ -35,7 +35,7 @@ function trimmed(value: string | undefined): string | undefined {
 }
 
 function fail(message: string): never {
-  throw new KimiError(ErrorCodes.CONFIG_INVALID, message);
+  throw new CloudCodeError(ErrorCodes.CONFIG_INVALID, message);
 }
 
 function parsePositiveInt(raw: string, varName: string): number {
@@ -90,7 +90,7 @@ function parseBooleanVar(raw: string | undefined, varName: string): boolean | un
  * and `writeConfigFile` strips the reserved entries via `stripEnvModelConfig` as
  * a final guard against patch round-trips (getConfig -> setConfig).
  */
-export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env): KimiConfig {
+export function applyEnvModelConfig(config: CloudCodeConfig, env: Env = process.env): CloudCodeConfig {
   const model = trimmed(env['KIMI_MODEL_NAME']);
   if (model === undefined) return config;
 
@@ -142,7 +142,7 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
   const thinking: ThinkingConfig | undefined =
     thinkingEffort !== undefined ? { ...config.thinking, effort: thinkingEffort } : config.thinking;
 
-  const merged: KimiConfig = {
+  const merged: CloudCodeConfig = {
     ...config,
     providers: { ...config.providers, [ENV_MODEL_PROVIDER_KEY]: provider },
     models: { ...config.models, [ENV_MODEL_ALIAS_KEY]: alias },
@@ -151,7 +151,7 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
   };
 
   // Re-validate so the synthesized entries honor the same schema constraints.
-  // `validateConfig` throws KimiError(CONFIG_INVALID) on violation, matching
+  // `validateConfig` throws CloudCodeError(CONFIG_INVALID) on violation, matching
   // the explicit checks above.
   return validateConfig(merged);
 }
@@ -167,7 +167,7 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
  * value from `config.raw` rather than erased, so real values already in
  * config.toml survive the round-trip.
  */
-export function stripEnvModelConfig(config: KimiConfig): KimiConfig {
+export function stripEnvModelConfig(config: CloudCodeConfig): CloudCodeConfig {
   const hasProvider = ENV_MODEL_PROVIDER_KEY in config.providers;
   const hasModel = config.models !== undefined && ENV_MODEL_ALIAS_KEY in config.models;
   const defaultIsEnv = config.defaultModel === ENV_MODEL_ALIAS_KEY;
@@ -196,12 +196,12 @@ export function stripEnvModelConfig(config: KimiConfig): KimiConfig {
   };
 }
 
-function rawDefaultModel(config: KimiConfig): string | undefined {
+function rawDefaultModel(config: CloudCodeConfig): string | undefined {
   const raw = config.raw?.['default_model'];
   return typeof raw === 'string' ? raw : undefined;
 }
 
-function rawThinking(config: KimiConfig): ThinkingConfig | undefined {
+function rawThinking(config: CloudCodeConfig): ThinkingConfig | undefined {
   const raw = config.raw?.['thinking'];
   return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
     ? (raw as ThinkingConfig)

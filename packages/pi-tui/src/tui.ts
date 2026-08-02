@@ -6,7 +6,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
+import { hasHitZones, hitZoneAt, resolveHitZones, type HitZone, type HitZoneId, type HitZoneSemantics, type ResolvedHitZone } from "./hit-zones.ts";
 import { isKeyRelease, matchesKey } from "./keys.ts";
+import { getKeybindings } from "./keybindings.ts";
+import {
+	drawScrollbar,
+	scrollbarThumb,
+	scrollTopForThumbOffset,
+	scrollTopForTrackRow,
+	type ScrollbarStyle,
+} from "./scrollbar.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	isOsc11BackgroundColorResponse,
@@ -69,6 +78,34 @@ function extractKittyImageRows(line: string): number {
 }
 
 /**
+ * A parsed SGR mouse event. Coordinates are 1-based terminal cells as
+ * reported, with two exceptions: for wheel events forwarded to a focused
+ * component in the bottom slot, `row` is translated to be relative to the
+ * slot's first row and `slotRelative` is true (takeover components get raw
+ * terminal rows); for left-press and motion events forwarded to the focused
+ * component, `row` is translated to the component's own first rendered line
+ * (0-based, via each container's rendered child heights plus its
+ * {@link Container.rowsBeforeChild} chrome, plus the rows clipped off the
+ * slot's top when it is taller than the screen) and `col` is translated past
+ * each container's {@link Container.leftInset} gutter, so components can do
+ * row/col-hit selection without knowing the layout.
+ *
+ * Motion events (any-motion tracking, mode 1003) carry the pointer cell;
+ * `button` is the held button with the SGR motion bit (32) stripped (3 = no
+ * button). A forwarded motion event with `row === -1` signals the pointer
+ * left the focused component's region — components treat it as hover-clear.
+ */
+export interface MouseEvent {
+  readonly type: 'wheel' | 'press' | 'release' | 'motion';
+  /** SGR button code: 64 = wheel up, 65 = wheel down, 0 = left, 1 = middle, 2 = right.
+   *  For motion events the motion bit (32) is already stripped; 3 = no button held. */
+  readonly button: number;
+  readonly col: number;
+  readonly row: number;
+  readonly slotRelative: boolean;
+}
+
+/**
  * Component interface - all components must implement this
  */
 export interface Component {
@@ -83,6 +120,67 @@ export interface Component {
 	 * Optional handler for keyboard input when component has focus
 	 */
 	handleInput?(data: string): void;
+
+	/**
+	 * Optional handler for mouse input when component has focus (fullscreen
+	 * mode only). Wheel events are routed here instead of scrolling the
+	 * transcript whenever the focused component is not inside the scroll
+	 * region — i.e. takeovers and editor-replacement dialogs. Left-press and
+	 * motion (hover) events arrive with component-relative rows.
+	 *
+	 * May return `false` to signal the event changed nothing visual, letting
+	 * the TUI skip the re-render — motion events fire once per pointer cell,
+	 * so hover handlers should return false whenever the hover target (and
+	 * therefore the render output) is unchanged. Any other return value
+	 * (including undefined) schedules a render.
+	 *
+	 * When the component declares {@link hitZones}, presses inside a zone and
+	 * hover tracking are dispatched to {@link onHitZone} / {@link
+	 * setHoveredZone} instead; this handler still receives wheel events and
+	 * presses that land outside every zone.
+	 */
+	handleMouse?(event: MouseEvent): void | boolean;
+
+	/**
+	 * Optional predicate consulted before mouse events are forwarded to
+	 * {@link handleMouse}. Return false to decline the event (it falls back
+	 * to the default transcript scroll). When absent, a component with
+	 * `handleMouse` accepts everything.
+	 */
+	wantsMouseEvent?(event: MouseEvent): boolean;
+
+	/**
+	 * Optional declaration of the component's interactive regions (fullscreen
+	 * mode only), in the same coordinate space as translated mouse events —
+	 * row 0-based from the component's first rendered line, col 1-based from
+	 * its first content cell. When present, the TUI hit-tests zones before
+	 * the raw {@link handleMouse} path: a left-press inside an `action` zone
+	 * goes to {@link onHitZone} (presses outside all zones still fall back to
+	 * `handleMouse`), and pointer motion across `hover` zones is reported via
+	 * {@link setHoveredZone} instead of `handleMouse`. Zones must derive from
+	 * the same state {@link render} reads (caching them as a render
+	 * by-product is fine — a render always runs before input is dispatched).
+	 * A container that does not implement this composes its children's zones
+	 * instead. See hit-zones.ts.
+	 */
+	hitZones?(): Iterable<HitZone>;
+
+	/**
+	 * Called when a left-press lands in one of this component's declared
+	 * zones. The event is re-translated into this component's own frame when
+	 * the zone was composed through containers. The return-value convention
+	 * matches {@link handleMouse}: `false` skips the re-render.
+	 */
+	onHitZone?(id: HitZoneId, event: MouseEvent): void | boolean;
+
+	/**
+	 * Called when the hovered zone of this component changes — `null` when
+	 * the pointer left all of its zones. The component should record the id
+	 * and reflect it in its next render (e.g. a hover underline). The
+	 * return-value convention matches {@link handleMouse}: `false` skips the
+	 * re-render.
+	 */
+	setHoveredZone?(id: HitZoneId | null): void | boolean;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -175,6 +273,15 @@ function isTermuxSession(): boolean {
 }
 
 /**
+ * Built-in scroll-badge look: bright-white text on a neutral gray fill, the
+ * fill lifting one shade while the pointer hovers the badge. Apps re-theme
+ * via {@link TUI.setScrollIndicatorStyle}.
+ */
+function defaultScrollIndicatorBadgeStyle(text: string, hovered: boolean): string {
+	return `\x1b[97;48;5;${hovered ? 244 : 240}m${text}\x1b[39;49m`;
+}
+
+/**
  * Options for overlay positioning and sizing.
  * Values can be absolute numbers or percentage strings (e.g., "50%").
  */
@@ -246,6 +353,12 @@ type OverlayStackEntry = {
 	preFocus: Component | null;
 	hidden: boolean;
 	focusOrder: number;
+	/**
+	 * Screen rect (0-based rows/cols) the overlay occupied in the last composed
+	 * frame, null while the overlay is hidden or no frame has been composed yet.
+	 * Fullscreen mouse dispatch translates event coordinates through this rect.
+	 */
+	lastRect: { row: number; col: number; width: number; height: number } | null;
 };
 
 type OverlayBlockedFocusResume = { status: "restore-overlay" } | { status: "focus-target"; target: Component | null };
@@ -287,6 +400,37 @@ export class Container implements Component {
 		}
 	}
 
+	/**
+	 * Rows of container chrome rendered before {@link child} beyond the
+	 * preceding siblings' heights (e.g. an editor-slot separator row). Used by
+	 * the TUI's mouse row translation; containers that paint extra rows above a
+	 * child override this.
+	 */
+	rowsBeforeChild(_child: Component): number {
+		return 0;
+	}
+
+	/**
+	 * Columns of left inset this container prefixes onto every rendered line
+	 * (e.g. a chrome gutter aligning children with the input box). Used by the
+	 * TUI's mouse column translation; containers that paint a left gutter
+	 * override this.
+	 */
+	leftInset(): number {
+		return 0;
+	}
+
+	/**
+	 * Columns of right inset this container reserves after every rendered
+	 * line (e.g. a chrome gutter mirroring the left one). Used together with
+	 * {@link leftInset} by the TUI's transcript hit-test walk to compute the
+	 * width children actually render at; containers that reserve right
+	 * columns override this.
+	 */
+	rightInset(): number {
+		return 0;
+	}
+
 	render(width: number): string[] {
 		// Extremely narrow terminals can report tiny or even non-positive
 		// column counts; never propagate a width below 1 into components.
@@ -318,10 +462,51 @@ export class TUI extends Container {
 	private previousRawLines: string[] = [];
 	/** Per-line kitty image ids of the previous frame, aligned with previousRawLines. */
 	private previousLineImageIds: ReadonlyArray<number>[] = [];
+	/**
+	 * Fullscreen counterparts of previousRawLines/previousLineImageIds: the
+	 * composed frame (post cursor-marker extraction, pre width-check/reset)
+	 * of the last doFullscreenRender, aligned with previousLines.
+	 */
+	private previousRawFrameLines: string[] = [];
+	private previousFrameLineImageIds: ReadonlyArray<number>[] = [];
+	/**
+	 * Monotonic counter bumped by every completed render. Component layout
+	 * can only change between renders (any mutation that affects layout
+	 * requests a render), so the mouse-motion dedupe can trust its cached
+	 * row translation while this and the render-request flag are unchanged.
+	 */
+	private renderEpoch = 0;
 	private previousKittyImageIds = new Set<number>();
 	private previousWidth = 0;
 	private previousHeight = 0;
 	private focusedComponent: Component | null = null;
+	/** Dedupe key of the last forwarded motion event (cell + focus identity). */
+	private lastMotionKey: string | null = null;
+	/**
+	 * Raw-cell motion dedupe: skips the row-translation hit-walk entirely
+	 * when the pointer cell is unchanged AND layout cannot have changed
+	 * (same renderEpoch, no pending render request). The translated
+	 * row/col key is a pure function of the raw cell and the layout, so
+	 * this is exactly equivalent to the lastMotionKey check below it.
+	 */
+	private lastMotionRawKey: string | null = null;
+	private lastMotionRawEpoch = -1;
+	/**
+	 * The zone the pointer currently hovers, as (declaring component, zone
+	 * id); null when it is over no hover zone. Tracked centrally for
+	 * zone-declaring components — {@link Component.setHoveredZone} is only
+	 * called when this pair changes, mirroring the per-cell motion dedupe of
+	 * the legacy hover path.
+	 */
+	private lastHoveredZone: { owner: Component; id: HitZoneId } | null = null;
+	/**
+	 * The transcript-content zone the pointer currently hovers, as (declaring
+	 * component, zone id); null when it is over no transcript hover zone.
+	 * Tracked separately from {@link lastHoveredZone}: transcript children
+	 * never take focus, so their hover is managed by the scroll-region
+	 * routing rather than the focused-component path.
+	 */
+	private lastTranscriptHoveredZone: { owner: Component; id: HitZoneId } | null = null;
 	private inputListeners = new Set<InputListener>();
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
@@ -329,6 +514,7 @@ export class TUI extends Container {
 	private renderRequested = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
+	private collapseRenderRequested = false;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
@@ -337,7 +523,68 @@ export class TUI extends Container {
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
-	private stopped = false;
+	// Starts true: renders are only allowed after start() (pre-start renders
+	// would leak frames into the normal buffer, and in fullscreen the first
+	// alt-screen frame must be a fresh full repaint anyway).
+	private stopped = true;
+	// Explicit "terminal mode is live" flag for setFullscreen's live-switch
+	// (previousWidth was a wrong proxy during the pre-first-frame window).
+	private started = false;
+
+	// === Fullscreen (alternate screen + bottom slot) mode ===
+	// When enabled, the TUI renders an exactly `rows`-line frame each render:
+	// a scrollable transcript viewport pinned above a fixed bottom slot.
+	private fullscreen = false;
+	private layoutRegions: { scroll?: Component; slot?: Component } = {};
+	private scrollTop = 0; // First transcript line shown at the top of the viewport
+	private followOutput = true; // Stick to the bottom when new content arrives
+	private lastScrollRegionLineCount = 0; // From the last composed frame (for scroll clamping)
+	private lastViewportHeight = 0;
+	/**
+	 * Rows clipped off the slot's top in the last composed frame (the slot is
+	 * taller than the screen and keeps its bottom). Mouse row translation from
+	 * the visible slot top into the slot's (unclipped) rendered output must add
+	 * this back.
+	 */
+	private lastSlotClipRows = 0;
+	private scrollIndicatorLabel: ((hiddenLines: number) => string) | null = null;
+	private scrollIndicatorVisible = false;
+	/** Visible width of the drawn scroll badge — clicks only count on the badge. */
+	private scrollIndicatorBadgeWidth = 0;
+	/**
+	 * Style hook for the scroll badge: receives the space-padded label and the
+	 * hover state, returns the label wrapped in ANSI styling. Null selects the
+	 * built-in white-on-gray default ({@link defaultScrollIndicatorBadgeStyle}).
+	 */
+	private scrollIndicatorStyle: ((text: string, hovered: boolean) => string) | null = null;
+	/** Whether the pointer hovers the badge's click rect (drives the hover shade). */
+	private scrollIndicatorHovered = false;
+	/**
+	 * Style hook for the transcript scrollbar glyphs. Null selects the built-in
+	 * unstyled default (plain ░/█). The bar itself is hover-revealed chrome on
+	 * the viewport's rightmost column — see composeFullscreenFrame.
+	 */
+	private scrollbarStyle: ScrollbarStyle | null = null;
+	/** Pointer over the transcript scrollbar column (viewport's last column). */
+	private transcriptScrollbarHover = false;
+	/** A press on the transcript scrollbar started a drag; motion re-maps the
+	 *  pointer row until the release arrives (a thumb grab tracks 1:1, a track
+	 *  press keeps the absolute fraction mapping). */
+	private transcriptScrollbarDrag = false;
+	/** Rows from the thumb's top edge the press grabbed it at; null for a
+	 *  track press (the drag then keeps the absolute fraction mapping). */
+	private transcriptScrollbarGrabOffset: number | null = null;
+	/** Supplies the one-line sticky prompt header (already styled, width-padded
+	 *  by the app). Drawn over the viewport's top row while scrolled up. The
+	 *  optional jumpTo is the transcript line the header click scrolls to. */
+	private stickyHeaderContent:
+		| ((width: number, scrollTop: number, viewportHeight: number) => {
+				line: string;
+				jumpTo?: number;
+		  } | null)
+		| null = null;
+	private stickyHeaderVisible = false;
+	private stickyJumpTo: number | null = null;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
@@ -384,6 +631,136 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	// === Fullscreen mode API ===
+
+	getFullscreen(): boolean {
+		return this.fullscreen;
+	}
+
+	/**
+	 * Switch between legacy inline rendering (content flows into the terminal's
+	 * native scrollback) and fullscreen rendering (alternate screen, fixed
+	 * bottom slot, in-app scrolling). Safe to call before or after start().
+	 */
+	setFullscreen(enabled: boolean): void {
+		if (this.fullscreen === enabled) return;
+		this.fullscreen = enabled;
+		this.scrollTop = 0;
+		this.followOutput = true;
+		this.transcriptScrollbarHover = false;
+		this.transcriptScrollbarDrag = false;
+		this.transcriptScrollbarGrabOffset = null;
+		this.clearTranscriptZoneHover();
+		if (this.started) {
+			// Already running: switch the terminal mode live.
+			if (enabled) {
+				this.terminal.enterAltScreen();
+				this.terminal.setMouseReporting(true);
+			} else {
+				this.terminal.setMouseReporting(false);
+				this.terminal.exitAltScreen();
+			}
+		}
+		this.requestRender(true);
+	}
+
+	/**
+	 * Register the scrollable region (transcript) and the fixed bottom slot.
+	 * Both must remain mounted in the children tree; when they are not (e.g.
+	 * a fullscreen takeover swapped the children), rendering falls back to a
+	 * plain top-aligned full-screen frame.
+	 */
+	setLayoutRegions(regions: { scroll?: Component; slot?: Component }): void {
+		this.layoutRegions = regions;
+		this.requestRender();
+	}
+
+	/** Scroll the viewport by `lines` (positive = towards newer content). */
+	scrollBy(lines: number): void {
+		if (!this.fullscreen || lines === 0) return;
+		const maxScroll = Math.max(0, this.lastScrollRegionLineCount - this.lastViewportHeight);
+		const next = Math.max(0, Math.min(this.scrollTop + lines, maxScroll));
+		if (next !== this.scrollTop) this.clearTranscriptZoneHover();
+		this.scrollTop = next;
+		this.followOutput = this.scrollTop >= maxScroll;
+		this.requestRender();
+	}
+
+	/** Page-scroll the viewport (positive = down). */
+	scrollPage(direction: number): void {
+		const page = Math.max(1, this.lastViewportHeight - 1);
+		this.scrollBy(direction * page);
+	}
+
+	scrollToBottom(): void {
+		if (!this.fullscreen) return;
+		this.followOutput = true;
+		this.requestRender();
+	}
+
+	/** Jump to the oldest transcript line; leaves follow mode (unless the
+	 *  transcript fits the viewport, where top and bottom coincide). */
+	scrollToTop(): void {
+		if (!this.fullscreen) return;
+		this.clearTranscriptZoneHover();
+		this.scrollTop = 0;
+		const maxScroll = Math.max(0, this.lastScrollRegionLineCount - this.lastViewportHeight);
+		this.followOutput = this.scrollTop >= maxScroll;
+		this.requestRender();
+	}
+
+	isFollowingOutput(): boolean {
+		return this.followOutput;
+	}
+
+	/** Localizable badge shown at the viewport's bottom-right while scrolled up. */
+	setScrollIndicatorLabel(label: ((hiddenLines: number) => string) | null): void {
+		this.scrollIndicatorLabel = label;
+	}
+
+	/**
+	 * Re-theme the scroll badge. The hook receives the space-padded label and
+	 * whether the pointer hovers the badge's click rect, and returns the label
+	 * with ANSI styling applied. Pass null to restore the built-in default.
+	 */
+	setScrollIndicatorStyle(style: ((text: string, hovered: boolean) => string) | null): void {
+		this.scrollIndicatorStyle = style;
+	}
+
+	/**
+	 * Re-theme the transcript scrollbar glyphs (track/thumb). Pass null to
+	 * restore the built-in unstyled default. The bar is the hover-revealed
+	 * overlay on the viewport's rightmost column: a press jumps to the pointed
+	 * fraction of the transcript and a drag scrolls continuously.
+	 */
+	setScrollbarStyle(style: ScrollbarStyle | null): void {
+		this.scrollbarStyle = style;
+	}
+
+	/**
+	 * Set the sticky prompt header provider (Claude Code style): while the user
+	 * is scrolled up into history, the returned line is drawn over the
+	 * viewport's top row; a left-click on that row scrolls to `jumpTo` (or back
+	 * to the bottom when omitted). The provider receives the frame width plus
+	 * the current scroll position so it can anchor the header to the message
+	 * currently in view.
+	 */
+	setStickyHeaderContent(
+		provider:
+			| ((width: number, scrollTop: number, viewportHeight: number) => {
+					line: string;
+					jumpTo?: number;
+			  } | null)
+			| null,
+	): void {
+		this.stickyHeaderContent = provider;
+	}
+
+	/** Whether the sticky header is currently drawn (scrolled up + content). */
+	isStickyHeaderVisible(): boolean {
+		return this.stickyHeaderVisible;
 	}
 
 	setFocus(component: Component | null): void {
@@ -442,6 +819,22 @@ export class TUI extends Container {
 		}
 
 		this.focusedComponent = nextFocus;
+		// A focus change invalidates the motion dedupe key: the pointer cell is
+		// unchanged but the hover target under it is, so the next motion event
+		// must reach the newly focused component even in the same cell.
+		this.lastMotionKey = null;
+		this.lastMotionRawKey = null;
+		// Zone hover belongs to the previously focused subtree; when focus
+		// moves outside it, clear the hover so the old owner drops its hover
+		// affordance instead of rendering it stale.
+		const hoveredZone = this.lastHoveredZone;
+		if (
+			hoveredZone !== null &&
+			(nextFocus === null || !this.containsComponent(nextFocus, hoveredZone.owner))
+		) {
+			this.lastHoveredZone = null;
+			hoveredZone.owner.setHoveredZone?.(null);
+		}
 
 		if (isFocusable(nextFocus)) {
 			nextFocus.focused = true;
@@ -520,6 +913,7 @@ export class TUI extends Container {
 			preFocus: this.focusedComponent,
 			hidden: false,
 			focusOrder: ++this.focusOrderCounter,
+			lastRect: null,
 		};
 		this.overlayStack.push(entry);
 		// Only focus if overlay is actually visible
@@ -657,16 +1051,24 @@ export class TUI extends Container {
 
 	start(): void {
 		this.stopped = false;
+		this.started = true;
 		this.terminal.start(
 			(data) => this.handleInput(data),
 			() => this.requestRender(),
 		);
+		if (this.fullscreen) {
+			this.terminal.enterAltScreen();
+			this.terminal.setMouseReporting(true);
+		}
 		this.terminal.hideCursor();
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031h");
 		}
 		this.queryCellSize();
-		this.requestRender();
+		// Fullscreen always opens on a fresh alternate buffer — force a full
+		// repaint instead of diffing against whatever previousLines holds
+		// (also covers stop→start cycles, whose buffer is new as well).
+		this.requestRender(this.fullscreen);
 	}
 
 	addInputListener(listener: InputListener): () => void {
@@ -709,12 +1111,29 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
+		this.started = false;
+		// Drop any pending render so a later start() cannot find the queue
+		// permanently blocked behind a stale renderRequested flag.
+		this.renderRequested = false;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
 		}
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
+		}
+		if (this.fullscreen) {
+			// The alternate buffer is discarded wholesale on exit; no need to
+			// reposition the cursor to the end of the content first. Placed
+			// kitty images, however, survive buffer switches — delete them or
+			// they accumulate in terminal memory across sessions.
+			this.terminal.write(this.deleteKittyImages(this.previousKittyImageIds));
+			this.previousKittyImageIds = new Set();
+			this.terminal.setMouseReporting(false);
+			this.terminal.exitAltScreen();
+			this.terminal.showCursor();
+			this.terminal.stop();
+			return;
 		}
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
@@ -741,24 +1160,41 @@ export class TUI extends Container {
 			this.hardwareCursorRow = 0;
 			this.maxLinesRendered = 0;
 			this.previousViewportTop = 0;
-			if (this.renderTimer) {
-				clearTimeout(this.renderTimer);
-				this.renderTimer = undefined;
-			}
-			this.renderRequested = true;
-			process.nextTick(() => {
-				if (this.stopped || !this.renderRequested) {
-					return;
-				}
-				this.renderRequested = false;
-				this.lastRenderAt = performance.now();
-				this.doRender();
-			});
+			this.scheduleImmediateRender();
 			return;
 		}
 		if (this.renderRequested) return;
 		this.renderRequested = true;
 		process.nextTick(() => this.scheduleRender());
+	}
+
+	/**
+	 * Request a viewport repaint that preserves the terminal's native
+	 * scrollback: the visible region is rewritten in place and leftover rows
+	 * below the new content are erased with `\x1b[J` — never the `\x1b[3J`
+	 * scrollback purge that requestRender(true) performs. Use when tall chrome
+	 * is replaced by shorter content (dialog/takeover close) and the session
+	 * history scrolled into the native buffer must survive.
+	 */
+	requestCollapseRender(): void {
+		this.collapseRenderRequested = true;
+		this.scheduleImmediateRender();
+	}
+
+	private scheduleImmediateRender(): void {
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = undefined;
+		}
+		this.renderRequested = true;
+		process.nextTick(() => {
+			if (this.stopped || !this.renderRequested) {
+				return;
+			}
+			this.renderRequested = false;
+			this.lastRenderAt = performance.now();
+			this.doRender();
+		});
 	}
 
 	private scheduleRender(): void {
@@ -779,6 +1215,877 @@ export class TUI extends Container {
 				this.scheduleRender();
 			}
 		}, delay);
+	}
+
+	// Parse an SGR mouse event: \x1b[<button;col;row[M=press|m=release].
+	// Button bit 32 marks motion (any-motion tracking, mode 1003); it is
+	// stripped from the reported button so held-button drags and plain hovers
+	// share the 'motion' type.
+	private static parseMouseEvent(data: string): MouseEvent | null {
+		const match = data.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/);
+		if (!match) return null;
+		const rawButton = Number.parseInt(match[1]!, 10);
+		const isMotion = (rawButton & 32) !== 0;
+		const button = isMotion ? rawButton & ~32 : rawButton;
+		const isWheel = button === 64 || button === 65;
+		return {
+			type: isMotion
+				? 'motion'
+				: isWheel && match[4] === 'M'
+					? 'wheel'
+					: isWheel
+						? 'release'
+						: match[4] === 'M'
+							? 'press'
+							: 'release',
+			button,
+			col: Number.parseInt(match[2]!, 10),
+			row: Number.parseInt(match[3]!, 10),
+			slotRelative: false,
+		};
+	}
+
+	/**
+	 * Row offset of `descendant`'s first rendered line within `ancestor`'s
+	 * rendered output (0-based), via each container's rendered child heights and
+	 * its {@link Container.rowsBeforeChild} chrome. Press events are one-shot, so
+	 * measuring heights on demand is fine — this never runs per frame.
+	 */
+	private rowOffsetWithin(ancestor: Component, descendant: Component): number | null {
+		if (ancestor === descendant) return 0;
+		if (!(ancestor instanceof Container)) return null;
+		const width = Math.max(1, this.terminal.columns);
+		let acc = 0;
+		for (const child of ancestor.children) {
+			const base = acc + ancestor.rowsBeforeChild(child);
+			if (child === descendant) return base;
+			const inner = this.rowOffsetWithin(child, descendant);
+			if (inner !== null) return base + inner;
+			acc += child.render(width).length;
+		}
+		return null;
+	}
+
+	/**
+	 * Accumulated left inset between `ancestor`'s rendered lines and
+	 * `descendant`'s content: the sum of {@link Container.leftInset} over the
+	 * containers on the path (a gutter-prefixed line shifts every child column
+	 * right by the gutter). Returns null when descendant is not under ancestor.
+	 */
+	private colInsetWithin(ancestor: Component, descendant: Component): number | null {
+		if (ancestor === descendant) return 0;
+		if (!(ancestor instanceof Container)) return null;
+		for (const child of ancestor.children) {
+			if (child === descendant) return ancestor.leftInset();
+			const inner = this.colInsetWithin(child, descendant);
+			if (inner !== null) return ancestor.leftInset() + inner;
+		}
+		return null;
+	}
+
+	/** The visible overlay whose component subtree contains `component`, if any. */
+	private visibleOverlayEntryFor(component: Component | null): OverlayStackEntry | undefined {
+		if (component === null) return undefined;
+		for (const entry of this.overlayStack) {
+			if (!this.isOverlayVisible(entry)) continue;
+			if (this.containsComponent(entry.component, component)) return entry;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Whether a mouse event position (1-based row/col) falls inside the rect the
+	 * overlay occupied in the last composed frame.
+	 */
+	private isPointInOverlayRect(entry: OverlayStackEntry, row: number, col: number): boolean {
+		const rect = entry.lastRect;
+		if (rect === null) return false;
+		return row - 1 >= rect.row && row - 1 < rect.row + rect.height && col > rect.col && col <= rect.col + rect.width;
+	}
+
+	/**
+	 * Wheel hit-test over slot display panels: find the deepest mouse-aware
+	 * component under the pointer outside the focused component's subtree and
+	 * deliver the event with a component-relative row. Returns true when the
+	 * event was consumed. Display panels (btw/todo/queue/notice/swarm) never
+	 * take focus, so without this their only scroll path was the transcript.
+	 */
+	private hoverSlotPanelHit(root: Container, row: number, event: MouseEvent): boolean {
+		const width = Math.max(1, this.terminal.columns);
+		const focused = this.focusedComponent;
+		let acc = 0;
+		for (const child of root.children) {
+			const base = acc + root.rowsBeforeChild(child);
+			const height = child.render(width).length;
+			if (row >= base && row < base + height) {
+				if (focused !== null && this.containsComponent(child, focused)) return false;
+				const inner = this.hoverSlotPanelHitIn(child, row - base, event);
+				if (inner !== null) {
+					inner.handleMouse(inner.event);
+					return true;
+				}
+				return false;
+			}
+			acc = base + height;
+		}
+		return false;
+	}
+
+	private hoverSlotPanelHitIn(
+		component: Component,
+		row: number,
+		event: MouseEvent,
+	): { handleMouse: (event: MouseEvent) => void; event: MouseEvent } | null {
+		if (component instanceof Container) {
+			const width = Math.max(1, this.terminal.columns);
+			let acc = 0;
+			for (const child of component.children) {
+				const base = acc + component.rowsBeforeChild(child);
+				const height = child.render(width).length;
+				if (row >= base && row < base + height) {
+					return this.hoverSlotPanelHitIn(child, row - base, event);
+				}
+				acc = base + height;
+			}
+			return null;
+		}
+		if (component.handleMouse === undefined) return null;
+		const translated: MouseEvent = { ...event, row, slotRelative: true };
+		if (!(component.wantsMouseEvent?.(translated) ?? true)) return null;
+		return { handleMouse: (e: MouseEvent) => component.handleMouse?.(e), event: translated };
+	}
+
+	/**
+	 * Press counterpart of {@link hoverSlotPanelHit}: find the slot child under
+	 * the pointer outside the focused component's subtree and hit-test the hit
+	 * zones composed within it. A press inside an `action` zone is dispatched
+	 * to the zone owner's onHitZone (event re-translated into the owner's
+	 * frame, same as the focused path). Returns true when the event was
+	 * consumed. Display chrome (footer) never takes focus, so without this its
+	 * declared zones would be unreachable.
+	 */
+	private slotPanelZonePress(root: Container, row: number, event: MouseEvent): boolean {
+		const width = Math.max(1, this.terminal.columns);
+		const focused = this.focusedComponent;
+		// Render-free pre-check: the height walk below renders each child, so
+		// bail before paying for it when no child outside the focused subtree
+		// declares zones at all (the common case — chrome without zones).
+		if (
+			!root.children.some(
+				(child) => !(focused !== null && this.containsComponent(child, focused)) && hasHitZones(child),
+			)
+		) {
+			return false;
+		}
+		let acc = 0;
+		for (const child of root.children) {
+			const base = acc + root.rowsBeforeChild(child);
+			const height = child.render(width).length;
+			if (row >= base && row < base + height) {
+				if (focused !== null && this.containsComponent(child, focused)) return false;
+				if (!hasHitZones(child)) return false;
+				const col = event.col - (this.colInsetWithin(root, child) ?? 0);
+				const zone = hitZoneAt(resolveHitZones(child, width), row - base, col, "action");
+				if (zone === null) return false;
+				if (this.dispatchHitZone(zone, { ...event, row: row - base, col, slotRelative: true }) !== false) {
+					this.requestRender();
+				}
+				return true;
+			}
+			acc = base + height;
+		}
+		return false;
+	}
+
+	/**
+	 * Hit-test the transcript scroll region's children at a viewport row:
+	 * `viewportRow` is 0-based from the viewport's top, so the transcript line
+	 * under the pointer is `scrollTop + viewportRow`. The walk renders children
+	 * at the width the scroll container lays them out (terminal columns minus
+	 * its gutter insets) — render caches keep this cheap — and hit-tests the
+	 * zones composed within the child that owns the line. The returned event
+	 * is expressed in that child's frame, ready for {@link dispatchHitZone}'s
+	 * owner re-translation. Returns null when no child — or no zone of the
+	 * requested kind — covers the point.
+	 */
+	private transcriptZoneHit(
+		scroll: Container,
+		viewportRow: number,
+		event: MouseEvent,
+		kind: keyof Required<HitZoneSemantics>,
+	): { zone: ResolvedHitZone; event: MouseEvent } | null {
+		const width = Math.max(1, this.terminal.columns);
+		const line = this.scrollTop + viewportRow;
+		const colInset = scroll.leftInset();
+		const childWidth = Math.max(1, width - colInset - scroll.rightInset());
+		let acc = 0;
+		for (const child of scroll.children) {
+			const base = acc + scroll.rowsBeforeChild(child);
+			const height = child.render(childWidth).length;
+			if (line >= base && line < base + height) {
+				if (!hasHitZones(child)) return null;
+				const translated: MouseEvent = {
+					...event,
+					row: line - base,
+					col: event.col - colInset,
+					slotRelative: false,
+				};
+				const zone = hitZoneAt(resolveHitZones(child, childWidth), translated.row, translated.col, kind);
+				return zone === null ? null : { zone, event: translated };
+			}
+			acc = base + height;
+		}
+		return null;
+	}
+
+	/**
+	 * Whether a 1-based terminal cell counts as transcript content for zone
+	 * routing: inside the viewport while the layout regions are mounted, not
+	 * the sticky-header overlay row, and not shielded by a visible overlay
+	 * (the same rule the transcript scrollbar applies).
+	 */
+	private isTranscriptContentCell(row: number, col: number): boolean {
+		const { scroll, slot } = this.layoutRegions;
+		if (
+			!(scroll instanceof Container) ||
+			slot === undefined ||
+			!this.isComponentMounted(scroll) ||
+			!this.isComponentMounted(slot)
+		) {
+			return false;
+		}
+		if (row < 1 || row > this.lastViewportHeight) return false;
+		if (row === 1 && this.stickyHeaderVisible) return false;
+		const overlay = this.visibleOverlayEntryFor(this.focusedComponent);
+		return overlay === undefined || !this.isPointInOverlayRect(overlay, row, col);
+	}
+
+	/**
+	 * Route a fullscreen mouse event: wheel over the transcript viewport unless
+	 * a mouse-aware focused component outside the scroll region should get it
+	 * (hover-to-scroll); left-press drives the transcript scrollbar (rightmost
+	 * viewport column: a press on the thumb anchors it to the pointer — grab
+	 * delta — a press on the bare track jumps to the pointed fraction; motion
+	 * with the button held drags),
+	 * the sticky header / scroll badge, and is otherwise forwarded to the
+	 * focused component with component-relative coordinates for row/col-hit
+	 * handling (click-to-select); releases are forwarded with the press
+	 * translation so component drags can end. Press and motion
+	 * translation accounts for the slot-top clip (a slot taller than the screen
+	 * keeps its bottom) and for container left gutters, so components receive
+	 * coordinates in their own rendered frame. When the focused component
+	 * declares hit zones, a press inside an action zone is dispatched to the
+	 * zone owner's onHitZone instead of handleMouse, and button-free motion
+	 * drives the centrally tracked hovered zone (setHoveredZone) rather than
+	 * being forwarded; motion with a button held is a drag and goes to
+	 * handleMouse instead.
+	 */
+	private handleFullscreenMouse(event: MouseEvent): void {
+		if (event.type === 'wheel') {
+			const focused = this.focusedComponent;
+			const { scroll, slot } = this.layoutRegions;
+			const regionsMounted =
+				scroll !== undefined &&
+				slot !== undefined &&
+				this.isComponentMounted(scroll) &&
+				this.isComponentMounted(slot);
+			// Focus inside a visible overlay: the dialog owns the wheel only while
+			// the pointer hovers its rect (the same hover semantics slot panels
+			// have). Outside the rect the wheel keeps its underlay routing, so a
+			// display panel covered by the overlay can't be scrolled through it.
+			const focusedOverlay = this.visibleOverlayEntryFor(focused);
+			if (focusedOverlay !== undefined) {
+				const rect = focusedOverlay.lastRect;
+				if (rect !== null && this.isPointInOverlayRect(focusedOverlay, event.row, event.col)) {
+					if (
+						focused?.handleMouse !== undefined &&
+						(focused.wantsMouseEvent?.(event) ?? true) &&
+						focused.handleMouse({
+							...event,
+							row: event.row - 1 - rect.row,
+							col: event.col - rect.col,
+							slotRelative: false,
+						}) !== false
+					) {
+						this.requestRender();
+					}
+					return;
+				}
+				if (regionsMounted && event.row > this.lastViewportHeight) {
+					const hit =
+						slot instanceof Container &&
+						this.hoverSlotPanelHit(
+							slot,
+							event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows,
+							event,
+						);
+					if (hit) {
+						this.requestRender();
+						return;
+					}
+				}
+				this.scrollBy(event.button === 64 ? -3 : 3);
+				return;
+			}
+			// Hover hit-test over slot display panels (btw/todo/queue/notice/swarm
+			// containers, which never take focus): the pointer over one of them
+			// scrolls that panel, not the focused component. The editorContainer
+			// subtree is excluded — its content is the focused component and is
+			// covered by the focused path below.
+			if (regionsMounted && event.row > this.lastViewportHeight) {
+				const hit =
+					slot instanceof Container &&
+					this.hoverSlotPanelHit(
+						slot,
+						event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows,
+						event,
+					);
+				if (hit) {
+					this.requestRender();
+					return;
+				}
+			}
+			const insideScrollRegion =
+				regionsMounted && focused !== null && this.containsComponent(scroll, focused);
+			if (
+				!insideScrollRegion &&
+				focused?.handleMouse !== undefined &&
+				(focused.wantsMouseEvent?.(event) ?? true)
+			) {
+				const insideSlot = regionsMounted && this.containsComponent(slot, focused);
+				// True hover semantics: a slot dialog owns the wheel only while the
+				// pointer is over the slot itself; over the transcript viewport the
+				// wheel keeps scrolling the transcript.
+				if (insideSlot && event.row <= this.lastViewportHeight) {
+					this.scrollBy(event.button === 64 ? -3 : 3);
+					return;
+				}
+				if (
+					focused.handleMouse({
+						...event,
+						row: insideSlot ? event.row - this.lastViewportHeight : event.row,
+						slotRelative: insideSlot,
+					}) !== false
+				) {
+					this.requestRender();
+				}
+				return;
+			}
+			this.scrollBy(event.button === 64 ? -3 : 3);
+			return;
+		}
+		// Pointer motion (any-motion tracking, mode 1003): forwarded to the
+		// focused mouse-aware component with the same component-relative row/col
+		// translation as presses, so hover hit-tests reuse the press math. A
+		// translated row of -1 signals the pointer left the component region
+		// (hover-clear). Deduped per pointer cell — mode 1003 reports every
+		// cell boundary crossed. For zone-declaring components the translation
+		// is identical, but the TUI hit-tests the declared zones and tracks the
+		// hovered zone centrally (setHoveredZone) instead of forwarding.
+		if (event.type === 'motion') {
+			// The scroll badge is TUI chrome (not a component), so its hover is
+			// tracked here ahead of — and independently of — component routing.
+			this.updateScrollIndicatorHover(event);
+			// An active transcript-scrollbar drag owns the pointer until the
+			// release: the row keeps mapping even off the bar's column (GUI-style
+			// capture). A button-free motion without a release defensively ends
+			// the drag for terminals that drop them.
+			if (this.transcriptScrollbarDrag) {
+				if (event.button === 0) {
+					if (this.transcriptScrollbarGrabOffset === null) {
+						this.scrollTranscriptToTrackRow(event.row - 1);
+					} else {
+						this.scrollTranscriptToThumbRow(event.row - 1 - this.transcriptScrollbarGrabOffset);
+					}
+					return;
+				}
+				this.transcriptScrollbarDrag = false;
+				this.transcriptScrollbarGrabOffset = null;
+			}
+			// The transcript scrollbar is TUI chrome like the badge: its hover
+			// reveal is tracked here, ahead of component routing.
+			this.updateTranscriptScrollbarHover(event);
+			// Transcript content zones (tool cards/groups) likewise track
+			// button-free motion ahead of — and independently of — the focused
+			// component's own hover routing.
+			if (event.button === 3) {
+				this.updateTranscriptZoneHover(event);
+			}
+			const focused = this.focusedComponent;
+			if (focused === null) return;
+			const zoneAware = hasHitZones(focused);
+			if (focused.handleMouse === undefined && !zoneAware) return;
+			// Cheap pre-dedupe on the raw pointer cell: the row translation
+			// below walks and renders slot containers (rowOffsetWithin), so
+			// don't pay for it when the answer cannot have changed — same raw
+			// cell, no render since (layout frozen), and no render request
+			// pending (a mutation may be waiting for one).
+			const rawKey = `${event.row}:${event.col}`;
+			if (
+				rawKey === this.lastMotionRawKey &&
+				this.lastMotionRawEpoch === this.renderEpoch &&
+				!this.renderRequested
+			) {
+				return;
+			}
+			const { slot } = this.layoutRegions;
+			let row: number;
+			let col: number;
+			const motionOverlay = this.visibleOverlayEntryFor(focused);
+			if (motionOverlay !== undefined) {
+				// Overlay: translate through its composed rect; outside the rect
+				// the pointer reports as row -1 so the dialog clears its hover.
+				const rect = motionOverlay.lastRect;
+				if (rect === null) return;
+				row = this.isPointInOverlayRect(motionOverlay, event.row, event.col)
+					? event.row - 1 - rect.row
+					: -1;
+				col = event.col - rect.col;
+			} else if (slot !== undefined && this.containsComponent(slot, focused)) {
+				// The slot starts right below the transcript viewport; inside it,
+				// container chrome and siblings shift the component down, and a
+				// slot taller than the screen is clipped at the top (the visible
+				// slot top sits lastSlotClipRows into the slot's rendered
+				// output). Container gutters likewise shift the component right.
+				const inner = this.rowOffsetWithin(slot, focused);
+				if (inner === null) return;
+				const slotIndex = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
+				row = slotIndex < this.lastSlotClipRows ? -1 : Math.max(slotIndex - inner, -1);
+				col = event.col - (this.colInsetWithin(slot, focused) ?? 0);
+			} else {
+				// Takeover components fill the screen from row 1.
+				row = event.row - 1;
+				col = event.col - (this.colInsetWithin(this as Container, focused) ?? 0);
+			}
+			const key = `${row < 0 ? -1 : row}:${col}`;
+			if (key === this.lastMotionKey) return;
+			this.lastMotionKey = key;
+			this.lastMotionRawKey = rawKey;
+			this.lastMotionRawEpoch = this.renderEpoch;
+			const translated: MouseEvent = {
+				...event,
+				col,
+				row: Math.max(row, -1),
+				slotRelative: false,
+			};
+			if (!(focused.wantsMouseEvent?.(translated) ?? true)) return;
+			// A motion with a button held is a drag, not a hover: it goes to the
+			// raw handler even when the component declares zones (component
+			// scrollbar drags live there). Zones only track button-free motion.
+			if (zoneAware && event.button === 3) {
+				this.updateZoneHover(focused, row, col);
+				return;
+			}
+			if (focused.handleMouse === undefined) return;
+			if (focused.handleMouse(translated) !== false) this.requestRender();
+			return;
+		}
+		// Button release: ends a transcript-scrollbar drag and is forwarded to
+		// the focused mouse-aware component with the press translation (no zone
+		// dispatch — releases exist so component scrollbars can end their
+		// drags). Handlers that only expect wheel/press/motion ignore it.
+		if (event.type === 'release') {
+			if (this.transcriptScrollbarDrag) {
+				this.transcriptScrollbarDrag = false;
+				this.transcriptScrollbarGrabOffset = null;
+				// The drag path skips hover tracking, so settle the reveal with
+				// the release cell (the bar hides when the pointer is off-column).
+				this.updateTranscriptScrollbarHover(event);
+				this.updateTranscriptZoneHover(event);
+			}
+			const focused = this.focusedComponent;
+			if (focused === null || focused.handleMouse === undefined) return;
+			const releaseOverlay = this.visibleOverlayEntryFor(focused);
+			const { slot } = this.layoutRegions;
+			let row: number;
+			let col: number;
+			if (releaseOverlay !== undefined) {
+				const rect = releaseOverlay.lastRect;
+				if (rect === null) return;
+				row = this.isPointInOverlayRect(releaseOverlay, event.row, event.col)
+					? event.row - 1 - rect.row
+					: -1;
+				col = event.col - rect.col;
+			} else if (slot !== undefined && this.containsComponent(slot, focused)) {
+				const inner = this.rowOffsetWithin(slot, focused);
+				if (inner === null) return;
+				const slotIndex = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
+				row = slotIndex < this.lastSlotClipRows ? -1 : Math.max(slotIndex - inner, -1);
+				col = event.col - (this.colInsetWithin(slot, focused) ?? 0);
+			} else {
+				// Takeover components fill the screen from row 1.
+				row = event.row - 1;
+				col = event.col - (this.colInsetWithin(this as Container, focused) ?? 0);
+			}
+			const translated: MouseEvent = { ...event, col, row, slotRelative: false };
+			if (!(focused.wantsMouseEvent?.(translated) ?? true)) return;
+			if (focused.handleMouse(translated) !== false) this.requestRender();
+			return;
+		}
+		// Left-click (press only; rows are 1-based):
+		// - the transcript scrollbar's column (rightmost, scrollable viewport)
+		//   → start a drag: anchored on the thumb, jumping on the bare track
+		// - top row while the sticky header is visible → jump to the
+		//   header's message position (or to the bottom when unset)
+		// - viewport bottom row while the scroll badge is visible → bottom
+		// - anything else → forwarded to the focused mouse-aware component with
+		//   the row translated to that component's own frame (0-based), so
+		//   dialogs can do row-hit selection without knowing the slot layout
+		if (event.type === 'press' && event.button === 0) {
+			// A press landing on a visible overlay belongs to it: the covered
+			// underlay affordances (sticky header, scroll badge, slot zones)
+			// must not fire through it.
+			const pressOverlay = this.visibleOverlayEntryFor(this.focusedComponent);
+			const overlayHit =
+				pressOverlay !== undefined && this.isPointInOverlayRect(pressOverlay, event.row, event.col);
+			if (!overlayHit) {
+				// The transcript scrollbar owns its column ahead of the other
+				// chrome sharing those rows (sticky header, scroll badge).
+				if (this.isTranscriptScrollbarCell(event.row, event.col)) {
+					this.transcriptScrollbarDrag = true;
+					this.beginTranscriptScrollbarDrag(event.row - 1);
+					return;
+				}
+				if (event.row === 1 && this.stickyHeaderVisible) {
+					if (this.stickyJumpTo !== null) {
+						const maxScroll = Math.max(0, this.lastScrollRegionLineCount - this.lastViewportHeight);
+						const next = Math.max(0, Math.min(this.stickyJumpTo, maxScroll));
+						if (next !== this.scrollTop) this.clearTranscriptZoneHover();
+						this.scrollTop = next;
+						this.followOutput = this.scrollTop >= maxScroll;
+						this.requestRender();
+					} else {
+						this.scrollToBottom();
+					}
+					return;
+				}
+				if (event.row === this.lastViewportHeight && this.scrollIndicatorVisible) {
+					// Only clicks landing on the badge itself count (right-aligned);
+					// anywhere else on that row is just transcript content.
+					if (event.col > this.terminal.columns - this.scrollIndicatorBadgeWidth) {
+						this.scrollToBottom();
+						return;
+					}
+				}
+				// Zone hit-test over slot display panels (chrome like the footer,
+				// which never takes focus): a press landing in a declared action
+				// zone is dispatched to the zone's owner. The focused component's
+				// own subtree is excluded — it is covered by the focused path below.
+				{
+					const { scroll, slot } = this.layoutRegions;
+					const regionsMounted =
+						scroll !== undefined &&
+						slot !== undefined &&
+						this.isComponentMounted(scroll) &&
+						this.isComponentMounted(slot);
+					if (
+						regionsMounted &&
+						event.row > this.lastViewportHeight &&
+						slot instanceof Container &&
+						this.slotPanelZonePress(
+							slot,
+							event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows,
+							event,
+						)
+					) {
+						return;
+					}
+				}
+				// A focused overlay is modal: presses outside its rect never
+				// reach the underlay (transcript content, covered slot chrome).
+				if (pressOverlay !== undefined) return;
+			}
+			// Transcript content zones (tool cards/groups): a press landing in
+			// a declared action zone is dispatched to the zone's owner with
+			// scroll-offset and gutter-inset translation. Presses elsewhere in
+			// the viewport fall through to the focused path, which declines
+			// transcript-region rows for slot-focused components.
+			{
+				const { scroll } = this.layoutRegions;
+				if (
+					scroll instanceof Container &&
+					this.isTranscriptContentCell(event.row, event.col)
+				) {
+					const hit = this.transcriptZoneHit(scroll, event.row - 1, event, "action");
+					if (hit !== null) {
+						if (this.dispatchHitZone(hit.zone, hit.event) !== false) {
+							this.requestRender();
+						}
+						return;
+					}
+				}
+			}
+			const focused = this.focusedComponent;
+			if (focused === null) return;
+			const zoneAware = hasHitZones(focused);
+			if (focused.handleMouse === undefined && !zoneAware) return;
+			const { slot } = this.layoutRegions;
+			let row: number;
+			let col: number;
+			if (pressOverlay !== undefined) {
+				// Overlay: translate through its composed rect (overlayHit was
+				// verified above, so the rect is non-null and contains the point).
+				const rect = pressOverlay.lastRect!;
+				row = event.row - 1 - rect.row;
+				col = event.col - rect.col;
+			} else if (slot !== undefined && this.containsComponent(slot, focused)) {
+				// The slot starts right below the transcript viewport; inside it,
+				// container chrome and siblings shift the component down, and a
+				// slot taller than the screen is clipped at the top (the visible
+				// slot top sits lastSlotClipRows into the slot's rendered
+				// output). Container gutters likewise shift the component right.
+				const inner = this.rowOffsetWithin(slot, focused);
+				if (inner === null) return;
+				const slotIndex = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
+				// Rows above the visible slot top are transcript viewport (or
+				// clipped-away slot lines), not component hits.
+				if (slotIndex < this.lastSlotClipRows) return;
+				row = slotIndex - inner;
+				col = event.col - (this.colInsetWithin(slot, focused) ?? 0);
+			} else {
+				// Takeover components fill the screen from row 1.
+				row = event.row - 1;
+				col = event.col - (this.colInsetWithin(this as Container, focused) ?? 0);
+			}
+			if (row < 0) return;
+			const translated: MouseEvent = {
+				...event,
+				col,
+				row,
+				slotRelative: false,
+			};
+			if (!(focused.wantsMouseEvent?.(translated) ?? true)) return;
+			// Declared hit zones take precedence: a press inside an action zone
+			// is dispatched semantically to the zone's owner; only presses
+			// outside every zone reach the raw handleMouse path.
+			if (zoneAware) {
+				const zone = hitZoneAt(
+					resolveHitZones(focused, Math.max(1, this.terminal.columns)),
+					row,
+					col,
+					"action",
+				);
+				if (zone !== null) {
+					if (this.dispatchHitZone(zone, translated) !== false) this.requestRender();
+					return;
+				}
+			}
+			if (focused.handleMouse === undefined) return;
+			if (focused.handleMouse(translated) !== false) this.requestRender();
+		}
+	}
+
+	/**
+	 * Deliver a zone hit to the zone's owner, re-translating the event into
+	 * the owner's own frame when the zone was composed through containers
+	 * (the event is in the focused component's frame; the owner may be a
+	 * descendant of it).
+	 */
+	private dispatchHitZone(zone: ResolvedHitZone, event: MouseEvent): void | boolean {
+		const ownerEvent =
+			zone.rowOffset === 0 && zone.colOffset === 0
+				? event
+				: { ...event, row: event.row - zone.rowOffset, col: event.col - zone.colOffset };
+		return zone.owner.onHitZone?.(zone.id, ownerEvent);
+	}
+
+	/**
+	 * Scroll-badge hover: the pointer over the right-aligned badge on the
+	 * viewport's bottom row lights it up. The hit rect matches the click rect;
+	 * a visible overlay covering that point shields the underlay badge, the
+	 * same rule the press path applies.
+	 */
+	private updateScrollIndicatorHover(event: MouseEvent): void {
+		let hovered = false;
+		if (
+			this.scrollIndicatorVisible &&
+			event.row === this.lastViewportHeight &&
+			event.col > this.terminal.columns - this.scrollIndicatorBadgeWidth
+		) {
+			const overlay = this.visibleOverlayEntryFor(this.focusedComponent);
+			hovered = overlay === undefined || !this.isPointInOverlayRect(overlay, event.row, event.col);
+		}
+		if (hovered === this.scrollIndicatorHovered) return;
+		this.scrollIndicatorHovered = hovered;
+		this.requestRender();
+	}
+
+	/**
+	 * Whether a 1-based terminal cell sits on the transcript scrollbar's rect:
+	 * the viewport's rightmost column, while the layout regions are mounted
+	 * and the transcript actually scrolls. A visible overlay covering the
+	 * cell shields the bar, the same rule the scroll badge applies.
+	 */
+	private isTranscriptScrollbarCell(row: number, col: number): boolean {
+		if (col !== this.terminal.columns || row < 1 || row > this.lastViewportHeight) return false;
+		const { scroll, slot } = this.layoutRegions;
+		if (
+			scroll === undefined ||
+			slot === undefined ||
+			!this.isComponentMounted(scroll) ||
+			!this.isComponentMounted(slot)
+		) {
+			return false;
+		}
+		if (this.lastScrollRegionLineCount - this.lastViewportHeight <= 0) return false;
+		const overlay = this.visibleOverlayEntryFor(this.focusedComponent);
+		return overlay === undefined || !this.isPointInOverlayRect(overlay, row, col);
+	}
+
+	/**
+	 * Transcript-scrollbar hover: the bar reveals while the pointer sits on
+	 * the viewport's rightmost column (a drag keeps it revealed via
+	 * {@link transcriptScrollbarDrag} regardless of the pointer cell).
+	 */
+	private updateTranscriptScrollbarHover(event: MouseEvent): void {
+		const hovered = this.isTranscriptScrollbarCell(event.row, event.col);
+		if (hovered === this.transcriptScrollbarHover) return;
+		this.transcriptScrollbarHover = hovered;
+		this.requestRender();
+	}
+
+	/**
+	 * Begin a transcript-scrollbar drag from a press at a 0-based viewport
+	 * row: landing on the thumb anchors the pointer at that row within the
+	 * thumb (grab delta — the content does not jump); landing on the bare
+	 * track jumps to the pointed fraction and the drag continues absolutely.
+	 */
+	private beginTranscriptScrollbarDrag(viewportRow: number): void {
+		const thumb = scrollbarThumb(
+			{
+				scrollTop: this.scrollTop,
+				viewport: this.lastViewportHeight,
+				content: this.lastScrollRegionLineCount,
+			},
+			this.lastViewportHeight,
+		);
+		this.transcriptScrollbarGrabOffset =
+			thumb !== null && viewportRow >= thumb.offset && viewportRow < thumb.offset + thumb.size
+				? viewportRow - thumb.offset
+				: null;
+		if (this.transcriptScrollbarGrabOffset !== null) {
+			// No jump — but the grab reveals the bar even if no motion preceded
+			// the press (the drag flag alone engages it).
+			this.requestRender();
+			return;
+		}
+		this.scrollTranscriptToTrackRow(viewportRow);
+	}
+
+	/**
+	 * Apply the track's absolute fraction mapping to a 0-based viewport row:
+	 * the pointed fraction of the transcript becomes the scroll offset.
+	 */
+	private scrollTranscriptToTrackRow(viewportRow: number): void {
+		const metrics = {
+			scrollTop: this.scrollTop,
+			viewport: this.lastViewportHeight,
+			content: this.lastScrollRegionLineCount,
+		};
+		this.applyTranscriptScrollTarget(
+			scrollTopForTrackRow(metrics, this.lastViewportHeight, viewportRow),
+		);
+	}
+
+	/**
+	 * Grab-drag counterpart of {@link scrollTranscriptToTrackRow}: the scroll
+	 * offset whose thumb sits at `thumbRow`, so the thumb follows the pointer
+	 * 1:1 from the row it was grabbed at.
+	 */
+	private scrollTranscriptToThumbRow(thumbRow: number): void {
+		const metrics = {
+			scrollTop: this.scrollTop,
+			viewport: this.lastViewportHeight,
+			content: this.lastScrollRegionLineCount,
+		};
+		this.applyTranscriptScrollTarget(
+			scrollTopForThumbOffset(metrics, this.lastViewportHeight, thumbRow),
+		);
+	}
+
+	/**
+	 * Shared landing for the scrollbar's press/drag targets: clamp to the
+	 * live limits and re-engage follow mode when parked at the bottom,
+	 * matching scrollBy. The metrics are O(1) render by-products re-derived
+	 * per event, so a live transcript keeps the mapping exact even mid-drag.
+	 */
+	private applyTranscriptScrollTarget(target: number): void {
+		const maxScroll = Math.max(0, this.lastScrollRegionLineCount - this.lastViewportHeight);
+		if (maxScroll <= 0) return;
+		const next = Math.max(0, Math.min(target, maxScroll));
+		if (next !== this.scrollTop) this.clearTranscriptZoneHover();
+		this.scrollTop = next;
+		this.followOutput = this.scrollTop >= maxScroll;
+		this.requestRender();
+	}
+
+	/**
+	 * Zone-based hover: hit-test the focused component's declared hover zones
+	 * at the translated pointer position and notify the owning components when
+	 * the hovered (owner, id) pair changes — leaving a zone clears the old
+	 * owner's hover, entering one sets the new owner's. Owners report whether
+	 * their render output changed (false = skip the frame), mirroring the
+	 * legacy hover contract.
+	 */
+	private updateZoneHover(focused: Component, row: number, col: number): void {
+		const zone =
+			row < 0
+				? null
+				: hitZoneAt(resolveHitZones(focused, Math.max(1, this.terminal.columns)), row, col, "hover");
+		const next = zone === null ? null : { owner: zone.owner, id: zone.id };
+		const prev = this.lastHoveredZone;
+		if (prev === null && next === null) return;
+		if (prev !== null && next !== null && prev.owner === next.owner && prev.id === next.id) return;
+		let renderNeeded = false;
+		if (prev !== null && (next === null || prev.owner !== next.owner)) {
+			renderNeeded = prev.owner.setHoveredZone?.(null) !== false;
+		}
+		if (next !== null) {
+			renderNeeded = next.owner.setHoveredZone?.(next.id) !== false || renderNeeded;
+		}
+		this.lastHoveredZone = next;
+		if (renderNeeded) this.requestRender();
+	}
+
+	/**
+	 * Transcript-content zone hover: hit-test the scroll region's declared
+	 * hover zones at the pointer's viewport cell and notify the owning
+	 * components when the hovered (owner, id) pair changes, mirroring
+	 * {@link updateZoneHover}. Transcript children never take focus, so this
+	 * is tracked in {@link lastTranscriptHoveredZone} independently of the
+	 * focused component's zone hover; both clears are driven by the same
+	 * motion events. Owners report whether their render output changed (false
+	 * = skip the frame).
+	 */
+	private updateTranscriptZoneHover(event: MouseEvent): void {
+		const hit = this.isTranscriptContentCell(event.row, event.col)
+			? this.transcriptZoneHit(this.layoutRegions.scroll as Container, event.row - 1, event, "hover")
+			: null;
+		const next = hit === null ? null : { owner: hit.zone.owner, id: hit.zone.id };
+		const prev = this.lastTranscriptHoveredZone;
+		if (prev === null && next === null) return;
+		if (prev !== null && next !== null && prev.owner === next.owner && prev.id === next.id) return;
+		let renderNeeded = false;
+		if (prev !== null && (next === null || prev.owner !== next.owner)) {
+			renderNeeded = prev.owner.setHoveredZone?.(null) !== false;
+		}
+		if (next !== null) {
+			renderNeeded = next.owner.setHoveredZone?.(next.id) !== false || renderNeeded;
+		}
+		this.lastTranscriptHoveredZone = next;
+		if (renderNeeded) this.requestRender();
+	}
+
+	/**
+	 * Drop the transcript-content hover (scrolling, leaving fullscreen, the
+	 * scroll region unmounting): the hovered owner is notified so it clears
+	 * its affordance instead of rendering it stale.
+	 */
+	private clearTranscriptZoneHover(): void {
+		const prev = this.lastTranscriptHoveredZone;
+		if (prev === null) return;
+		this.lastTranscriptHoveredZone = null;
+		if (prev.owner.setHoveredZone?.(null) !== false) this.requestRender();
 	}
 
 	private handleInput(data: string): void {
@@ -809,6 +2116,37 @@ export class TUI extends Container {
 		// Consume terminal cell size responses without blocking unrelated input.
 		if (this.consumeCellSizeResponse(data)) {
 			return;
+		}
+
+		// Fullscreen mouse handling: wheel events scroll the transcript when the
+		// focus is inside the scroll region, and are forwarded to mouse-aware
+		// focused components (takeovers, slot dialogs) otherwise. Left-clicks
+		// drive the sticky-header / scroll-badge jumps. Everything else is
+		// swallowed so raw bytes never reach components; terminal-native
+		// selection stays available via Shift+drag.
+		if (this.fullscreen) {
+			const event = TUI.parseMouseEvent(data);
+			if (event) {
+				this.handleFullscreenMouse(event);
+				return;
+			}
+			const kb = getKeybindings();
+			if (kb.matches(data, "tui.scroll.up")) {
+				this.scrollPage(-1);
+				return;
+			}
+			if (kb.matches(data, "tui.scroll.down")) {
+				this.scrollPage(1);
+				return;
+			}
+			if (kb.matches(data, "tui.scroll.top")) {
+				this.scrollToTop();
+				return;
+			}
+			if (kb.matches(data, "tui.scroll.bottom")) {
+				this.scrollToBottom();
+				return;
+			}
 		}
 
 		// Global debug key handler (Shift+Ctrl+D)
@@ -1056,8 +2394,12 @@ export class TUI extends Container {
 		if (this.overlayStack.length === 0) return lines;
 		const result = [...lines];
 
+		// Stale rects must never survive a frame in which the overlay is hidden:
+		// mouse hit-testing trusts lastRect to match what is on screen.
+		for (const entry of this.overlayStack) entry.lastRect = null;
+
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: { entry: OverlayStackEntry; overlayLines: string[]; row: number; col: number; w: number }[] = [];
 		let minLinesNeeded = result.length;
 
 		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
@@ -1080,7 +2422,7 @@ export class TUI extends Container {
 			// Get final row/col with actual overlay height
 			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
 
-			rendered.push({ overlayLines, row, col, w: width });
+			rendered.push({ entry, overlayLines, row, col, w: width });
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
 
@@ -1097,7 +2439,8 @@ export class TUI extends Container {
 		const viewportStart = Math.max(0, workingHeight - termHeight);
 
 		// Composite each overlay
-		for (const { overlayLines, row, col, w } of rendered) {
+		for (const { entry, overlayLines, row, col, w } of rendered) {
+			entry.lastRect = { row: viewportStart + row, col, width: w, height: overlayLines.length };
 			for (let i = 0; i < overlayLines.length; i++) {
 				const idx = viewportStart + row + i;
 				if (idx >= 0 && idx < result.length) {
@@ -1237,6 +2580,294 @@ export class TUI extends Container {
 	}
 
 	/**
+	 * Replace kitty image lines whose reserved rows cross the slice end with "".
+	 * A partially visible image must not be drawn, or it would paint over the
+	 * rows belonging to the region below (viewport → slot, slot → screen edge).
+	 */
+	private clipKittyImagesToSlice(lines: string[]): string[] {
+		for (let i = 0; i < lines.length; i++) {
+			if (extractKittyImageRows(lines[i]!) > 1 && i + extractKittyImageRows(lines[i]!) > lines.length) {
+				lines[i] = "";
+			}
+		}
+		return lines;
+	}
+
+	/**
+	 * Compose the fullscreen frame: exactly `height` lines = transcript viewport
+	 * slice (top-padded) + fixed bottom slot. Falls back to a top-aligned
+	 * whole-tree frame when the registered regions are not mounted (takeovers).
+	 */
+	private composeFullscreenFrame(width: number, height: number): string[] {
+		const { scroll, slot } = this.layoutRegions;
+		const regionsMounted =
+			scroll !== undefined &&
+			slot !== undefined &&
+			this.isComponentMounted(scroll) &&
+			this.isComponentMounted(slot);
+
+		if (!regionsMounted) {
+			// Takeover frames are whole-screen; the scroll UI flags from the main
+			// layout must not leak into click handling or public getters here.
+			this.scrollIndicatorVisible = false;
+			this.scrollIndicatorHovered = false;
+			this.transcriptScrollbarHover = false;
+			this.transcriptScrollbarDrag = false;
+			this.transcriptScrollbarGrabOffset = null;
+			this.clearTranscriptZoneHover();
+			this.stickyHeaderVisible = false;
+			this.stickyJumpTo = null;
+			const lines = this.render(width).slice(0, height);
+			while (lines.length < height) lines.push("");
+			this.lastScrollRegionLineCount = 0;
+			this.lastViewportHeight = height;
+			this.lastSlotClipRows = 0;
+			return this.clipKittyImagesToSlice(lines);
+		}
+
+		// Bottom slot: clipped from the top when taller than the screen (viewport keeps 1 row).
+		const slotLines = slot.render(width);
+		const slotHeight = Math.min(slotLines.length, Math.max(1, height - 1));
+		const slotView = slotHeight < slotLines.length ? slotLines.slice(slotLines.length - slotHeight) : slotLines;
+		this.lastSlotClipRows = slotLines.length - slotView.length;
+		this.clipKittyImagesToSlice(slotView);
+		const viewportHeight = height - slotHeight;
+		this.lastViewportHeight = viewportHeight;
+
+		// Scroll region: show [scrollTop, scrollTop + viewportHeight).
+		const scrollLines = scroll.render(width);
+		this.lastScrollRegionLineCount = scrollLines.length;
+		const maxScroll = Math.max(0, scrollLines.length - viewportHeight);
+		if (this.followOutput) {
+			this.scrollTop = maxScroll;
+		}
+		this.scrollTop = Math.max(0, Math.min(this.scrollTop, maxScroll));
+		// Re-sync follow when the clamp lands us on the bottom: content shrank
+		// (/clear, /new, collapse) or the viewport grew — being at the bottom
+		// must mean following, otherwise new output stops anchoring here.
+		if (this.scrollTop >= maxScroll) {
+			this.followOutput = true;
+		}
+
+		const slice = scrollLines.slice(this.scrollTop, this.scrollTop + viewportHeight);
+		this.clipKittyImagesToSlice(slice);
+
+		// Transcript is top-aligned: content starts at the viewport top and the
+		// blank gap sits between it and the slot (classic chat layout — the
+		// welcome card stays pinned to the top of a fresh session).
+		const frame: string[] = [...slice];
+		while (frame.length < viewportHeight) frame.push("");
+
+		// Scrolled-up indicator: drawn over the viewport's bottom row, right-aligned.
+		// The segment reset isolates the badge from any background colour the row's
+		// own content carries (e.g. a full-width user-message block).
+		this.scrollIndicatorVisible = false;
+		if (!this.followOutput && viewportHeight > 0) {
+			const hidden = maxScroll - this.scrollTop;
+			if (hidden > 0) {
+				const label = this.scrollIndicatorLabel?.(hidden) ?? `↓ ${hidden}`;
+				const badgeWidth = visibleWidth(label) + 2;
+				const style = this.scrollIndicatorStyle ?? defaultScrollIndicatorBadgeStyle;
+				const badge = style(` ${label} `, this.scrollIndicatorHovered);
+				const rowIndex = viewportHeight - 1;
+				const base = frame[rowIndex]!;
+				const baseWidth = visibleWidth(base);
+				frame[rowIndex] =
+					baseWidth > width - badgeWidth
+						? sliceByColumn(base, 0, width - badgeWidth, true) + TUI.SEGMENT_RESET + badge
+						: base + TUI.SEGMENT_RESET + " ".repeat(width - badgeWidth - baseWidth) + badge;
+				this.scrollIndicatorVisible = true;
+				this.scrollIndicatorBadgeWidth = badgeWidth;
+			}
+		}
+		// No badge on screen means no hover target: drop a stale hover so the
+		// next frame with the badge never lights up without the pointer on it.
+		if (!this.scrollIndicatorVisible) {
+			this.scrollIndicatorHovered = false;
+		}
+
+		// Sticky prompt header: while scrolled up, the prompt summary for the
+		// message currently in view is pinned to the viewport's top row (click it
+		// to jump to that message, or to the bottom when it has no target).
+		this.stickyHeaderVisible = false;
+		this.stickyJumpTo = null;
+		if (!this.followOutput && this.stickyHeaderContent && viewportHeight > 1) {
+			const header = this.stickyHeaderContent(width, this.scrollTop, viewportHeight);
+			// Dedup: when the anchored message is itself visible in the viewport
+			// (its start line is at or below the viewport top), showing it in the
+			// header too reads as a duplicate — suppress the header.
+			const anchoredVisible = header?.jumpTo !== undefined && header.jumpTo >= this.scrollTop;
+			if (header !== null && header.line.length > 0 && !anchoredVisible) {
+				frame[0] =
+					visibleWidth(header.line) > width ? sliceByColumn(header.line, 0, width, true) : header.line;
+				this.stickyHeaderVisible = true;
+				this.stickyJumpTo = header.jumpTo ?? null;
+			}
+		}
+
+		// Transcript scrollbar: hover-revealed overlay on the viewport's
+		// rightmost column (░ track, █ thumb). Drawn after the badge and the
+		// sticky header so the bar wins that cell — the badge's last cell is
+		// its padding space. Kitty-image rows keep their line untouched:
+		// splicing text into an image escape would corrupt the image.
+		if ((this.transcriptScrollbarHover || this.transcriptScrollbarDrag) && maxScroll > 0) {
+			const thumb = scrollbarThumb(
+				{ scrollTop: this.scrollTop, viewport: viewportHeight, content: scrollLines.length },
+				viewportHeight,
+			);
+			if (thumb !== null) {
+				const viewportRows = frame.slice(0, viewportHeight);
+				const barred = drawScrollbar(viewportRows, width, thumb, this.scrollbarStyle ?? undefined);
+				for (let i = 0; i < viewportHeight; i++) {
+					if (!isImageLine(viewportRows[i]!)) frame[i] = barred[i]!;
+				}
+			}
+		}
+
+		frame.push(...slotView);
+		return frame;
+	}
+
+	/**
+	 * Fullscreen renderer: the frame is exactly `rows` lines and is written with
+	 * absolute cursor addressing, so no terminal scrolling ever happens — which
+	 * is what makes ghost lines and viewport bookkeeping impossible here.
+	 */
+	private doFullscreenRender(): void {
+		const width = this.terminal.columns;
+		const height = this.terminal.rows;
+		const sizeChanged = this.previousWidth !== width || this.previousHeight !== height;
+
+		let frame = this.composeFullscreenFrame(width, height);
+		if (this.overlayStack.length > 0) {
+			frame = this.compositeOverlays(frame, width, height).slice(0, height);
+		}
+
+		// Extract cursor before line resets (marker must be found first)
+		const cursorPos = this.extractCursorPosition(frame, height);
+
+		// Process raw frame lines for output, reusing the previous frame's
+		// processed lines when the raw string reference is unchanged. Same
+		// invariant as the inline path's processed-line reuse: component
+		// render caches return identical string references for unchanged
+		// content, and the processed output is a pure function of the raw
+		// line and the terminal width. Reuse requires an unchanged width;
+		// height changes re-pad the frame but per-line processing is
+		// height-independent, so per-index reuse stays valid there.
+		const rawFrameLines = frame;
+		const reuseProcessed = this.previousWidth === width && this.previousRawFrameLines.length > 0;
+		const processedFrame: string[] = new Array(rawFrameLines.length);
+		const frameLineImageIds: ReadonlyArray<number>[] = new Array(rawFrameLines.length);
+		for (let i = 0; i < rawFrameLines.length; i++) {
+			const rawLine = rawFrameLines[i]!;
+			if (
+				reuseProcessed &&
+				i < this.previousRawFrameLines.length &&
+				rawLine === this.previousRawFrameLines[i]
+			) {
+				processedFrame[i] = this.previousLines[i]!;
+				frameLineImageIds[i] = this.previousFrameLineImageIds[i]!;
+				continue;
+			}
+			// Never write a line wider than the terminal
+			let line = rawLine;
+			let imageIds: readonly number[] = EMPTY_IMAGE_IDS;
+			if (isImageLine(line)) {
+				imageIds = extractKittyImageIds(line);
+			} else {
+				const lineWidth = asciiVisibleWidth(line, width) ?? visibleWidth(line);
+				if (lineWidth > width) {
+					line = sliceByColumn(line, 0, width, true);
+				}
+				line = normalizeTerminalOutput(line) + TUI.SEGMENT_RESET;
+			}
+			processedFrame[i] = line;
+			frameLineImageIds[i] = imageIds;
+		}
+		frame = processedFrame;
+		const frameKittyImageIds = this.unionKittyImageIds(frameLineImageIds);
+
+		const fullRepaint = sizeChanged || this.previousLines.length !== frame.length;
+		let buffer = "\x1b[?2026h"; // Begin synchronized output
+		let lastCursorRow = 0;
+
+		if (fullRepaint) {
+			this.fullRedrawCount += 1;
+			buffer += this.deleteKittyImages(this.previousKittyImageIds);
+			buffer += "\x1b[2J";
+			for (let row = 0; row < frame.length; row++) {
+				const line = frame[row]!;
+				if (isImageLine(line)) {
+					const reserved = this.getKittyImageReservedRows(frame, row);
+					for (let k = 0; k < reserved; k++) {
+						buffer += `\x1b[${row + 1 + k};1H\x1b[2K`;
+					}
+					buffer += `\x1b[${row + 1};1H`;
+					buffer += line;
+					lastCursorRow = row;
+					row += reserved - 1;
+					continue;
+				}
+				buffer += `\x1b[${row + 1};1H\x1b[2K`;
+				buffer += line;
+				lastCursorRow = row;
+			}
+		} else {
+			// Delete kitty images that left the frame
+			const staleIds: number[] = [];
+			for (const id of this.previousKittyImageIds) {
+				if (!frameKittyImageIds.has(id)) staleIds.push(id);
+			}
+			if (staleIds.length > 0) {
+				buffer += this.deleteKittyImages(staleIds);
+			}
+
+			let row = 0;
+			while (row < frame.length) {
+				const line = frame[row]!;
+				// Unchanged lines are skipped, images included: with absolute
+				// addressing nothing scrolls, and re-sending the base64 payload
+				// every frame is pure cost (flicker + bandwidth).
+				if (frame[row] === this.previousLines[row]) {
+					row++;
+					continue;
+				}
+				if (isImageLine(line)) {
+					const reserved = this.getKittyImageReservedRows(frame, row);
+					for (let k = 0; k < reserved; k++) {
+						buffer += `\x1b[${row + 1 + k};1H\x1b[2K`;
+					}
+					buffer += `\x1b[${row + 1};1H`;
+					buffer += line;
+					// The image escape is zero-width: the cursor stays on the
+					// image row, not at the bottom of its reserved block.
+					lastCursorRow = row;
+					row += reserved;
+					continue;
+				}
+				buffer += `\x1b[${row + 1};1H\x1b[2K`;
+				buffer += line;
+				lastCursorRow = row;
+				row++;
+			}
+		}
+
+		buffer += "\x1b[?2026l"; // End synchronized output
+		this.terminal.write(buffer);
+
+		this.cursorRow = Math.max(0, frame.length - 1);
+		this.hardwareCursorRow = lastCursorRow;
+		this.positionHardwareCursor(cursorPos, frame.length);
+
+		this.previousLines = frame;
+		this.previousRawFrameLines = rawFrameLines;
+		this.previousFrameLineImageIds = frameLineImageIds;
+		this.previousKittyImageIds = frameKittyImageIds;
+		this.previousWidth = width;
+		this.previousHeight = height;
+	}
+
+	/**
 	 * Find and extract cursor position from rendered lines.
 	 * Searches for CURSOR_MARKER, calculates its position, and strips it from the output.
 	 * Only scans the bottom terminal height lines (visible viewport).
@@ -1251,11 +2882,9 @@ export class TUI extends Container {
 			const line = lines[row]!;
 			const markerIndex = line.indexOf(CURSOR_MARKER);
 			if (markerIndex !== -1) {
-				// Calculate visual column (width of text before marker)
 				const beforeMarker = line.slice(0, markerIndex);
 				const col = visibleWidth(beforeMarker);
 
-				// Strip marker from the line
 				lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length);
 
 				return { row, col };
@@ -1266,6 +2895,18 @@ export class TUI extends Container {
 
 	private doRender(): void {
 		if (this.stopped) return;
+		// A completed render means layout may have changed; the mouse-motion
+		// dedupe keys its cached row translation on this epoch.
+		this.renderEpoch += 1;
+		// Latch and clear: fullscreen frames are recomposed every render, so a
+		// pending collapse request is meaningless there and must not leak into
+		// a later inline frame after a mode switch.
+		const collapseRequested = this.collapseRenderRequested;
+		this.collapseRenderRequested = false;
+		if (this.fullscreen) {
+			this.doFullscreenRender();
+			return;
+		}
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
@@ -1280,10 +2921,8 @@ export class TUI extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
-		// Render all components to get new lines
 		let newLines = this.render(width);
 
-		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
 			newLines = this.compositeOverlays(newLines, width, height);
 		}
@@ -1330,7 +2969,6 @@ export class TUI extends Container {
 		}
 		newLines = processedLines;
 
-		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
@@ -1359,7 +2997,6 @@ export class TUI extends Container {
 			this.terminal.write(buffer);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
-			// Reset max lines when clearing, otherwise track growth
 			if (clear) {
 				this.maxLinesRendered = newLines.length;
 			} else {
@@ -1367,6 +3004,67 @@ export class TUI extends Container {
 			}
 			const bufferLength = Math.max(height, newLines.length);
 			this.previousViewportTop = Math.max(0, bufferLength - height);
+			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.previousLines = newLines;
+			this.previousRawLines = rawLines;
+			this.previousLineImageIds = lineImageIds;
+			this.previousKittyImageIds = this.unionKittyImageIds(lineImageIds);
+			this.previousWidth = width;
+			this.previousHeight = height;
+		};
+
+		// Scrollback-preserving repaint for the collapse path (dialog/takeover
+		// close): rewrite the new frame's visible tail over the screen rows in
+		// place, then erase leftover rows below the new content with `\x1b[J`.
+		// Nothing is written above the viewport and the screen never scrolls,
+		// so the native scrollback survives — unlike fullRender(true), whose
+		// home-and-replay would either purge it (`\x1b[3J`) or duplicate the
+		// replayed head into it.
+		const collapseRender = (): void => {
+			this.fullRedrawCount += 1;
+			const collapseViewportTop = Math.max(0, newLines.length - height);
+			const visible = newLines.slice(collapseViewportTop, collapseViewportTop + height);
+			let buffer = "\x1b[?2026h"; // Begin synchronized output
+			buffer += this.deleteKittyImages(this.previousKittyImageIds);
+			// Move the hardware cursor to the viewport's top screen row. The
+			// clamp keeps the cursor inside the screen even if the tracked
+			// position drifted above the previous viewport.
+			const screenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+			if (screenRow > 0) buffer += `\x1b[${screenRow}A`;
+			buffer += "\r";
+			for (let i = 0; i < visible.length; i++) {
+				if (i > 0) buffer += "\r\n";
+				const line = visible[i]!;
+				const isImage = isImageLine(line);
+				const imageReservedRows = isImage ? this.getKittyImageReservedRows(visible, i) : 1;
+				if (imageReservedRows > 1 && imageReservedRows <= height) {
+					// Reserve (and clear) the image's rows before drawing the
+					// placement, mirroring the differential path.
+					buffer += "\x1b[2K";
+					for (let row = 1; row < imageReservedRows; row++) {
+						buffer += "\r\n\x1b[2K";
+					}
+					buffer += `\x1b[${imageReservedRows - 1}A`;
+					buffer += line;
+					buffer += `\x1b[${imageReservedRows - 1}B`;
+					i += imageReservedRows - 1;
+					continue;
+				}
+				buffer += "\x1b[2K"; // Erase the old row before overwriting it
+				buffer += line;
+			}
+			// Blank leftover rows below the new content. `\x1b[J` erases from
+			// the cursor to the end of the screen only — scrollback is untouched.
+			if (visible.length < height) {
+				buffer += "\x1b[J";
+			}
+			buffer += "\x1b[?2026l"; // End synchronized output
+			this.terminal.write(buffer);
+			this.cursorRow = Math.max(0, newLines.length - 1);
+			this.hardwareCursorRow = collapseViewportTop + Math.max(0, visible.length - 1);
+			// The screen now holds exactly the new frame's visible region.
+			this.maxLinesRendered = newLines.length;
+			this.previousViewportTop = collapseViewportTop;
 			this.positionHardwareCursor(cursorPos, newLines.length);
 			this.previousLines = newLines;
 			this.previousRawLines = rawLines;
@@ -1407,6 +3105,15 @@ export class TUI extends Container {
 			return;
 		}
 
+		// Collapse repaint (dialog/takeover close): the resize guards above keep
+		// their destructive full renders; here the frame history is intact, so
+		// repaint the viewport in place and keep the native scrollback.
+		if (collapseRequested) {
+			logRedraw("collapse repaint");
+			collapseRender();
+			return;
+		}
+
 		// Content shrunk below the working area and no overlays - re-render to clear empty rows
 		// (overlays need the padding, so only do this when no overlays are active)
 		// Configurable via setClearOnShrink() or PI_CLEAR_ON_SHRINK=0 env var
@@ -1416,7 +3123,6 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Find first and last changed lines
 		let firstChanged = -1;
 		let lastChanged = -1;
 		const maxLines = Math.max(newLines.length, this.previousLines.length);
@@ -1468,7 +3174,6 @@ export class TUI extends Container {
 			if (this.previousLines.length > newLines.length) {
 				let buffer = "\x1b[?2026h";
 				buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
-				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
 				if (targetRow < prevViewportTop) {
 					logRedraw(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
@@ -1523,7 +3228,6 @@ export class TUI extends Container {
 		}
 
 		// Render from first changed line to end
-		// Build buffer with all updates wrapped in synchronized output
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
 		buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
 		const prevViewportBottom = prevViewportTop + height - 1;
@@ -1541,7 +3245,6 @@ export class TUI extends Container {
 			hardwareCursorRow = moveTargetRow;
 		}
 
-		// Move cursor to first changed line (use hardwareCursorRow for actual position)
 		const lineDiff = computeLineDiff(moveTargetRow);
 		if (lineDiff > 0) {
 			buffer += `\x1b[${lineDiff}B`; // Move down
@@ -1584,7 +3287,6 @@ export class TUI extends Container {
 			buffer += line;
 		}
 
-		// Track where cursor ended up after rendering
 		let finalCursorRow = renderEnd;
 
 		// If we had more lines before, clear them and move cursor back
@@ -1634,10 +3336,8 @@ export class TUI extends Container {
 			fs.writeFileSync(debugPath, debugData);
 		}
 
-		// Write entire buffer at once
 		this.terminal.write(buffer);
 
-		// Track cursor position for next render
 		// cursorRow tracks end of content (for viewport calculation)
 		// hardwareCursorRow tracks actual terminal cursor position (for movement)
 		this.cursorRow = Math.max(0, newLines.length - 1);
@@ -1668,11 +3368,9 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Clamp cursor position to valid range
 		const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1));
 		const targetCol = Math.max(0, cursorPos.col);
 
-		// Move cursor from current position to target
 		const rowDelta = targetRow - this.hardwareCursorRow;
 		let buffer = "";
 		if (rowDelta > 0) {

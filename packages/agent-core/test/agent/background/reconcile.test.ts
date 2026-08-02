@@ -221,4 +221,52 @@ describe('BackgroundManager — loadFromDisk + reconcile', () => {
     );
     expect(agent.emittedEvents).toEqual([]);
   });
+
+  it('marks a persisted running shell session lost and injects the rebuild notification', async () => {
+    // RFC unified-exec-pty §3.5 v2: a session persisted as running died with
+    // the previous CLI process; resume must tell the model to rebuild it with
+    // ExecSession (sessions never come back by themselves).
+    await persistence.writeTask({
+      taskId: 'pty-lost0000',
+      kind: 'pty-session',
+      command: 'bash',
+      description: 'Session: bash',
+      pid: 4242,
+      exitCode: null,
+      detached: true,
+      startedAt: 1_700_000_000,
+      endedAt: null,
+      status: 'running',
+    });
+    const { agent, manager } = createBackgroundManager({ sessionDir });
+
+    await manager.loadFromDisk();
+    await manager.reconcile();
+
+    expect(manager.getTask('pty-lost0000')).toMatchObject({
+      taskId: 'pty-lost0000',
+      kind: 'pty-session',
+      status: 'lost',
+    });
+    expect(agent.context.appendUserMessage).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining('task.lost'),
+        }),
+      ],
+      expect.objectContaining({
+        kind: 'background_task',
+        taskId: 'pty-lost0000',
+        status: 'lost',
+      }),
+    );
+    const [content] = agent.context.appendUserMessage.mock.calls[0] as [
+      [{ type: 'text'; text: string }],
+      ...unknown[],
+    ];
+    expect(content[0].text).toContain('was lost with the previous CLI process');
+    expect(content[0].text).toContain('ExecSession');
+    expect(content[0].text).toContain('rebuild');
+  });
 });

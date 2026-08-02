@@ -1,7 +1,7 @@
 /**
  * Agent-root resolution primitives: user, project, and configured discovery
  * roots, mirroring the skill scanner's directory conventions
- * (`skills` ↔ `agents`, `.kimi-code` ↔ `.agents`).
+ * (`skills` ↔ `agents`, `.cloud-code` ↔ `.agents`).
  *
  * Ported from the v2 engine (`packages/agent-core-v2/src/app/agentFileCatalog/agentRoots.ts`)
  * — keep the two in sync: discovery-root conventions must land in both engines.
@@ -17,11 +17,11 @@ export interface AgentRootWarn {
   (message: string, error?: unknown): void;
 }
 
-// Relative to brandHomeDir, which already IS the brand data dir (~/.kimi-code
-// or $KIMI_CODE_HOME) — no '.kimi-code' segment here, or it would nest twice.
+// Relative to brandHomeDir, which already IS the brand data dir (~/.cloud-code
+// or $CLOUD_CODE_HOME) — no '.cloud-code' segment here, or it would nest twice.
 const USER_BRAND_DIRS = ['agents'] as const;
 const USER_GENERIC_DIRS = ['.agents/agents'] as const;
-const PROJECT_BRAND_DIRS = ['.kimi-code/agents'] as const;
+const PROJECT_BRAND_DIRS = ['.cloud-code/agents'] as const;
 const PROJECT_GENERIC_DIRS = ['.agents/agents'] as const;
 
 export async function userAgentRoots(

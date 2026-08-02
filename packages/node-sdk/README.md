@@ -1,8 +1,8 @@
-# @moonshot-ai/kimi-code-sdk
+# @cloud-code/sdk
 
-The TypeScript SDK for Kimi Code
+The TypeScript SDK for Cloud Code CLI
 
-Part of the [Kimi Code](https://github.com/MoonshotAI/kimi-code) monorepo.
+Part of the Cloud Code CLI monorepo.
 
 See the main repository for documentation, issues, and contribution guidelines.
 

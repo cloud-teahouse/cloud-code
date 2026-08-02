@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { KimiConfig } from '@moonshot-ai/agent-core';
-import { createKimiDefaultHeaders, KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
+import type { CloudCodeConfig } from '@cloud-code/agent-core';
+import { createKimiDefaultHeaders, CLOUD_CODE_PLATFORM } from '@cloud-code/oauth';
 
 import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 import { SDKRpcClient } from '#/index';
@@ -14,7 +14,7 @@ import { TEST_IDENTITY } from './test-identity';
 const tempDirs: string[] = [];
 
 function resolveRuntimeProvider(options: {
-  readonly config: KimiConfig;
+  readonly config: CloudCodeConfig;
   readonly model?: string;
   readonly kimiRequestHeaders?: Record<string, string>;
 }) {
@@ -57,7 +57,7 @@ describe('runtime provider identity headers', () => {
 
     try {
       expect(core.kimiRequestHeaders).toMatchObject({
-        'User-Agent': 'kimi-code-cli/0.0.0-test (web-runtime)',
+        'User-Agent': 'cloud-code-cli/0.0.0-test (web-runtime)',
         'X-Msh-Version': '0.0.0-test',
       });
     } finally {
@@ -65,7 +65,7 @@ describe('runtime provider identity headers', () => {
     }
   });
 
-  it('adds kimi-code-cli User-Agent and complete X-Msh headers to the default Kimi provider', async () => {
+  it('adds cloud-code-cli User-Agent and complete X-Msh headers to the default Kimi provider', async () => {
     const homeDir = await makeTempDir();
     const kimiRequestHeaders = createKimiDefaultHeaders({ homeDir, ...TEST_IDENTITY });
     const resolved = resolveRuntimeProvider({
@@ -91,8 +91,8 @@ describe('runtime provider identity headers', () => {
     expect(resolved.provider).toMatchObject({
       type: 'kimi',
       defaultHeaders: expect.objectContaining({
-        'User-Agent': 'kimi-code-cli/0.0.0-test',
-        'X-Msh-Platform': KIMI_CODE_PLATFORM,
+        'User-Agent': 'cloud-code-cli/0.0.0-test',
+        'X-Msh-Platform': CLOUD_CODE_PLATFORM,
         'X-Msh-Version': '0.0.0-test',
         'X-Msh-Device-Name': expect.any(String),
         'X-Msh-Device-Model': expect.any(String),
@@ -105,7 +105,7 @@ describe('runtime provider identity headers', () => {
   it('lets Kimi provider customHeaders override default identity headers', async () => {
     const homeDir = await makeTempDir();
     const kimiRequestHeaders = createKimiDefaultHeaders({ homeDir, ...TEST_IDENTITY });
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: {
         kimi: {
           type: 'kimi',
@@ -137,7 +137,7 @@ describe('runtime provider identity headers', () => {
       defaultHeaders: expect.objectContaining({
         'User-Agent': 'Custom/1',
         'X-Msh-Version': 'override-version',
-        'X-Msh-Platform': KIMI_CODE_PLATFORM,
+        'X-Msh-Platform': CLOUD_CODE_PLATFORM,
       }),
     });
   });
@@ -145,7 +145,7 @@ describe('runtime provider identity headers', () => {
   it('applies only the User-Agent (no device identity headers) to non-Kimi providers', async () => {
     const homeDir = await makeTempDir();
     const kimiRequestHeaders = createKimiDefaultHeaders({ homeDir, ...TEST_IDENTITY });
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       providers: {
         openai: {
           type: 'openai',
@@ -173,7 +173,7 @@ describe('runtime provider identity headers', () => {
       type: 'openai',
       model: 'gpt-test',
       defaultHeaders: {
-        'User-Agent': `kimi-code-cli/${TEST_IDENTITY.version}`,
+        'User-Agent': `cloud-code-cli/${TEST_IDENTITY.version}`,
       },
     });
     // Device identity headers (`X-Msh-*`) stay Kimi-only — must not leak to

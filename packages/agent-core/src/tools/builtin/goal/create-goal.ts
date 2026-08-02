@@ -12,7 +12,7 @@ import type { ToolExecution } from '../../../loop/types';
 import type { ToolInputDisplay } from '../../display';
 import { toInputJsonSchema } from '../../support/input-schema';
 import DESCRIPTION from './create-goal.md?raw';
-import { goalForModel } from './serialize';
+import { goalForModel, goalSnapshotStructured } from './serialize';
 
 export const CreateGoalToolInputSchema = z
   .object({
@@ -25,6 +25,14 @@ export const CreateGoalToolInputSchema = z
       .boolean()
       .optional()
       .describe('Replace an existing active, paused, or blocked goal instead of failing.'),
+    sizeHint: z
+      .enum(['small', 'medium', 'large'])
+      .optional()
+      .describe(
+        'Your estimate of the goal scope: "small" = single-file change or one focused problem, ' +
+          '"medium" = multi-file feature, "large" = broad refactor or open-ended research. ' +
+          'Sets the default turn/token budget caps; an explicit budget always wins.',
+      ),
   })
   .strict();
 
@@ -50,10 +58,14 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
             objective: args.objective,
             completionCriterion: args.completionCriterion,
             replace: args.replace,
+            sizeHint: args.sizeHint,
           },
           'model',
         );
-        return { output: JSON.stringify({ goal: goalForModel(snapshot) }, null, 2) };
+        return {
+          output: JSON.stringify({ goal: goalForModel(snapshot) }, null, 2),
+          structured: goalSnapshotStructured(snapshot),
+        };
       },
     };
   }

@@ -590,6 +590,27 @@ describe('context-projector', () => {
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
   });
 
+  it('graduated_compaction.apply pinpoint_clear blanks like micro; tool_result_budget is a no-op', () => {
+    // The pinpoint_clear layer's cutoff semantics are identical to
+    // micro-compaction; the tool_result_budget layer is projection-side
+    // preview+path rewriting that vis does not reproduce (no homedir/config on
+    // the wire) — it must not blank.
+    const bigText = 'x'.repeat(2000);
+    const toolMsg = (id: string, text: string) => ({
+      role: 'tool' as const, content: [{ type: 'text' as const, text }], toolCalls: [], toolCallId: id,
+    });
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const, message: toolMsg('c1', bigText) }, raw: {} },
+      { lineNo: 3, data: { type: 'graduated_compaction.apply' as const, layer: 'tool_result_budget' as const, cutoff: 2 }, raw: {} },
+      { lineNo: 4, data: { type: 'graduated_compaction.apply' as const, layer: 'pinpoint_clear' as const, cutoff: 1 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    // budget layer ignored (cutoff 2 would have blanked both); pinpoint cutoff 1 blanks only index 0.
+    expect(proj.messages[0]!.message.content).toEqual([{ type: 'text', text: '[Old tool result content cleared]' }]);
+    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
+  });
+
   it('micro_compaction.apply counts think parts toward the min-content gate', () => {
     // A tool result dominated by a large `think` part (tiny text) must clear the
     // min-content gate and be blanked — mirroring agent-core's token estimator,
@@ -771,6 +792,16 @@ describe('context-projector', () => {
       { lineNo: 2, data: { type: 'swarm_mode.exit' as const }, raw: {} },
     ] as any);
     expect(exit.swarm.active).toBe(false);
+  });
+
+  it('tracks coordinator mode enter/exit', () => {
+    const enter = projectContext([{ lineNo: 1, data: { type: 'coordinator_mode.enter' as const }, raw: {} }] as any);
+    expect(enter.coordinator).toEqual({ active: true });
+    const exit = projectContext([
+      { lineNo: 1, data: { type: 'coordinator_mode.enter' as const }, raw: {} },
+      { lineNo: 2, data: { type: 'coordinator_mode.exit' as const }, raw: {} },
+    ] as any);
+    expect(exit.coordinator.active).toBe(false);
   });
 
   it('uses the latest step.end usage as the absolute context-token snapshot', () => {

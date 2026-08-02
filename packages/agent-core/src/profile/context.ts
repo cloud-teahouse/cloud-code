@@ -1,8 +1,11 @@
 import { dirname, join } from 'pathe';
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@cloud-code/kaos';
 
 import { normalizeAdditionalDirs } from '../config';
+import { loadMemoryForPrompt } from '../memory';
+import type { McpServerInstructions } from '../mcp/connection-manager';
+import { getGitStatusSnapshot } from '../session/git-context';
 import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
@@ -17,13 +20,25 @@ const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
 export interface PreparedSystemPromptContext
-  extends Pick<SystemPromptContext, 'cwdListing' | 'agentsMd' | 'additionalDirsInfo'> {
+  extends Pick<
+    SystemPromptContext,
+    'cwdListing' | 'agentsMd' | 'memory' | 'additionalDirsInfo' | 'gitStatus'
+  > {
   /** Present when the combined AGENTS.md content exceeds the recommended size. */
   readonly agentsMdWarning?: string;
 }
 
 export interface PrepareSystemPromptContextOptions {
   readonly additionalDirs?: readonly string[];
+  /**
+   * Collect a git status snapshot for the system prompt. Main-loop only:
+   * subagent profiles leave this off (explore agents get their own
+   * `<git-context>` prompt block instead). The snapshot is memoized per cwd
+   * for the process lifetime — see `getGitStatusSnapshot` — so repeat
+   * renders (post-compaction refresh) reuse the exact same text and the
+   * prompt-cache prefix stays stable.
+   */
+  readonly includeGitStatus?: boolean;
 }
 
 export async function prepareSystemPromptContext(
@@ -32,17 +47,39 @@ export async function prepareSystemPromptContext(
   options?: PrepareSystemPromptContextOptions,
 ): Promise<PreparedSystemPromptContext> {
   const additionalDirs = normalizeAdditionalDirs(options?.additionalDirs ?? []);
-  const [cwdListing, agentsMdResult, additionalDirsInfo] = await Promise.all([
+  const [cwdListing, agentsMdResult, additionalDirsInfo, gitStatus, memory] = await Promise.all([
     listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
     loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]),
     loadAdditionalDirsInfo(kaos, additionalDirs),
+    options?.includeGitStatus === true
+      ? getGitStatusSnapshot(kaos, kaos.getcwd())
+      : Promise.resolve(undefined),
+    loadMemoryForPrompt(kaos, brandHome),
   ]);
   return {
     cwdListing,
     agentsMd: agentsMdResult.content,
     additionalDirsInfo,
     agentsMdWarning: agentsMdResult.warning,
+    gitStatus: gitStatus === undefined || gitStatus.length === 0 ? undefined : gitStatus,
+    memory,
   };
+}
+
+/**
+ * Aggregate the instructions advertised by connected MCP servers into the
+ * body of the system prompt's `# MCP Server Instructions` section (one
+ * `## <name>` block per server, Claude Code style). Servers without
+ * instructions are skipped; the caller omits the whole section when this
+ * returns an empty string.
+ */
+export function formatMcpServerInstructions(
+  servers: readonly McpServerInstructions[],
+): string {
+  return servers
+    .filter((server) => server.instructions.trim().length > 0)
+    .map((server) => `## ${server.name}\n${server.instructions}`)
+    .join('\n\n');
 }
 
 export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<string> {
@@ -74,10 +111,10 @@ async function loadAgentsMdForRoots(
   };
 
   // User-level files come first so any project-level AGENTS.md overrides them.
-  // The brand dir follows KIMI_CODE_HOME (default ~/.kimi-code); the generic
+  // The brand dir follows CLOUD_CODE_HOME (default ~/.cloud-code); the generic
   // .agents dir stays under the real OS home so it can be shared across tools.
   const realHome = kaos.gethome();
-  const brandDir = brandHome ?? join(realHome, '.kimi-code');
+  const brandDir = brandHome ?? join(realHome, '.cloud-code');
   await collect(join(brandDir, 'AGENTS.md'));
 
   // Generic user-level dir (.agents) matches skill discovery.
@@ -96,7 +133,7 @@ async function loadAgentsMdForRoots(
     const dirs = dirsRootToLeaf(rootKaos, rootWorkDir, projectRoot);
 
     for (const dir of dirs) {
-      await collect(join(dir, '.kimi-code', 'AGENTS.md'));
+      await collect(join(dir, '.cloud-code', 'AGENTS.md'));
       for (const fileName of ['AGENTS.md', 'agents.md']) {
         if (await collect(join(dir, fileName))) break;
       }

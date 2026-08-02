@@ -14,6 +14,13 @@
  *   - `humanSchedule` — best-effort plain-English rendering via
  *                       `cronToHuman`; falls back to the raw `cron`
  *                       string if the expression can't be parsed.
+ *   - `source`        — `session` for session-scoped tasks, `project`
+ *                       for durable tasks shared through the project's
+ *                       `.cloud-code/scheduled_tasks.json`. Project
+ *                       tasks this session does not own (and therefore
+ *                       never adopted into memory) are merged in from
+ *                       the file so the listing is complete in every
+ *                       session of the project.
  *   - `nextFireAt`    — post-jitter local ISO timestamp with offset,
  *                       or the literal
  *                       string `null` when there is no fire in the
@@ -47,9 +54,14 @@ import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import {
+  computeNextCronRun,
   cronToHuman,
   parseCronExpression,
 } from './cron-expr';
+import {
+  jitteredNextCronRunMs,
+  oneShotJitteredNextCronRunMs,
+} from './jitter';
 import { formatLocalIsoWithOffset } from './time-format';
 import type { CronTask } from './types';
 import CRON_LIST_DESCRIPTION from './cron-list.md?raw';
@@ -106,14 +118,32 @@ export class CronListTool implements BuiltinTool<CronListInput> {
         // clock advances between the two.
         const tasks = this.manager.store.list();
         const nowMs = this.manager.clocks.wallNow();
-        const records = tasks.map((t) => this.renderRecord(t, nowMs));
-        const header = `cron_jobs: ${String(tasks.length)}`;
+        const records = tasks.map((t) =>
+          this.renderRecord(t, nowMs, this.schedulerNextFire(t)),
+        );
+
+        // Merge project-file tasks this session never adopted. Only the
+        // session that owns the project schedule holds them in memory;
+        // every other session in the project still needs to SEE them
+        // (and to be able to delete them), so they are read from the
+        // shared file and rendered as `source: project`.
+        const inMemoryIds = new Set(tasks.map((t) => t.id));
+        const fileTasks = await this.manager.listProjectFileTasks();
+        for (const task of fileTasks) {
+          if (inMemoryIds.has(task.id)) continue;
+          records.push(this.renderRecord(task, nowMs, this.pureNextFire(task, nowMs)));
+        }
+
+        const header = `cron_jobs: ${String(records.length)}`;
         if (records.length === 0) {
           return {
             output: `${header}\nNo cron jobs scheduled.`,
             isError: false,
+            display: { key: 'toolResult.cron.listEmpty' },
           };
         }
+        // Non-empty: the `key: value` record dump is model-facing data and
+        // renders raw (a structured list renderer is a separate concern).
         return {
           output: `${header}\n${records.join('\n---\n')}`,
           isError: false,
@@ -122,10 +152,19 @@ export class CronListTool implements BuiltinTool<CronListInput> {
     };
   }
 
-  private renderRecord(task: CronTask, nowMs: number): string {
+  private renderRecord(
+    task: CronTask,
+    nowMs: number,
+    nextFireMs: number | null,
+  ): string {
     // `recurring: undefined` is the canonical "repeat by default"
     // shape across the cron stack; only an explicit `false` opts out.
     const recurring = task.recurring !== false;
+
+    // Scope marker. Durable tasks (project file) are flagged by the
+    // manager both when they are adopted into memory and when they are
+    // merged in from disk below, so the flag alone decides the column.
+    const source = task.durable === true ? 'project' : 'session';
 
     // `ageDays` is purely informational — a non-finite age (e.g.
     // wallNow returned NaN from a misconfigured bench clock) is
@@ -137,23 +176,17 @@ export class CronListTool implements BuiltinTool<CronListInput> {
     const stale = this.manager.isStale(task);
 
     let humanSchedule = task.cron;
-    let nextFireAtIso = 'null';
     try {
-      const parsed = parseCronExpression(task.cron);
-      humanSchedule = cronToHuman(parsed);
-      // Delegate to the scheduler so the rendered ISO matches what the
-      // scheduler will actually deliver — including a pending jittered
-      // slot in the current period.
-      const nextFireMs = this.manager.getNextFireForTask(task.id);
-      if (nextFireMs !== null) {
-        nextFireAtIso = formatLocalIsoWithOffset(nextFireMs);
-      }
+      humanSchedule = cronToHuman(parseCronExpression(task.cron));
     } catch {
       // Malformed cron string — leave humanSchedule as the raw
-      // expression and nextFireAt as `null`. Should never happen for
-      // tasks that went through CronCreate (which validates), but
-      // defends against direct store inserts (tests).
+      // expression. Should never happen for tasks that went through
+      // CronCreate (which validates), but defends against direct store
+      // inserts (tests) and hand-edited project files.
     }
+
+    const nextFireAtIso =
+      nextFireMs === null ? 'null' : formatLocalIsoWithOffset(nextFireMs);
 
     return [
       `id: ${task.id}`,
@@ -163,10 +196,56 @@ export class CronListTool implements BuiltinTool<CronListInput> {
       // the record stays one `key: value` per line — otherwise a
       // multi-line prompt would corrupt the per-record parser.
       `prompt: ${JSON.stringify(previewPrompt(task.prompt))}`,
+      `source: ${source}`,
       `nextFireAt: ${nextFireAtIso}`,
       `recurring: ${String(recurring)}`,
       `ageDays: ${ageDays.toFixed(2)}`,
       `stale: ${String(stale)}`,
     ].join('\n');
+  }
+
+  /**
+   * Post-jitter next-fire for an IN-MEMORY task, delegated to the
+   * scheduler so the rendered ISO matches what the scheduler will
+   * actually deliver — including a pending jittered slot in the current
+   * period. Null when the task has no future fire.
+   */
+  private schedulerNextFire(task: CronTask): number | null {
+    try {
+      return this.manager.getNextFireForTask(task.id);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Post-jitter next-fire for a task this session does NOT hold in
+   * memory (project-file merge path). Recomputes from the cron
+   * expression with the same baseline rule the scheduler uses
+   * (`lastFiredAt` when sane, else `createdAt`) and the same jitter
+   * helpers, so a non-owner session renders the same instant the owner
+   * will actually fire.
+   */
+  private pureNextFire(task: CronTask, nowMs: number): number | null {
+    try {
+      const parsed = parseCronExpression(task.cron);
+      const cursor =
+        task.lastFiredAt !== undefined &&
+        Number.isFinite(task.lastFiredAt) &&
+        task.lastFiredAt <= nowMs
+          ? task.lastFiredAt
+          : undefined;
+      const baseFromMs =
+        cursor !== undefined && cursor > task.createdAt
+          ? cursor
+          : task.createdAt;
+      const ideal = computeNextCronRun(parsed, baseFromMs);
+      if (ideal === null) return null;
+      return task.recurring === false
+        ? oneShotJitteredNextCronRunMs(task, ideal)
+        : jitteredNextCronRunMs(task, parsed, ideal);
+    } catch {
+      return null;
+    }
   }
 }

@@ -336,11 +336,9 @@ describe("TUI resize handling", () => {
 
 			const initialRedraws = tui.fullRedraws;
 
-			// Resize height
 			terminal.resize(40, 15);
 			await terminal.waitForRender();
 
-			// Should have triggered a full redraw
 			assert.ok(tui.fullRedraws > initialRedraws, "Height change should trigger full redraw");
 
 			const viewport = terminal.getViewport();
@@ -391,11 +389,9 @@ describe("TUI resize handling", () => {
 
 		const initialRedraws = tui.fullRedraws;
 
-		// Resize width
 		terminal.resize(60, 10);
 		await terminal.waitForRender();
 
-		// Should have triggered a full redraw
 		assert.ok(tui.fullRedraws > initialRedraws, "Width change should trigger full redraw");
 
 		tui.stop();
@@ -410,25 +406,21 @@ describe("TUI content shrinkage", () => {
 		const component = new TestComponent();
 		tui.addChild(component);
 
-		// Start with many lines
 		component.lines = ["Line 0", "Line 1", "Line 2", "Line 3", "Line 4", "Line 5"];
 		tui.start();
 		await terminal.waitForRender();
 
 		const initialRedraws = tui.fullRedraws;
 
-		// Shrink to fewer lines
 		component.lines = ["Line 0", "Line 1"];
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		// Should have triggered a full redraw to clear empty rows
 		assert.ok(tui.fullRedraws > initialRedraws, "Content shrinkage should trigger full redraw");
 
 		const viewport = terminal.getViewport();
 		assert.ok(viewport[0]?.includes("Line 0"), "First line preserved");
 		assert.ok(viewport[1]?.includes("Line 1"), "Second line preserved");
-		// Lines below should be empty (cleared)
 		assert.strictEqual(viewport[2]?.trim(), "", "Line 2 should be cleared");
 		assert.strictEqual(viewport[3]?.trim(), "", "Line 3 should be cleared");
 
@@ -446,7 +438,6 @@ describe("TUI content shrinkage", () => {
 		tui.start();
 		await terminal.waitForRender();
 
-		// Shrink to single line
 		component.lines = ["Only line"];
 		tui.requestRender();
 		await terminal.waitForRender();
@@ -469,13 +460,11 @@ describe("TUI content shrinkage", () => {
 		tui.start();
 		await terminal.waitForRender();
 
-		// Shrink to empty
 		component.lines = [];
 		tui.requestRender();
 		await terminal.waitForRender();
 
 		const viewport = terminal.getViewport();
-		// All lines should be empty
 		assert.strictEqual(viewport[0]?.trim(), "", "Line 0 should be cleared");
 		assert.strictEqual(viewport[1]?.trim(), "", "Line 1 should be cleared");
 
@@ -490,12 +479,10 @@ describe("TUI differential rendering", () => {
 		const component = new TestComponent();
 		tui.addChild(component);
 
-		// Initial render: 5 identical lines
 		component.lines = ["Line 0", "Line 1", "Line 2", "Line 3", "Line 4"];
 		tui.start();
 		await terminal.waitForRender();
 
-		// Shrink to 3 lines, all identical to before (no content changes in remaining lines)
 		component.lines = ["Line 0", "Line 1", "Line 2"];
 		tui.requestRender();
 		await terminal.waitForRender();
@@ -507,7 +494,6 @@ describe("TUI differential rendering", () => {
 		await terminal.waitForRender();
 
 		const viewport = terminal.getViewport();
-		// Line 1 should show "CHANGED", proving cursor tracking was correct
 		assert.ok(viewport[1]?.includes("CHANGED"), `Expected "CHANGED" on line 1, got: ${viewport[1]}`);
 
 		tui.stop();
@@ -519,12 +505,10 @@ describe("TUI differential rendering", () => {
 		const component = new TestComponent();
 		tui.addChild(component);
 
-		// Initial render
 		component.lines = ["Header", "Working...", "Footer"];
 		tui.start();
 		await terminal.waitForRender();
 
-		// Simulate spinner animation - only middle line changes
 		const spinnerFrames = ["|", "/", "-", "\\"];
 		for (const frame of spinnerFrames) {
 			component.lines = ["Header", `Working ${frame}`, "Footer"];
@@ -564,7 +548,6 @@ describe("TUI differential rendering", () => {
 		tui.start();
 		await terminal.waitForRender();
 
-		// Change only first line
 		component.lines = ["CHANGED", "Line 1", "Line 2", "Line 3"];
 		tui.requestRender();
 		await terminal.waitForRender();
@@ -588,7 +571,6 @@ describe("TUI differential rendering", () => {
 		tui.start();
 		await terminal.waitForRender();
 
-		// Change only last line
 		component.lines = ["Line 0", "Line 1", "Line 2", "CHANGED"];
 		tui.requestRender();
 		await terminal.waitForRender();
@@ -612,7 +594,6 @@ describe("TUI differential rendering", () => {
 		tui.start();
 		await terminal.waitForRender();
 
-		// Change lines 1 and 3, keep 0, 2, 4 the same
 		component.lines = ["Line 0", "CHANGED 1", "Line 2", "CHANGED 3", "Line 4"];
 		tui.requestRender();
 		await terminal.waitForRender();
@@ -633,7 +614,6 @@ describe("TUI differential rendering", () => {
 		const component = new TestComponent();
 		tui.addChild(component);
 
-		// Start with content
 		component.lines = ["Line 0", "Line 1", "Line 2"];
 		tui.start();
 		await terminal.waitForRender();
@@ -641,12 +621,10 @@ describe("TUI differential rendering", () => {
 		let viewport = terminal.getViewport();
 		assert.ok(viewport[0]?.includes("Line 0"), "Initial content rendered");
 
-		// Clear to empty
 		component.lines = [];
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		// Add content back - this should work correctly even after empty state
 		component.lines = ["New Line 0", "New Line 1"];
 		tui.requestRender();
 		await terminal.waitForRender();
@@ -988,5 +966,166 @@ describe("TUI steady-frame processed-line reuse", () => {
 			resetCapabilitiesCache();
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
 		}
+	});
+});
+
+describe("TUI collapse repaint (scrollback-preserving)", () => {
+	it("repaints a shrunk frame in place without purging the scrollback", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		// The tall frame scrolled: its head now lives in the native scrollback.
+		const scrollbackBefore = terminal.getScrollBuffer();
+		assert.ok(
+			scrollbackBefore.some((line) => line.includes("Line 0")),
+			"scrolled-off head should be in scrollback before the collapse",
+		);
+		terminal.clearWrites();
+
+		// Dialog-close shape: the frame shrinks and the viewport re-anchors.
+		component.lines = Array.from({ length: 7 }, (_, i) => `Line ${i}`);
+		tui.requestCollapseRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[3J"), "collapse repaint must not purge the scrollback");
+		assert.ok(!writes.includes("\x1b[2J"), "collapse repaint must not clear the whole screen");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 2", "Line 3", "Line 4", "Line 5", "Line 6"]);
+
+		const scrollbackAfter = terminal.getScrollBuffer();
+		assert.ok(
+			scrollbackAfter.some((line) => line.includes("Line 0")),
+			"scrolled-off head must survive the collapse repaint",
+		);
+		tui.stop();
+	});
+
+	it("replaces a full-screen takeover frame without stale rows or scrollback loss", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		// Takeover open (destructive today) swaps in a full-screen UI...
+		component.lines = Array.from({ length: 5 }, (_, i) => `Takeover ${i}`);
+		tui.requestRender(true);
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		// ...and the close restores the session tree (taller than the takeover).
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.requestCollapseRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[3J"), "takeover close must not purge the scrollback");
+		const viewport = terminal.getViewport();
+		assert.deepStrictEqual(viewport, ["Line 7", "Line 8", "Line 9", "Line 10", "Line 11"]);
+		for (const row of viewport) {
+			assert.ok(!row.includes("Takeover"), `stale takeover row on screen: ${row}`);
+		}
+		tui.stop();
+	});
+
+	it("blanks leftover rows below short content with an in-screen erase", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 8 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.lines = ["Line 0", "Line 1"];
+		tui.requestCollapseRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[3J"), "collapse repaint must not purge the scrollback");
+		assert.ok(writes.includes("\x1b[J"), "leftover rows should be erased to end of screen");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 0", "Line 1", "", "", ""]);
+		tui.stop();
+	});
+
+	it("keeps appends on the differential path after a collapse reset the viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 8 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		component.lines = ["Line 0", "Line 1"];
+		tui.requestCollapseRender();
+		await terminal.waitForRender();
+		const redrawsAfterCollapse = tui.fullRedraws;
+
+		component.lines = ["Line 0", "Line 1", "Line 2"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, redrawsAfterCollapse, "append should stay on the differential path");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 0", "Line 1", "Line 2", "", ""]);
+		tui.stop();
+	});
+
+	it("handles narrow terminals without scrollback purge or crash", async () => {
+		const terminal = new LoggingVirtualTerminal(6, 4);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 9 }, (_, i) => `S${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.lines = Array.from({ length: 4 }, (_, i) => `S${i}`);
+		tui.requestCollapseRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[3J"), "collapse repaint must not purge the scrollback");
+		assert.deepStrictEqual(terminal.getViewport(), ["S0", "S1", "S2", "S3"]);
+		tui.stop();
+	});
+
+	it("requestRender(true) keeps the destructive clear for session resets", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.lines = ["Welcome"];
+		tui.requestRender(true);
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[3J"), "force render must keep purging the scrollback");
+		assert.ok(
+			!terminal.getScrollBuffer().some((line) => line.includes("Line 0")),
+			"force render must wipe the scrolled-off head",
+		);
+		assert.deepStrictEqual(terminal.getViewport()[0], "Welcome");
+		tui.stop();
 	});
 });

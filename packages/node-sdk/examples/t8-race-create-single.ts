@@ -1,13 +1,13 @@
 // One creator: meant to run twice as separate processes simultaneously.
-import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import { createCloudCodeHarness } from '@cloud-code/sdk';
 
 const workDir = process.argv[2]!;
 const homeDir = process.argv[3]!;
 const sessionId = process.argv[4]!;
 const label = process.argv[5] ?? 'P';
 
-const identity: any = { productName: 'kimi-code-cli', version: '0.0.1-test', platform: 'kimi_code_cli' };
-const h = createKimiHarness({ identity, homeDir });
+const identity: any = { userAgentProduct: 'cloud-code-cli', version: '0.0.1-test', platform: 'kimi_code_cli' };
+const h = createCloudCodeHarness({ identity, homeDir });
 
 try {
   const s = await h.createSession({ workDir, id: sessionId, model: 'kimi-code/kimi-for-coding' });

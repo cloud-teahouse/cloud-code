@@ -2,18 +2,22 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
 import { applySecondaryModelConfig, stripSecondaryModelConfig } from './secondary-model';
 import {
-  KimiConfigSchema,
+  CloudCodeConfigSchema,
   formatConfigValidationError,
   getDefaultConfig,
   type BackgroundConfig,
+  type BehaviorRemindersConfig,
   type ExperimentalConfig,
+  type GoalConfig,
+  type GuardianConfig,
+  type DebugConfig,
   type HookDefConfig,
   type ImageConfig,
-  type KimiConfig,
+  type CloudCodeConfig,
   type LoopControl,
   type McpConfig,
   type ModelAlias,
@@ -21,8 +25,11 @@ import {
   type OAuthRef,
   type PermissionConfig,
   type ProviderConfig,
+  type SandboxConfig,
   type SecondaryModelConfig,
   type ServicesConfig,
+  type ShellSessionConfig,
+  type SnapshotConfig,
   type SubagentConfig,
   type ThinkingConfig,
   validateConfig,
@@ -39,7 +46,7 @@ function snakeToCamel(str: string): string {
   return str.replaceAll(/_([a-z])/g, (_, ch: string) => ch.toUpperCase());
 }
 
-function camelToSnake(str: string): string {
+export function camelToSnake(str: string): string {
   return str.replaceAll(/[A-Z]/g, (ch: string) => `_${ch.toLowerCase()}`);
 }
 
@@ -47,10 +54,10 @@ function camelToSnake(str: string): string {
 /*  Read / parse                                                       */
 /* ------------------------------------------------------------------ */
 
-const DEFAULT_CONFIG_FILE_TEXT = `# ~/.kimi-code/config.toml
-# Runtime settings for Kimi Code.
+const DEFAULT_CONFIG_FILE_TEXT = `# ~/.cloud-code/config.toml
+# Runtime settings for Cloud Code CLI.
 # This file starts empty so built-in defaults can apply.
-# Login will populate managed Kimi provider and model entries.
+# Login will populate managed provider and model entries.
 `;
 
 export async function ensureConfigFile(filePath: string): Promise<void> {
@@ -67,7 +74,7 @@ export async function ensureConfigFile(filePath: string): Promise<void> {
   }
 }
 
-export function readConfigFile(filePath: string): KimiConfig {
+export function readConfigFile(filePath: string): CloudCodeConfig {
   if (!existsSync(filePath)) {
     return getDefaultConfig();
   }
@@ -81,14 +88,14 @@ export function readConfigFile(filePath: string): KimiConfig {
  * sections). Re-throws validation failures with a short actionable message —
  * UIs surface it directly — instead of the raw validation details.
  */
-export function readConfigFileForUpdate(filePath: string): KimiConfig {
+export function readConfigFileForUpdate(filePath: string): CloudCodeConfig {
   try {
     return readConfigFile(filePath);
   } catch (error) {
-    if (error instanceof KimiError && error.code === ErrorCodes.CONFIG_INVALID) {
-      throw new KimiError(
+    if (error instanceof CloudCodeError && error.code === ErrorCodes.CONFIG_INVALID) {
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
-        `Cannot change settings while ${filePath} is invalid — fix it first (run \`kimi doctor\` for details).`,
+        `Cannot change settings while ${filePath} is invalid — fix it first (run \`cloudcode doctor\` for details).`,
         { cause: error },
       );
     }
@@ -105,12 +112,12 @@ export function readConfigFileForUpdate(filePath: string): KimiConfig {
 export function loadRuntimeConfig(
   filePath: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
-): KimiConfig {
+): CloudCodeConfig {
   return applySecondaryModelConfig(applyEnvModelConfig(readConfigFile(filePath), env), env);
 }
 
 export interface RuntimeConfigLoadResult {
-  readonly config: KimiConfig;
+  readonly config: CloudCodeConfig;
   /** Problems in config.toml itself; non-empty means parts (or all) of the file were ignored. */
   readonly fileWarnings: readonly string[];
   /** Problems applying KIMI_MODEL_* env overrides; the overlay was skipped. */
@@ -122,7 +129,7 @@ export interface RuntimeConfigLoadResult {
    * an actionable parse error. Mid-run reloads ignore it and keep the last
    * good config instead.
    */
-  readonly fileError?: KimiError;
+  readonly fileError?: CloudCodeError;
 }
 
 /**
@@ -139,14 +146,14 @@ export function loadRuntimeConfigSafe(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): RuntimeConfigLoadResult {
   const fileWarnings: string[] = [];
-  let fileError: KimiError | undefined;
+  let fileError: CloudCodeError | undefined;
   let config = getDefaultConfig();
 
   let text: string | undefined;
   try {
     text = existsSync(filePath) ? readFileSync(filePath, 'utf-8') : undefined;
   } catch (error) {
-    fileError = new KimiError(
+    fileError = new CloudCodeError(
       ErrorCodes.CONFIG_INVALID,
       `Failed to read ${filePath}: ${describeUnknownError(error)}`,
       { cause: error },
@@ -161,7 +168,7 @@ export function loadRuntimeConfigSafe(
     } catch (error) {
       // Same message as the strict parser, code frame included, so failing
       // startup points straight at the offending line.
-      fileError = new KimiError(
+      fileError = new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Invalid TOML in ${filePath}: ${describeUnknownError(error)}`,
         { cause: error },
@@ -174,7 +181,7 @@ export function loadRuntimeConfigSafe(
       transformed['raw'] = raw;
       const salvaged = salvageConfigData(transformed);
       if (salvaged.config === undefined) {
-        fileError = new KimiError(
+        fileError = new CloudCodeError(
           ErrorCodes.CONFIG_INVALID,
           `Invalid configuration in ${filePath}: ${formatConfigValidationError(salvaged.error)}`,
           { cause: salvaged.error },
@@ -186,7 +193,7 @@ export function loadRuntimeConfigSafe(
         config = salvaged.config;
         if (salvaged.dropped.length > 0) {
           fileWarnings.push(
-            `Ignored invalid config in ${filePath}: ${salvaged.dropped.join(', ')}. Run \`kimi doctor\` for details.`,
+            `Ignored invalid config in ${filePath}: ${salvaged.dropped.join(', ')}. Run \`cloud-code doctor\` for details.`,
           );
         }
       }
@@ -211,7 +218,7 @@ export function loadRuntimeConfigSafe(
 const ENTRY_KEYED_SECTIONS = new Set(['providers', 'models']);
 
 interface SalvageResult {
-  readonly config: KimiConfig | undefined;
+  readonly config: CloudCodeConfig | undefined;
   readonly dropped: readonly string[];
   readonly error?: unknown;
 }
@@ -219,7 +226,7 @@ interface SalvageResult {
 function salvageConfigData(transformed: Record<string, unknown>): SalvageResult {
   const dropped: string[] = [];
   for (;;) {
-    const result = KimiConfigSchema.safeParse(transformed);
+    const result = CloudCodeConfigSchema.safeParse(transformed);
     if (result.success) {
       return { config: result.data, dropped };
     }
@@ -269,7 +276,7 @@ function describeTomlSyntaxError(error: unknown): string {
   return firstLine;
 }
 
-export function parseConfigString(tomlText: string, filePath = 'config.toml'): KimiConfig {
+export function parseConfigString(tomlText: string, filePath = 'config.toml'): CloudCodeConfig {
   if (tomlText.trim().length === 0) {
     return getDefaultConfig();
   }
@@ -278,7 +285,7 @@ export function parseConfigString(tomlText: string, filePath = 'config.toml'): K
   try {
     data = parseToml(tomlText) as Record<string, unknown>;
   } catch (error) {
-    throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid TOML in ${filePath}: ${error instanceof Error ? error.message : String(error)}`, {
+    throw new CloudCodeError(ErrorCodes.CONFIG_INVALID, `Invalid TOML in ${filePath}: ${error instanceof Error ? error.message : String(error)}`, {
       cause: error,
     });
   }
@@ -286,15 +293,15 @@ export function parseConfigString(tomlText: string, filePath = 'config.toml'): K
   return parseConfigData(data, filePath);
 }
 
-function parseConfigData(data: Record<string, unknown>, filePath: string): KimiConfig {
+function parseConfigData(data: Record<string, unknown>, filePath: string): CloudCodeConfig {
   const raw = cloneRecord(data);
   const transformed = transformTomlData(data);
   transformed['raw'] = raw;
 
   try {
-    return KimiConfigSchema.parse(transformed);
+    return CloudCodeConfigSchema.parse(transformed);
   } catch (error) {
-    throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid configuration in ${filePath}: ${formatConfigValidationError(error)}`, {
+    throw new CloudCodeError(ErrorCodes.CONFIG_INVALID, `Invalid configuration in ${filePath}: ${formatConfigValidationError(error)}`, {
       cause: error,
     });
   }
@@ -317,16 +324,37 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformRecord(value, transformServiceData, snakeToCamel);
     } else if (targetKey === 'loopControl' && isPlainObject(value)) {
       result[targetKey] = transformLoopControlData(value);
+    } else if (targetKey === 'behaviorReminders' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'goal' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'background' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'image' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'snapshot' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'sandbox' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'shellSession' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'guardian' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'debug' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
       result[targetKey] = cloneRecord(value);
     } else if (targetKey === 'subagent' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'secondaryModel' && isPlainObject(value)) {
-      result[targetKey] = transformPlainObject(value);
+      const transformed = transformPlainObject(value);
+      // Fork compat: our first `[secondary_model]` used `effort`; the recipe
+      // field is now `default_effort`. Map the legacy key forward.
+      if (transformed['defaultEffort'] === undefined && typeof transformed['effort'] === 'string') {
+        transformed['defaultEffort'] = transformed['effort'];
+      }
+      delete transformed['effort'];
+      result[targetKey] = transformed;
     } else if (targetKey === 'mcp' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (!isPlainObject(value)) {
@@ -392,6 +420,15 @@ function transformPermissionData(data: Record<string, unknown>): Record<string, 
   appendPermissionRules(rules, raw['ask'], 'ask');
   if (rules.length > 0) {
     out['rules'] = rules;
+  }
+  // Scalar keys pass through unchanged (`wrapper_stripping` →
+  // `wrapperStripping`, `git_mutation` → `gitMutation` via
+  // transformPlainObject above).
+  if (raw['wrapperStripping'] !== undefined) {
+    out['wrapperStripping'] = raw['wrapperStripping'];
+  }
+  if (raw['gitMutation'] !== undefined) {
+    out['gitMutation'] = raw['gitMutation'];
   }
   return out;
 }
@@ -463,7 +500,7 @@ function transformLoopControlData(data: Record<string, unknown>): Record<string,
 /*  Write / stringify                                                  */
 /* ------------------------------------------------------------------ */
 
-export async function writeConfigFile(filePath: string, config: KimiConfig): Promise<void> {
+export async function writeConfigFile(filePath: string, config: CloudCodeConfig): Promise<void> {
   // Final guard: never persist the env-synthesized model/provider or the
   // secondary-model runtime view to disk, even if a caller passes back the
   // runtime config as a patch (see stripEnvModelConfig /
@@ -473,7 +510,7 @@ export async function writeConfigFile(filePath: string, config: KimiConfig): Pro
   await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`);
 }
 
-export function configToTomlData(config: KimiConfig): Record<string, unknown> {
+export function configToTomlData(config: CloudCodeConfig): Record<string, unknown> {
   const out = cloneRecord(config.raw);
 
   // Strip deprecated fields
@@ -484,7 +521,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   delete out['defaultThinking'];
 
   // Top-level scalar fields
-  const scalarFields: (keyof KimiConfig)[] = [
+  const scalarFields: (keyof CloudCodeConfig)[] = [
     'defaultProvider',
     'defaultModel',
     'planMode',
@@ -493,8 +530,9 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'defaultPlanMode',
     'mergeAllAvailableSkills',
     'extraSkillDirs',
+    'serviceTier',
+    'outputStyle',
     'extraAgentDirs',
-    'telemetry',
   ];
   for (const key of scalarFields) {
     setDefined(out, camelToSnake(key), config[key]);
@@ -505,11 +543,18 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'thinking', config.thinking, thinkingToToml);
   setSection(out, 'services', config.services, servicesToToml);
   setSection(out, 'loop_control', config.loopControl, loopControlToToml);
+  setSection(out, 'behavior_reminders', config.behaviorReminders, behaviorRemindersToToml);
+  setSection(out, 'goal', config.goal, goalToToml);
   setSection(out, 'background', config.background, backgroundToToml);
   setSection(out, 'subagent', config.subagent, subagentToToml);
   setSection(out, 'secondary_model', config.secondaryModel, secondaryModelToToml);
   setSection(out, 'mcp', config.mcp, mcpToToml);
   setSection(out, 'image', config.image, imageToToml);
+  setSection(out, 'snapshot', config.snapshot, snapshotToToml);
+  setSection(out, 'sandbox', config.sandbox, sandboxToToml);
+  setSection(out, 'shell_session', config.shellSession, shellSessionToToml);
+  setSection(out, 'guardian', config.guardian, guardianToToml);
+  setSection(out, 'debug', config.debug, debugToToml);
   setSection(out, 'experimental', config.experimental, experimentalToToml);
   setSection(out, 'permission', config.permission, permissionToToml);
   setHooks(out, config.hooks);
@@ -627,6 +672,8 @@ function permissionToToml(
   } else {
     delete out['rules'];
   }
+  setDefined(out, 'wrapper_stripping', permission.wrapperStripping);
+  setDefined(out, 'git_mutation', permission.gitMutation);
   return out;
 }
 
@@ -680,6 +727,25 @@ function loopControlToToml(
   return out;
 }
 
+function behaviorRemindersToToml(
+  behaviorReminders: BehaviorRemindersConfig,
+  rawBehaviorReminders: unknown,
+): Record<string, unknown> {
+  const out = cloneRecord(rawBehaviorReminders);
+  for (const [key, value] of Object.entries(behaviorReminders)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function goalToToml(goal: GoalConfig, rawGoal: unknown): Record<string, unknown> {
+  const out = cloneRecord(rawGoal);
+  for (const [key, value] of Object.entries(goal)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
 function backgroundToToml(
   background: BackgroundConfig,
   rawBackground: unknown,
@@ -725,6 +791,49 @@ function mcpToToml(mcp: McpConfig, rawMcp: unknown): Record<string, unknown> {
 function imageToToml(image: ImageConfig, rawImage: unknown): Record<string, unknown> {
   const out = cloneRecord(rawImage);
   for (const [key, value] of Object.entries(image)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function snapshotToToml(snapshot: SnapshotConfig, rawSnapshot: unknown): Record<string, unknown> {
+  const out = cloneRecord(rawSnapshot);
+  for (const [key, value] of Object.entries(snapshot)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function sandboxToToml(sandbox: SandboxConfig, rawSandbox: unknown): Record<string, unknown> {
+  const out = cloneRecord(rawSandbox);
+  for (const [key, value] of Object.entries(sandbox)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function shellSessionToToml(
+  shellSession: ShellSessionConfig,
+  rawShellSession: unknown,
+): Record<string, unknown> {
+  const out = cloneRecord(rawShellSession);
+  for (const [key, value] of Object.entries(shellSession)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function guardianToToml(guardian: GuardianConfig, rawGuardian: unknown): Record<string, unknown> {
+  const out = cloneRecord(rawGuardian);
+  for (const [key, value] of Object.entries(guardian)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function debugToToml(debug: DebugConfig, rawDebug: unknown): Record<string, unknown> {
+  const out = cloneRecord(rawDebug);
+  for (const [key, value] of Object.entries(debug)) {
     setDefined(out, camelToSnake(key), value);
   }
   return out;

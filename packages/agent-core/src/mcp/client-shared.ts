@@ -2,9 +2,9 @@ import { getCoreVersion } from '#/version';
 
 import type { MCPToolDefinition, MCPToolResult } from './types';
 
-export const KIMI_MCP_CLIENT_NAME = 'kimi-code';
+export const KIMI_MCP_CLIENT_NAME = 'cloud-code';
 // Resolved from agent-core's package.json so MCP servers see the real version
-// in `initialize` (used for compatibility checks, telemetry, debugging).
+// in `initialize` (used for compatibility checks and debugging).
 // `getCoreVersion()` falls back to '0.0.0' if the package.json read fails.
 export const KIMI_MCP_CLIENT_VERSION = getCoreVersion();
 
@@ -49,6 +49,7 @@ interface SdkListedTool {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema: Record<string, unknown>;
+  readonly _meta?: Record<string, unknown>;
 }
 
 export function toMcpToolDefinition(tool: SdkListedTool): MCPToolDefinition {
@@ -56,6 +57,7 @@ export function toMcpToolDefinition(tool: SdkListedTool): MCPToolDefinition {
     name: tool.name,
     description: tool.description ?? '',
     inputSchema: tool.inputSchema,
+    ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
   };
 }
 

@@ -8,11 +8,17 @@
  * names the cause.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { ErrorCodes, KimiError } from '../../src/errors';
+import {
+  APIProviderRateLimitError,
+  isRetryableGenerateError,
+} from '@cloud-code/kosong';
+
+import { ErrorCodes, CloudCodeError } from '../../src/errors';
 import type { Logger, LogPayload } from '../../src/logging';
-import type { LoopHooks } from '../../src/loop/index';
+import type { LLM, LLMChatResponse, LoopHooks } from '../../src/loop/index';
+import { runTurn as runTurnImpl } from '../../src/loop/index';
 import { makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { runTurn, runTurnExpectingThrow } from './fixtures/helpers';
 import { EchoTool } from './fixtures/tools';
@@ -81,7 +87,7 @@ describe('runTurn — error paths', () => {
     expect(entries).toEqual([]);
   });
 
-  it('throws KimiError(loop.max_steps_exceeded) with turn.interrupted{reason:"max_steps"} before the throw', async () => {
+  it('throws CloudCodeError(loop.max_steps_exceeded) with turn.interrupted{reason:"max_steps"} before the throw', async () => {
     const echo = new EchoTool();
     const { error, sink } = await runTurnExpectingThrow({
       maxSteps: 2,
@@ -93,8 +99,8 @@ describe('runTurn — error paths', () => {
       ],
     });
 
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(ErrorCodes.LOOP_MAX_STEPS_EXCEEDED);
+    expect(error).toBeInstanceOf(CloudCodeError);
+    expect((error as CloudCodeError).code).toBe(ErrorCodes.LOOP_MAX_STEPS_EXCEEDED);
     const interrupted = sink.byType('turn.interrupted');
     expect(interrupted.map((e) => e.reason)).toEqual(['max_steps']);
     expect(interrupted[0]?.attemptedSteps).toBe(2);
@@ -157,6 +163,51 @@ describe('runTurn — error paths', () => {
     expect(sink.count('step.begin')).toBe(1);
     expect(sink.count('step.end')).toBe(0);
     expect(sink.count('turn.interrupted')).toBe(1);
+  });
+
+  it('routes a failed attempt rate-limit snapshot from RunTurnInput.onRateLimit through the retry loop', async () => {
+    // A sustained 429 whose responses carry the Codex `x-codex-*` quota
+    // headers: the snapshot attached to the converted status error must
+    // reach the host callback on every failed attempt, not only after the
+    // next successful response.
+    const snapshot = {
+      planType: 'plus',
+      activeLimit: 'premium',
+      primary: { usedPercent: 100, windowMinutes: 300, resetsAt: 1900000000 },
+      secondary: null,
+      credits: null,
+      capturedAt: 1900000000000,
+    } as const;
+    const rateLimitError = (): APIProviderRateLimitError => {
+      // retryAfterMs=1 keeps the retry sleeps negligible.
+      const error = new APIProviderRateLimitError('rate limited', null, 1);
+      error.rateLimit = snapshot;
+      return error;
+    };
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      chat: async (): Promise<LLMChatResponse> => {
+        throw rateLimitError();
+      },
+    };
+    const onRateLimit = vi.fn();
+
+    await expect(
+      runTurnImpl({
+        turnId: 'turn-rl',
+        signal: new AbortController().signal,
+        llm,
+        buildMessages: async () => [],
+        dispatchEvent: async () => {},
+        maxRetryAttempts: 3,
+        onRateLimit,
+      }),
+    ).rejects.toMatchObject({ name: 'APIProviderRateLimitError' });
+
+    expect(onRateLimit).toHaveBeenCalledTimes(3);
+    expect(onRateLimit).toHaveBeenCalledWith(snapshot);
   });
 });
 

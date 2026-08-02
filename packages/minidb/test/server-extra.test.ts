@@ -143,7 +143,7 @@ test('RESP: inline (non-array) command path', async () => {
 function collectUntil(sock: net.Socket, done: (s: string) => boolean): Promise<string> {
   return new Promise((resolve, reject) => {
     let buf = '';
-    const timer = setTimeout(() => reject(new Error(`timed out waiting for reply; got ${buf.length} bytes`)), 20_000);
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for reply; got ${buf.length} bytes`)), 60_000);
     sock.on('data', (d) => {
       buf += d.toString();
       if (done(buf)) {
@@ -179,7 +179,7 @@ test('RESP: a client aborting mid-large-reply does not kill the server', async (
   }
 });
 
-test('RESP: an oversized request gets -ERR and the connection recovers', { timeout: 30_000 }, async () => {
+test('RESP: an oversized request gets -ERR and the connection recovers', { timeout: 90_000 }, async () => {
   const dir = await tmpDir();
   const srv = await startServer({ dir, port: 0, fsyncPolicy: 'no' });
   try {

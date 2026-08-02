@@ -8,7 +8,7 @@ import type {
 } from './types';
 
 /** Master switch: when truthy, forces every flag on (highest priority). */
-export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
+export const MASTER_ENV = 'CLOUD_CODE_EXPERIMENTAL_FLAG';
 
 /**
  * Pure, synchronous flag resolver. State comes entirely from (env, registry) and nothing is
@@ -16,7 +16,7 @@ export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
  * process env. Defaults to process.env + FLAG_DEFINITIONS; tests can inject a custom env / defs.
  *
  * Precedence (highest wins):
- *   L1 master switch KIMI_CODE_EXPERIMENTAL_FLAG → every flag is on
+ *   L1 master switch CLOUD_CODE_EXPERIMENTAL_FLAG → every flag is on
  *   L2 per-feature def.env (parseBooleanEnv, may force on or off)
  *   L3 config.toml [experimental] per-feature override
  *   L4 registry default
@@ -93,7 +93,7 @@ export class FlagResolver {
 
 /**
  * Compatibility accessor for callers that only need process-global env behavior.
- * Runtime code that belongs to a KimiCore/Session/Agent should use the scoped
+ * Runtime code that belongs to a CloudCodeCore/Session/Agent should use the scoped
  * resolver on that owner instead.
  */
 export const flags = new FlagResolver();

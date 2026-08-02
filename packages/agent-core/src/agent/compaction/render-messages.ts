@@ -1,4 +1,4 @@
-import type { Message } from '@moonshot-ai/kosong';
+import type { Message } from '@cloud-code/kosong';
 
 export function renderMessagesToText(messages: readonly Message[]): string {
   return messages.map((message, index) => renderMessageToText(message, index)).join('\n\n');

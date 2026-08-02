@@ -584,7 +584,52 @@ function parseEventType(eventTypeStr: string | undefined): KeyEventType {
 	return "press";
 }
 
+// Hoisted regexes (regex literals allocate a new RegExp object per evaluation).
+const CSI_U_REGEX = /^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$/;
+const ARROW_MODIFIER_REGEX = /^\x1b\[1;(\d+)(?::(\d+))?([ABCD])$/;
+const FUNCTIONAL_REGEX = /^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?~$/;
+const HOME_END_REGEX = /^\x1b\[1;(\d+)(?::(\d+))?([HF])$/;
+const MODIFY_OTHER_KEYS_REGEX = /^\x1b\[27;(\d+);(\d+)~$/;
+
+// Parse caches. A single keystroke is matched against dozens of keybindings
+// (Editor.handleInput alone calls kb.matches ~35 times), and each match
+// re-parses the same raw input with these regexes. The parsers are pure in
+// their string argument, so results are memoized; only short inputs are
+// cached (key sequences are a handful of bytes — long strings are paste
+// content or unrecognized blobs that would just churn the cache). FIFO
+// eviction mirrors the width cache in utils.ts.
+const PARSE_CACHE_SIZE = 256;
+const PARSE_CACHE_MAX_INPUT = 64;
+const kittySequenceCache = new Map<string, ParsedKittySequence | null>();
+const modifyOtherKeysCache = new Map<string, ParsedModifyOtherKeysSequence | null>();
+
+function cacheParseResult<T>(cache: Map<string, T>, key: string, value: T): void {
+	if (cache.size >= PARSE_CACHE_SIZE) {
+		const firstKey = cache.keys().next().value;
+		if (firstKey !== undefined) {
+			cache.delete(firstKey);
+		}
+	}
+	cache.set(key, value);
+}
+
 function parseKittySequence(data: string): ParsedKittySequence | null {
+	if (data.length <= PARSE_CACHE_MAX_INPUT) {
+		const cached = kittySequenceCache.get(data);
+		if (cached !== undefined) {
+			// Preserve the _lastEventType side effect of a fresh parse.
+			if (cached !== null) _lastEventType = cached.eventType;
+			return cached;
+		}
+	}
+	const parsed = parseKittySequenceUncached(data);
+	if (data.length <= PARSE_CACHE_MAX_INPUT) {
+		cacheParseResult(kittySequenceCache, data, parsed);
+	}
+	return parsed;
+}
+
+function parseKittySequenceUncached(data: string): ParsedKittySequence | null {
 	// CSI u format with alternate keys (flag 4):
 	// \x1b[<codepoint>u
 	// \x1b[<codepoint>;<mod>u
@@ -595,7 +640,7 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 	//
 	// With flag 2, event type is appended after modifier colon: 1=press, 2=repeat, 3=release
 	// With flag 4, alternate keys are appended after codepoint with colons
-	const csiUMatch = data.match(/^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$/);
+	const csiUMatch = data.match(CSI_U_REGEX);
 	if (csiUMatch) {
 		const codepoint = parseInt(csiUMatch[1]!, 10);
 		const shiftedKey = csiUMatch[2] && csiUMatch[2].length > 0 ? parseInt(csiUMatch[2], 10) : undefined;
@@ -607,7 +652,7 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 	}
 
 	// Arrow keys with modifier: \x1b[1;<mod>A/B/C/D or \x1b[1;<mod>:<event>A/B/C/D
-	const arrowMatch = data.match(/^\x1b\[1;(\d+)(?::(\d+))?([ABCD])$/);
+	const arrowMatch = data.match(ARROW_MODIFIER_REGEX);
 	if (arrowMatch) {
 		const modValue = parseInt(arrowMatch[1]!, 10);
 		const eventType = parseEventType(arrowMatch[2]);
@@ -617,7 +662,7 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 	}
 
 	// Functional keys: \x1b[<num>~ or \x1b[<num>;<mod>~ or \x1b[<num>;<mod>:<event>~
-	const funcMatch = data.match(/^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?~$/);
+	const funcMatch = data.match(FUNCTIONAL_REGEX);
 	if (funcMatch) {
 		const keyNum = parseInt(funcMatch[1]!, 10);
 		const modValue = funcMatch[2] ? parseInt(funcMatch[2], 10) : 1;
@@ -638,7 +683,7 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 	}
 
 	// Home/End with modifier: \x1b[1;<mod>H/F or \x1b[1;<mod>:<event>H/F
-	const homeEndMatch = data.match(/^\x1b\[1;(\d+)(?::(\d+))?([HF])$/);
+	const homeEndMatch = data.match(HOME_END_REGEX);
 	if (homeEndMatch) {
 		const modValue = parseInt(homeEndMatch[1]!, 10);
 		const eventType = parseEventType(homeEndMatch[2]);
@@ -694,11 +739,20 @@ function matchesKittySequence(data: string, expectedCodepoint: number, expectedM
 }
 
 function parseModifyOtherKeysSequence(data: string): ParsedModifyOtherKeysSequence | null {
-	const match = data.match(/^\x1b\[27;(\d+);(\d+)~$/);
-	if (!match) return null;
-	const modValue = parseInt(match[1]!, 10);
-	const codepoint = parseInt(match[2]!, 10);
-	return { codepoint, modifier: modValue - 1 };
+	if (data.length <= PARSE_CACHE_MAX_INPUT) {
+		const cached = modifyOtherKeysCache.get(data);
+		if (cached !== undefined) {
+			return cached;
+		}
+	}
+	const match = data.match(MODIFY_OTHER_KEYS_REGEX);
+	const parsed = match
+		? { codepoint: parseInt(match[2]!, 10), modifier: parseInt(match[1]!, 10) - 1 }
+		: null;
+	if (data.length <= PARSE_CACHE_MAX_INPUT) {
+		cacheParseResult(modifyOtherKeysCache, data, parsed);
+	}
+	return parsed;
 }
 
 /**
@@ -785,7 +839,23 @@ function formatKeyNameWithModifiers(keyName: string, modifier: number): string |
 	return mods.length > 0 ? `${mods.join("+")}+${keyName}` : keyName;
 }
 
+const parsedKeyIdCache = new Map<string, NonNullable<ReturnType<typeof parseKeyIdUncached>> | null>();
+
 function parseKeyId(
+	keyId: string,
+): { key: string; ctrl: boolean; shift: boolean; alt: boolean; super: boolean } | null {
+	// Key identifiers come from a small static set of keybindings (plus user
+	// config); each is re-parsed for every input event matched against it.
+	const cached = parsedKeyIdCache.get(keyId);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const parsed = parseKeyIdUncached(keyId);
+	cacheParseResult(parsedKeyIdCache, keyId, parsed);
+	return parsed;
+}
+
+function parseKeyIdUncached(
 	keyId: string,
 ): { key: string; ctrl: boolean; shift: boolean; alt: boolean; super: boolean } | null {
 	const parts = keyId.toLowerCase().split("+");

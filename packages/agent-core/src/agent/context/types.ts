@@ -1,7 +1,7 @@
-import type { ContentPart, Message } from '@moonshot-ai/kosong';
+import type { ContentPart, Message } from '@cloud-code/kosong';
 
 import type { SkillSource } from '../../skill';
-import type { ToolInputDisplay } from '../../tools/display';
+import type { ToolInputDisplay, ToolResultDisplayRef, ToolResultStructured } from '../../tools/display';
 import type { BackgroundTaskStatus } from '../background';
 
 export interface UserPromptOrigin {
@@ -70,6 +70,13 @@ export interface CronJobOrigin {
   readonly stale: boolean;
 }
 
+export interface MailboxOrigin {
+  readonly kind: 'mailbox';
+  readonly teamName: string;
+  readonly from: string;
+  readonly messageId: string;
+}
+
 export interface CronMissedOrigin {
   readonly kind: 'cron_missed';
   /** Number of one-shot tasks bundled into this missed-fire notification. */
@@ -99,6 +106,7 @@ export type PromptOrigin =
   | CronJobOrigin
   | CronMissedOrigin
   | HookResultOrigin
+  | MailboxOrigin
   | RetryOrigin;
 
 export type ContextMessage = Message & {
@@ -115,6 +123,20 @@ export type ContextMessage = Message & {
    * the provider boundary and stripped from the wire message itself.
    */
   readonly note?: string;
+  /**
+   * Localization pointer for the user-facing rendering of a tool result
+   * (`ExecutableToolResult.display`): rides history/replay so a resumed
+   * session renders the same localized text. UI-only — stripped before
+   * provider calls like every field outside `stripContextMetadata`.
+   */
+  readonly display?: ToolResultDisplayRef;
+  /**
+   * Structured outcome facts for a tool result
+   * (`ExecutableToolResult.structured`): rides history/replay so clients
+   * read fields instead of parsing the output text. UI-only — stripped
+   * before provider calls like every field outside `stripContextMetadata`.
+   */
+  readonly structured?: ToolResultStructured;
 };
 
 export interface UserMessageRecord {

@@ -5,7 +5,7 @@ import { InstantiationService } from '#/di/instantiationService';
 import { ServiceCollection } from '#/di/serviceCollection';
 
 /**
- * P0.5 — the container self-registers under `IInstantiationService`. Any
+ * The container self-registers under `IInstantiationService`. Any
  * `accessor.get(IInstantiationService)` returns the OWNING container —
  * root for invocations made on the root, child for invocations made on a
  * child — enabling factory and per-request-scope patterns without callers

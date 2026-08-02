@@ -1,7 +1,8 @@
-import type { AgentConfigData } from '#/agent/config';
+import type { AgentConfigData, ServiceTier } from '#/agent/config';
 import type { AgentContextData } from '#/agent/context';
 import type { BackgroundTaskInfo } from '#/agent/background';
 import type { CronTaskSnapshot } from '#/agent/cron';
+import type { SandboxStatusData } from '#/agent/sandbox-status';
 import type {
   GoalBudgetLimits,
   GoalBudgetReport,
@@ -15,19 +16,27 @@ import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm';
 import type { ToolDisclosure, ToolInfo } from '#/agent/tool';
-import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
+import type {
+  CloudCodeConfig,
+  CloudCodeConfigPatch,
+  McpServerConfig,
+  ModelAlias,
+  ProviderConfig,
+} from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type { GlobalMcpServerConfig } from '#/mcp/global-config';
-import type { ContentPart } from '@moonshot-ai/kosong';
-import type { SessionWarning } from '@moonshot-ai/protocol';
+import type { ContentPart } from '@cloud-code/kosong';
+import type { SessionWarning } from '@cloud-code/protocol';
 
 import type { PluginCommandDef, PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
+import type { OutputStyleSummary } from '#/profile/output-style';
 import type { UsageStatus } from './events';
 import type { WithAgentId, WithSessionId } from './types';
 
 export type { PluginCommandDef } from '#/plugin';
+export type { OutputStyleSummary } from '#/profile/output-style';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
@@ -35,7 +44,7 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
-export type { KimiConfig, KimiConfigPatch };
+export type { CloudCodeConfig, CloudCodeConfigPatch };
 
 export type TextPromptPart = Extract<ContentPart, { type: 'text' }>;
 export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
@@ -45,23 +54,20 @@ export type PromptInput = readonly PromptPart[];
 export type EmptyPayload = {};
 export type SessionMetadataPatch = Partial<Omit<SessionMeta, 'agents' | 'additionalDirs'>>;
 
-export interface ClientTelemetryInfo {
-  readonly id?: string | undefined;
-  readonly name?: string | undefined;
-  readonly version?: string | undefined;
-  readonly uiMode?: string | undefined;
-}
-
 export interface CreateSessionPayload {
   readonly id?: string | undefined;
   readonly workDir: string;
   readonly model?: string | undefined;
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;
+  /**
+   * Explicit fast-tier override for the new session (`'priority'`). When
+   * omitted, the session seeds from the persisted config.toml `service_tier`.
+   */
+  readonly serviceTier?: ServiceTier | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
-  readonly client?: ClientTelemetryInfo | undefined;
   readonly drainAgentTasksOnStop?: boolean;
   /** Main-agent profile name (`--agent`): a builtin or agentfile-defined profile. */
   readonly agentProfile?: string;
@@ -132,8 +138,8 @@ export interface ExportSessionPayload {
   readonly sessionId: string;
   readonly outputPath?: string | undefined;
   /**
-   * When true, the active global diagnostic log (`$KIMI_CODE_HOME/logs/kimi-code.log`)
-   * is copied into the zip at `logs/global/kimi-code.log`. Off by default to
+   * When true, the active global diagnostic log (`$CLOUD_CODE_HOME/logs/cloud-code.log`)
+   * is copied into the zip at `logs/global/cloud-code.log`. Off by default to
    * avoid bundling events from concurrent sessions / other projects.
    */
   readonly includeGlobalLog?: boolean | undefined;
@@ -233,9 +239,20 @@ export interface SteerPayload {
 }
 export interface CancelPayload {
   readonly turnId?: number;
+  /**
+   * Interrupt recall: the client cancelled before the turn produced any
+   * visible output and pulled the submitted text back for re-editing, so the
+   * turn's unanswered input is withdrawn from the context as the turn
+   * unwinds. Plain cancels leave the context untouched.
+   */
+  readonly withdrawInput?: boolean;
 }
 export interface SetThinkingPayload {
   readonly effort: string;
+}
+export interface SetServiceTierPayload {
+  /** `'priority'` enables the fast tier; `null` restores the default tier. */
+  readonly serviceTier: ServiceTier | null;
 }
 export interface SetPermissionPayload {
   readonly mode: PermissionMode;
@@ -258,6 +275,17 @@ export interface BeginCompactionPayload {
 }
 export interface UndoHistoryPayload {
   readonly count: number;
+}
+export interface RewindFilesPayload {
+  readonly count: number;
+}
+export interface RewindFilesResult {
+  /** The turn whose baseline the workspace was rewound to. */
+  readonly turnId: number;
+  /** Workspace-relative files the rewind attempted to restore or delete. */
+  readonly files: readonly string[];
+  /** Tree hash of the pre-rewind worktree, kept for a future redo. */
+  readonly preRewindTree: string;
 }
 export interface ImportContextPayload {
   /** Raw text supplied by the host. Core does not perform file I/O. */
@@ -309,6 +337,11 @@ export interface SkillSummary {
   readonly isSubSkill?: boolean | undefined;
 }
 
+export interface SetOutputStylePayload {
+  /** Style name to activate; `'default'` restores the stock prompt. */
+  readonly style: string;
+}
+
 export interface ActivateSkillPayload {
   readonly name: string;
   readonly args?: string | undefined;
@@ -330,10 +363,6 @@ export interface McpServerInfo {
   readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
   readonly toolCount: number;
   readonly error?: string;
-}
-
-export interface McpStartupMetrics {
-  readonly durationMs: number;
 }
 
 export interface ReconnectMcpServerPayload {
@@ -384,6 +413,14 @@ export interface InstallPluginPayload {
 export interface SetPluginEnabledPayload {
   readonly id: string;
   readonly enabled: boolean;
+  /**
+   * `user` (default) flips the install-level flag; `project` writes a
+   * project-scope override (`<projectRoot>/.cloud-code/plugins.json`) that
+   * wins for sessions whose workDir belongs to that project.
+   */
+  readonly scope?: 'user' | 'project';
+  /** Required when `scope` is `project` — used to resolve the project root. */
+  readonly workDir?: string;
 }
 
 export interface SetPluginMcpServerEnabledPayload {
@@ -442,7 +479,7 @@ export interface CreateGoalPayload {
   readonly replace?: boolean;
 }
 
-export interface GetKimiConfigPayload {
+export interface GetCloudCodeConfigPayload {
   readonly reload?: boolean;
 }
 
@@ -451,10 +488,42 @@ export interface ConfigDiagnostics {
   readonly warnings: readonly string[];
 }
 
-export type SetKimiConfigPayload = KimiConfigPatch;
+export type SetCloudCodeConfigPayload = CloudCodeConfigPatch;
 
 export interface RemoveKimiProviderPayload {
   readonly providerId: string;
+}
+
+export interface SetCloudCodeProviderPayload {
+  readonly providerId: string;
+  /**
+   * Wholesale replacement for `providers[providerId]` — unlike the
+   * deep-merging `setCloudCodeConfig`, absent fields are dropped, so edits
+   * can clear values (e.g. an anthropic provider's `baseUrl`).
+   */
+  readonly provider: ProviderConfig;
+}
+
+export interface SetCloudCodeModelPayload {
+  readonly alias: string;
+  /** Wholesale replacement for `models[alias]` (see SetCloudCodeProviderPayload). */
+  readonly model: ModelAlias;
+}
+
+export interface RemoveCloudCodeModelPayload {
+  readonly alias: string;
+}
+
+export interface SetCloudCodeSecondaryModelPayload {
+  /**
+   * Wholesale replacement for the `[secondary_model]` section (see
+   * SetCloudCodeProviderPayload): a present value replaces both fields, while
+   * an absent or blank value drops the section — subagent spawns with the
+   * 'secondary' keyword then fall back to the parent model.
+   */
+  readonly model?: string;
+  /** Thinking effort for the secondary model; absent/blank leaves it unset. */
+  readonly effort?: string;
 }
 
 export interface GetCronTasksResult {
@@ -468,7 +537,9 @@ export interface AgentAPI {
   steer: (payload: SteerPayload) => void;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => void;
+  rewindFiles: (payload: RewindFilesPayload) => Promise<RewindFilesResult>;
   setThinking: (payload: SetThinkingPayload) => void;
+  setServiceTier: (payload: SetServiceTierPayload) => void;
   setPermission: (payload: SetPermissionPayload) => void;
   setModel: (payload: SetModelPayload) => SetModelResult;
   getModel: (payload: EmptyPayload) => string;
@@ -478,6 +549,9 @@ export interface AgentAPI {
   enterSwarm: (payload: EnterSwarmPayload) => void;
   exitSwarm: (payload: EmptyPayload) => void;
   getSwarmMode: (payload: EmptyPayload) => boolean;
+  enterCoordinator: (payload: EmptyPayload) => void;
+  exitCoordinator: (payload: EmptyPayload) => void;
+  getCoordinatorMode: (payload: EmptyPayload) => boolean;
   beginCompaction: (payload: BeginCompactionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
   registerTool: (payload: RegisterToolPayload) => void;
@@ -500,6 +574,7 @@ export interface AgentAPI {
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
   getPermission: (payload: EmptyPayload) => PermissionData;
+  getSandboxStatus: (payload: EmptyPayload) => Promise<SandboxStatusData>;
   getPlan: (payload: EmptyPayload) => PlanData;
   getUsage: (payload: EmptyPayload) => UsageStatus;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
@@ -513,9 +588,10 @@ export interface SessionAPI extends AgentAPIWithId {
   updateSessionMetadata: (payload: UpdateSessionMetadataPayload) => void;
   getSessionMetadata: (payload: EmptyPayload) => SessionMeta;
   listSkills: (payload: EmptyPayload) => readonly SkillSummary[];
+  listOutputStyles: (payload: EmptyPayload) => readonly OutputStyleSummary[];
+  setOutputStyle: (payload: SetOutputStylePayload) => void;
   listPluginCommands: (payload: EmptyPayload) => readonly PluginCommandDef[];
   listMcpServers: (payload: EmptyPayload) => readonly McpServerInfo[];
-  getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
   getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
@@ -530,10 +606,14 @@ export interface CoreAPI extends SessionAPIWithId {
   applyPersistedSecondaryModel: (payload: EmptyPayload & { readonly sessionId: string }) => void;
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
   getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
-  getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
+  getCloudCodeConfig: (payload: GetCloudCodeConfigPayload) => CloudCodeConfig;
   getConfigDiagnostics: (payload: EmptyPayload) => ConfigDiagnostics;
-  setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
-  removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
+  setCloudCodeConfig: (payload: SetCloudCodeConfigPayload) => CloudCodeConfig;
+  removeCloudCodeProvider: (payload: RemoveKimiProviderPayload) => CloudCodeConfig;
+  setCloudCodeProvider: (payload: SetCloudCodeProviderPayload) => CloudCodeConfig;
+  setCloudCodeModel: (payload: SetCloudCodeModelPayload) => CloudCodeConfig;
+  removeCloudCodeModel: (payload: RemoveCloudCodeModelPayload) => CloudCodeConfig;
+  setCloudCodeSecondaryModel: (payload: SetCloudCodeSecondaryModelPayload) => CloudCodeConfig;
   listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];

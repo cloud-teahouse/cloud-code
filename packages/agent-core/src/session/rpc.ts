@@ -1,5 +1,5 @@
-import { ErrorCodes, KimiError } from '#/errors';
-import type { SessionWarning } from '@moonshot-ai/protocol';
+import { ErrorCodes, CloudCodeError } from '#/errors';
+import type { SessionWarning } from '@cloud-code/protocol';
 import type {
   ActivateSkillPayload,
   ActivatePluginCommandPayload,
@@ -18,7 +18,7 @@ import type {
   GetBackgroundPayload,
   ImportContextPayload,
   McpServerInfo,
-  McpStartupMetrics,
+  OutputStyleSummary,
   PromptPayload,
   RunShellCommandPayload,
   ReconnectMcpServerPayload,
@@ -27,10 +27,13 @@ import type {
   SessionAPI,
   SetActiveToolsPayload,
   SetModelPayload,
+  SetOutputStylePayload,
   SetPermissionPayload,
+  SetServiceTierPayload,
   SetThinkingPayload,
   SkillSummary,
   PluginCommandDef,
+  RewindFilesPayload,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -46,6 +49,7 @@ import {
   promptMetadataTextFromSkill,
   titleFromPromptMetadataText,
 } from './prompt-metadata';
+import { generateSessionTitle, SESSION_TITLE_TIMEOUT_MS } from './session-title';
 
 type AgentScopedPayload<T> = T & { agentId: string };
 
@@ -55,7 +59,7 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   async renameSession(payload: RenameSessionPayload): Promise<void> {
     const title = payload.title.trim();
     if (title.length === 0) {
-      throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
+      throw new CloudCodeError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
     }
     this.session.metadata = {
       ...this.session.metadata,
@@ -64,6 +68,9 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
       updatedAt: new Date().toISOString(),
     };
     await this.session.writeMetadata();
+    // Tail re-append so the wire's lite window picks the new title up even if
+    // no further prompt is sent before close.
+    await this.session.reAppendSessionMetadata();
   }
 
   async updateSessionMetadata(payload: UpdateSessionMetadataPayload): Promise<void> {
@@ -83,17 +90,20 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.listSkills();
   }
 
+  listOutputStyles(_payload: EmptyPayload): Promise<readonly OutputStyleSummary[]> {
+    return this.session.listOutputStyles();
+  }
+
+  setOutputStyle(payload: SetOutputStylePayload): Promise<void> {
+    return this.session.setOutputStyle(payload.style);
+  }
+
   listPluginCommands(_payload: EmptyPayload): readonly PluginCommandDef[] {
     return this.session.listPluginCommands();
   }
 
   listMcpServers(_payload: EmptyPayload): readonly McpServerInfo[] {
     return this.session.mcp.list();
-  }
-
-  async getMcpStartupMetrics(_payload: EmptyPayload): Promise<McpStartupMetrics> {
-    await this.session.mcp.waitForInitialLoad();
-    return { durationMs: this.session.mcp.initialLoadDurationMs() };
   }
 
   async reconnectMcpServer(payload: ReconnectMcpServerPayload): Promise<void> {
@@ -153,12 +163,20 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return (await this.getAgent(agentId)).undoHistory(payload);
   }
 
+  async rewindFiles({ agentId, ...payload }: AgentScopedPayload<RewindFilesPayload>) {
+    return (await this.getAgent(agentId)).rewindFiles(payload);
+  }
+
   async setModel({ agentId, ...payload }: AgentScopedPayload<SetModelPayload>) {
     return (await this.getAgent(agentId)).setModel(payload);
   }
 
   async setThinking({ agentId, ...payload }: AgentScopedPayload<SetThinkingPayload>) {
     return (await this.getAgent(agentId)).setThinking(payload);
+  }
+
+  async setServiceTier({ agentId, ...payload }: AgentScopedPayload<SetServiceTierPayload>) {
+    return (await this.getAgent(agentId)).setServiceTier(payload);
   }
 
   async setPermission({ agentId, ...payload }: AgentScopedPayload<SetPermissionPayload>) {
@@ -191,6 +209,18 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async getSwarmMode({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).getSwarmMode(payload);
+  }
+
+  async enterCoordinator({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).enterCoordinator(payload);
+  }
+
+  async exitCoordinator({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).exitCoordinator(payload);
+  }
+
+  async getCoordinatorMode({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getCoordinatorMode(payload);
   }
 
   async beginCompaction({ agentId, ...payload }: AgentScopedPayload<BeginCompactionPayload>) {
@@ -293,6 +323,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return (await this.getAgent(agentId)).getPermission(payload);
   }
 
+  async getSandboxStatus({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getSandboxStatus(payload);
+  }
+
   async getPlan({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).getPlan(payload);
   }
@@ -323,6 +357,9 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   private async updatePromptMetadata(lastPrompt: string | undefined): Promise<void> {
     if (lastPrompt === undefined) return;
 
+    // Absorb external listing-metadata changes (a rename from another process
+    // holding this session) before our whole-file write would clobber them.
+    await this.session.absorbExternalMetadata();
     const title = this.needUpdateEasyTitle(this.session.metadata)
       ? titleFromPromptMetadataText(lastPrompt)
       : undefined;
@@ -349,6 +386,56 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
         lastPrompt,
       },
     });
+    if (title !== undefined) {
+      // A title change is low-frequency and high-value for the lite reader's
+      // tail window; lastPrompt re-appends ride the close-time flush instead
+      // of growing the wire on every prompt.
+      await this.session.reAppendSessionMetadata();
+      this.refineSessionTitle(lastPrompt, title);
+    }
+  }
+
+  /**
+   * Best-effort AI title refinement: the truncated first-prompt title is
+   * already persisted, so this fire-and-forget side-channel call replaces it
+   * only when generation succeeds — any failure (no provider, transport,
+   * unparseable output) leaves the fallback in place. Never clobbers a title
+   * that changed while generation was in flight (user rename, /fork, or a
+   * later prompt's title).
+   */
+  private refineSessionTitle(lastPrompt: string, fallbackTitle: string): void {
+    void (async () => {
+      try {
+        const agent = await this.session.ensureAgentResumed('main');
+        const title = await generateSessionTitle(
+          agent,
+          lastPrompt,
+          AbortSignal.timeout(SESSION_TITLE_TIMEOUT_MS),
+        );
+        if (title === null) return;
+        // Absorb external changes before the never-clobber check: a rename
+        // that landed while generation was in flight must win over the
+        // generated title.
+        await this.session.absorbExternalMetadata();
+        const metadata = this.session.metadata;
+        if (hasCustomTitle(metadata) || metadata.title !== fallbackTitle) return;
+        this.session.metadata = {
+          ...metadata,
+          title,
+          updatedAt: new Date().toISOString(),
+        };
+        await this.session.writeMetadata();
+        await this.session.rpc.emitEvent({
+          type: 'session.meta.updated',
+          agentId: 'main',
+          title,
+          patch: { title, isCustomTitle: false },
+        });
+        await this.session.reAppendSessionMetadata();
+      } catch {
+        // Title generation is opportunistic; the fallback title stays.
+      }
+    })();
   }
 }
 

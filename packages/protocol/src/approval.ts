@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
+import { permissionModeSchema } from './events';
 import { isoDateTimeSchema } from './time';
 
 export const approvalDecisionSchema = z.enum(['approved', 'rejected', 'cancelled']);
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 
-export const approvalScopeSchema = z.enum(['session']);
+export const approvalScopeSchema = z.enum(['session', 'always']);
 export type ApprovalScope = z.infer<typeof approvalScopeSchema>;
 
 export const approvalRequestSchema = z.object({
@@ -26,5 +27,11 @@ export const approvalResponseSchema = z.object({
   scope: approvalScopeSchema.optional(),
   feedback: z.string().optional(),
   selected_label: z.string().optional(),
+  /**
+   * Optional permission-mode switch carried by an approval — the plan-review
+   * "approve and switch to Auto" variant rides this field so the mode change
+   * lands atomically with the approval decision.
+   */
+  mode: permissionModeSchema.optional(),
 });
 export type ApprovalResponse = z.infer<typeof approvalResponseSchema>;

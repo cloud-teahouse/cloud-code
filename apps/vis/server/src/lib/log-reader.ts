@@ -1,6 +1,6 @@
 // apps/vis/server/src/lib/log-reader.ts
 //
-// Parse a kimi-code diagnostic log into structured lines for the Logs view.
+// Parse a cloud-code diagnostic log into structured lines for the Logs view.
 //
 // Lines look like:
 //   2026-06-15T05:32:08.722Z INFO  llm config  turnStep=0.1 provider=openai …

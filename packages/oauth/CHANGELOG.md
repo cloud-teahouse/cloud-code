@@ -1,4 +1,4 @@
-# @moonshot-ai/kimi-code-oauth
+# @cloudcode/oauth
 
 ## 0.3.0
 

@@ -60,7 +60,7 @@ describe('normalizeOpenAIFinishReason (Kimi + OpenAILegacy shared helper)', () =
     },
   );
 });
-function makeKimiStream(rawFinish: string | null | undefined): AsyncIterable<unknown> {
+function makeCloudCodeStream(rawFinish: string | null | undefined): AsyncIterable<unknown> {
   // Kimi / Chat Completions stream: emit one content chunk + a terminal
   // chunk carrying finish_reason.
   const chunks: Array<Record<string, unknown>> = [
@@ -88,7 +88,7 @@ function makeOpenAIChatClient(response: unknown) {
 
 // The Kimi provider consumes `APIPromise.withResponse()` to read the
 // `x-trace-id` response header, so its mocked client must expose that method.
-function makeKimiChatClient(response: unknown) {
+function makeCloudCodeChatClient(response: unknown) {
   return {
     chat: {
       completions: {
@@ -101,11 +101,11 @@ function makeKimiChatClient(response: unknown) {
   };
 }
 
-function createKimiProvider(response: unknown, stream: boolean): KimiChatProvider {
+function createCloudCodeProvider(response: unknown, stream: boolean): KimiChatProvider {
   return new KimiChatProvider({
     model: 'kimi-k2-turbo-preview',
     stream,
-    clientFactory: () => makeKimiChatClient(response) as never,
+    clientFactory: () => makeCloudCodeChatClient(response) as never,
   });
 }
 
@@ -129,7 +129,7 @@ describe('KimiChatProvider finish reason (stream, table coverage)', () => {
   ])(
     'raw stream finish_reason %j maps to %j (raw=%j)',
     async (raw, expectedFinish, expectedRaw) => {
-      const provider = createKimiProvider(makeKimiStream(raw), true);
+      const provider = createCloudCodeProvider(makeCloudCodeStream(raw), true);
 
       const stream = await provider.generate('', [], [USER_MSG]);
       for await (const _ of stream) {
@@ -148,7 +148,7 @@ describe('KimiChatProvider finish reason (stream, table coverage)', () => {
         choices: [{ index: 0, delta: { content: 'partial' } }],
       },
     ];
-    const provider = createKimiProvider(makeAsyncIterable(chunks), true);
+    const provider = createCloudCodeProvider(makeAsyncIterable(chunks), true);
 
     const stream = await provider.generate('', [], [USER_MSG]);
     for await (const _ of stream) {
@@ -160,7 +160,7 @@ describe('KimiChatProvider finish reason (stream, table coverage)', () => {
 
   // C coverage for Kimi.
   it('captures finish_reason from a non-stream response', async () => {
-    const provider = createKimiProvider(
+    const provider = createCloudCodeProvider(
       {
         id: 'chatcmpl-ns',
         choices: [
@@ -185,7 +185,7 @@ describe('KimiChatProvider finish reason (stream, table coverage)', () => {
 
   // D (non-stream) coverage for Kimi.
   it('returns null finishReason when non-stream response omits finish_reason', async () => {
-    const provider = createKimiProvider(
+    const provider = createCloudCodeProvider(
       {
         id: 'chatcmpl-ns-null',
         choices: [
@@ -219,7 +219,7 @@ describe('OpenAILegacyChatProvider finish reason (stream + non-stream)', () => {
   ])(
     'raw stream finish_reason %j maps to %j (raw=%j)',
     async (raw, expectedFinish, expectedRaw) => {
-      const provider = createOpenAILegacyProvider(makeKimiStream(raw), true);
+      const provider = createOpenAILegacyProvider(makeCloudCodeStream(raw), true);
 
       const stream = await provider.generate('', [], [USER_MSG]);
       for await (const _ of stream) {

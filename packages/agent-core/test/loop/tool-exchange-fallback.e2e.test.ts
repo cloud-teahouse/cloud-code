@@ -17,7 +17,13 @@
  * Any other error propagates unchanged and the builders are never consulted.
  */
 
-import { APIRequestTooLargeError, APIStatusError, type Message } from '@moonshot-ai/kosong';
+import {
+  APIRequestTooLargeError,
+  APIStatusError,
+  type ChatProvider,
+  type Message,
+  type StreamedMessagePart,
+} from '@cloud-code/kosong';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -26,6 +32,7 @@ import {
   type LoopMessageBuilder,
   type RunTurnInput,
 } from '../../src/loop/index';
+import { KosongLLM } from '../../src/agent/turn/kosong-llm';
 import { CollectingSink } from './fixtures/collecting-sink';
 import { FakeLLM, makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { RecordingContext } from './fixtures/recording-context';
@@ -470,5 +477,84 @@ describe('executeLoopStep — request-too-large media-degraded fallback', () => 
     expect(harness.normalCalls.count).toBe(1);
     expect(harness.degradedCalls.count).toBe(2);
     expect(echo.calls).toHaveLength(1);
+  });
+});
+
+/**
+ * F8 blind-spot pin: a history carrying truncated tool-call arguments JSON
+ * (resume of a session written by an older version, imported external
+ * history, provider switch) used to hard-throw `ChatProviderError` inside
+ * the provider's message converter — BEFORE the request hit the wire, so it
+ * was not an `APIStatusError` and the whole strict-resend chain above could
+ * not see it, wedging the session permanently. kosong `generate()` now
+ * normalizes the outbound history first; this runs the REAL generate through
+ * `KosongLLM` against a provider that mimics the Anthropic converter's
+ * strict `JSON.parse` behavior.
+ */
+describe('defensive wire layer: truncated tool-call arguments (F8)', () => {
+  it('reaches the provider with repaired arguments instead of throwing client-side', async () => {
+    let providerSawHistory: Message[] | undefined;
+    // Mimics anthropic convertMessage / google messagesToGoogleGenAIContents:
+    // strict JSON.parse of every tool call's arguments, throwing on invalid.
+    const anthropicMimic: ChatProvider = {
+      name: 'anthropic',
+      modelName: 'claude-mimic',
+      thinkingEffort: null,
+      async generate(_systemPrompt, _tools, history) {
+        for (const message of history) {
+          for (const toolCall of message.toolCalls) {
+            if (toolCall.arguments !== null && toolCall.arguments.trim().length > 0) {
+              JSON.parse(toolCall.arguments);
+            }
+          }
+        }
+        providerSawHistory = history;
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'text', text: 'recovered' } as StreamedMessagePart;
+          },
+          id: 'msg_1',
+          usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+          finishReason: 'completed',
+          rawFinishReason: 'end_turn',
+        };
+      },
+      withThinking() {
+        return this;
+      },
+    };
+    const llm = new KosongLLM({ provider: anthropicMimic, systemPrompt: 'sys' });
+
+    const truncated =
+      '{"path":"/tmp/a.ts","content":"hello wor';
+    const history: Message[] = [
+      userMessage('go'),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'writing' }],
+        toolCalls: [{ type: 'function', id: 'call_write', name: 'Write', arguments: truncated }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'written' }],
+        toolCalls: [],
+        toolCallId: 'call_write',
+      },
+      userMessage('next'),
+    ];
+
+    const response = await llm.chat({
+      messages: history,
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response.toolCalls).toEqual([]);
+    // The provider received the closed, parseable arguments.
+    const assistant = providerSawHistory?.find((message) => message.role === 'assistant');
+    expect(assistant?.toolCalls[0]?.arguments).toBe(`${truncated}"}`);
+    expect(() => JSON.parse(assistant!.toolCalls[0]!.arguments!)).not.toThrow();
+    // Copy-on-write: the caller's history was not repaired in place.
+    expect(history[1]!.toolCalls[0]!.arguments).toBe(truncated);
   });
 });

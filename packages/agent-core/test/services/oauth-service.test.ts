@@ -1,5 +1,5 @@
 /**
- * `OAuthService` (P2.7) unit tests.
+ * `OAuthService` unit tests.
  *
  * Hermetic: a mock managed auth facade is injected so we don't need a real
  * OAuth host on the network. The mock's `login()` exposes a deferred device
@@ -31,7 +31,7 @@ import {
   DeviceCodeTimeoutError,
   OAuthError,
   type DeviceAuthorization,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/oauth';
 
 import type { ServicesAuthFacade } from '../../src/services/auth/managedAuth';
 import { IEnvironmentService } from '../../src/services/environment/environment';

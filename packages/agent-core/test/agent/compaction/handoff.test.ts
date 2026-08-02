@@ -1,4 +1,4 @@
-import type { Message } from '@moonshot-ai/kosong';
+import type { Message } from '@cloud-code/kosong';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,8 +9,11 @@ import {
   buildCompactionSummaryText,
   collectCompactableUserMessages,
   compactionUserMessageDisposition,
+  formatCompactionSummary,
+  hasUserKeepMarker,
   isCompactionSummaryMessage,
   isRealUserInput,
+  pinnedDigestPrefixLength,
   selectCompactionUserMessages,
   selectRecentUserMessages,
   type CompactionUserDisposition,
@@ -38,6 +41,7 @@ const ALL_PROMPT_ORIGIN_KINDS = {
   cron_job: true,
   cron_missed: true,
   hook_result: true,
+  mailbox: true,
   retry: true,
 } satisfies Record<PromptOrigin['kind'], true>;
 
@@ -53,6 +57,7 @@ const EXPECTED_DISPOSITION: Record<PromptOrigin['kind'], CompactionUserDispositi
   cron_job: 'drop',
   cron_missed: 'drop',
   hook_result: 'drop',
+  mailbox: 'drop',
   retry: 'drop',
 };
 
@@ -103,6 +108,8 @@ function originForKind(kind: PromptOrigin['kind']): PromptOrigin {
       return { kind: 'cron_missed', count: 1 };
     case 'hook_result':
       return { kind: 'hook_result', event: 'PreCompact' };
+    case 'mailbox':
+      return { kind: 'mailbox', teamName: 'core', from: 'leader', messageId: 'msg_1' };
     case 'retry':
       return { kind: 'retry', trigger: 'system' };
   }
@@ -345,6 +352,127 @@ describe('selectCompactionUserMessages', () => {
   });
 });
 
+describe('hasUserKeepMarker', () => {
+  it('recognizes every supported keep-marker spelling, case-insensitively', () => {
+    for (const marker of ['[[keep]]', '[keep]', '<keep>', '<!-- keep -->', '[[KEEP]]', '<Keep>']) {
+      expect(hasUserKeepMarker(textMessage('user', `remember this ${marker}`))).toBe(true);
+    }
+  });
+
+  it('ignores unmarked messages and non-user roles', () => {
+    expect(hasUserKeepMarker(textMessage('user', 'ordinary prompt'))).toBe(false);
+    expect(hasUserKeepMarker(textMessage('assistant', '[[keep]]'))).toBe(false);
+    expect(hasUserKeepMarker(textMessage('tool', '[keep]'))).toBe(false);
+  });
+});
+
+describe('pinnedDigestPrefixLength', () => {
+  it('is 0 without a compaction summary', () => {
+    expect(pinnedDigestPrefixLength([textMessage('user', 'u1'), textMessage('user', 'u2')])).toBe(0);
+  });
+
+  it('covers everything up to and including the MOST RECENT summary', () => {
+    const summary1 = {
+      ...textMessage('user', 'summary one'),
+      origin: { kind: 'compaction_summary' as const },
+    };
+    const summary2 = {
+      ...textMessage('user', 'summary two'),
+      origin: { kind: 'compaction_summary' as const },
+    };
+    const messages = [
+      textMessage('user', 'kept head'),
+      summary1,
+      textMessage('user', 'kept tail'),
+      summary2,
+      textMessage('user', 'new range'),
+    ];
+
+    // Index of summary2 + 1: the new-range message is excluded.
+    expect(pinnedDigestPrefixLength(messages)).toBe(4);
+  });
+});
+
+describe('selectCompactionUserMessages keep markers', () => {
+  // Five unmarked messages of 26 estimated tokens each (100 ASCII chars → 25
+  // text tokens + 1 role token), plus one marked message in the middle.
+  function markedPool(): Message[] {
+    return [
+      textMessage('user', 'a'.repeat(100)),
+      textMessage('user', 'b'.repeat(100)),
+      textMessage('user', `PINNED [[keep]] ${'p'.repeat(100)}`),
+      textMessage('user', 'd'.repeat(100)),
+      textMessage('user', 'e'.repeat(100)),
+    ];
+  }
+
+  it('never elides or truncates a keep-marked message in the dropped middle', () => {
+    const messages = markedPool();
+    const per = estimateTokensForMessage(messages[0]!);
+    const pinnedTokens = estimateTokensForMessage(messages[2]!);
+    // Budget for two unmarked messages plus the pinned one: the unmarked
+    // middle (b / d) must elide while the pinned message survives.
+    const selection = selectCompactionUserMessages(messages, per * 2 + pinnedTokens, per);
+
+    expect(selection.elided).toBe(true);
+    const kept = [...selection.head, ...selection.tail].map(messageText);
+    // Original order preserved; the pinned message sits verbatim in the head
+    // cluster (it is older than the tail segment).
+    expect(kept).toEqual(['a'.repeat(100), `PINNED [[keep]] ${'p'.repeat(100)}`, 'e'.repeat(100)]);
+    expect(kept[1]).toBe(messages[2]!.content.map((p) => (p.type === 'text' ? p.text : '')).join(''));
+    expect(selection.omittedTokens).toBe(per * 2);
+  });
+
+  it('places a pinned message newer than the tail segment in the tail', () => {
+    const messages = [
+      textMessage('user', 'a'.repeat(100)),
+      textMessage('user', 'b'.repeat(100)),
+      textMessage('user', 'c'.repeat(100)),
+      textMessage('user', `PINNED [keep] ${'p'.repeat(100)}`),
+    ];
+    const per = estimateTokensForMessage(messages[0]!);
+    const pinnedTokens = estimateTokensForMessage(messages[3]!);
+    // Room for two unmarked messages plus the pinned one: b elides, the head
+    // keeps a, the tail keeps c — and the pinned message lands after it.
+    const selection = selectCompactionUserMessages(messages, per * 2 + pinnedTokens, per);
+
+    expect(selection.elided).toBe(true);
+    expect(selection.head.map(messageText)).toEqual(['a'.repeat(100)]);
+    expect(selection.tail.map(messageText)).toEqual([
+      'c'.repeat(100),
+      `PINNED [keep] ${'p'.repeat(100)}`,
+    ]);
+  });
+
+  it('keeps every marked message even when markers alone exceed the budget', () => {
+    const messages = [
+      textMessage('user', `one [[keep]] ${'x'.repeat(200)}`),
+      textMessage('user', 'middle'),
+      textMessage('user', `two <keep> ${'y'.repeat(200)}`),
+    ];
+
+    const selection = selectCompactionUserMessages(messages, 10, 5);
+
+    expect(selection.elided).toBe(true);
+    expect([...selection.head, ...selection.tail].map(messageText)).toEqual([
+      `one [[keep]] ${'x'.repeat(200)}`,
+      `two <keep> ${'y'.repeat(200)}`,
+    ]);
+  });
+
+  it('does not let an injected system reminder pin itself', () => {
+    // Only genuine user input reaches the selection pool, but the marker
+    // check itself is role-gated too: a user-role message from a non-user
+    // origin never matches in the live path because collectCompactableUser-
+    // Messages filters it first; assert the pool composition directly.
+    const reminder = {
+      ...textMessage('user', '<system-reminder> [[keep]] note </system-reminder>'),
+      origin: { kind: 'injection' as const, variant: 'system_reminder' },
+    };
+    expect(collectCompactableUserMessages([reminder, textMessage('user', 'real')])).toHaveLength(1);
+  });
+});
+
 describe('buildCompactionElisionText', () => {
   it('wraps the omitted token estimate in a system-reminder', () => {
     const text = buildCompactionElisionText(1_234);
@@ -362,5 +490,55 @@ describe('buildCompactionSummaryText', () => {
 
   it('falls back when the summary is empty', () => {
     expect(buildCompactionSummaryText('   ')).toBe(`${COMPACTION_SUMMARY_PREFIX}\n(no summary available)`);
+  });
+
+  it('points back at the full transcript when a transcript path is provided', () => {
+    const text = buildCompactionSummaryText('Summary.', '/sessions/abc/agents/main/wire.jsonl');
+
+    expect(text).toContain(`${COMPACTION_SUMMARY_PREFIX}\nSummary.`);
+    expect(text).toContain('read the full transcript at: /sessions/abc/agents/main/wire.jsonl');
+  });
+
+  it('omits the transcript pointer when no path is available', () => {
+    const text = buildCompactionSummaryText('Summary.');
+
+    expect(text).not.toContain('transcript');
+  });
+});
+
+describe('formatCompactionSummary', () => {
+  it('strips the <analysis> scratchpad and unwraps the <summary> tags', () => {
+    const raw = [
+      '<analysis>',
+      '1. User asked to port prompts.',
+      '2. I edited profile yaml files.',
+      '</analysis>',
+      '',
+      '<summary>',
+      'Porting the prompt micro-batch; two files landed so far.',
+      '</summary>',
+    ].join('\n');
+
+    expect(formatCompactionSummary(raw)).toBe(
+      'Porting the prompt micro-batch; two files landed so far.',
+    );
+  });
+
+  it('passes plain output through unchanged', () => {
+    expect(formatCompactionSummary('A plain first-person note.')).toBe(
+      'A plain first-person note.',
+    );
+  });
+
+  it('strips down to empty when the model produced only an analysis block', () => {
+    expect(formatCompactionSummary('<analysis>drafting only</analysis>')).toBe('');
+  });
+
+  it('leaves an unterminated analysis block in place (only complete pairs strip)', () => {
+    // The strip regex only matches a complete open/close pair, so a truncated
+    // <analysis> leaks through rather than swallowing the note wholesale —
+    // same trade-off as Claude's formatCompactSummary.
+    const raw = '<analysis>draft\n\n<summary>the note</summary>';
+    expect(formatCompactionSummary(raw)).toBe('<analysis>draft\n\nthe note');
   });
 });

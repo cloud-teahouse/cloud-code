@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
-import { PluginManager } from '#/plugin';
+import { PluginManager, type PluginEnableScope } from '#/plugin';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
@@ -15,18 +15,22 @@ import { Agent } from '../agent';
 import { limitAgentReplayByTurns } from '../agent/replay/turns';
 import {
   applyPrintModeConfigDefaults,
-  ensureKimiHome,
+  camelToSnake,
+  ensureCloudCodeHome,
   loadRuntimeConfigSafe,
   mergeConfigPatch,
   migrateThinkingEffortMaxToHigh,
+  ModelAliasSchema,
+  ProviderConfigSchema,
+  SecondaryModelConfigSchema,
   readConfigFileForUpdate,
   normalizeAdditionalDirs,
   readWorkspaceAdditionalDirs,
   resolveWorkspaceAdditionalDirs,
   resolveConfigPath,
-  resolveKimiHome,
+  resolveCloudCodeHome,
   writeConfigFile,
-  type KimiConfig,
+  type CloudCodeConfig,
   type McpRemoteServerConfig,
   type McpServerConfig,
   type MoonshotServiceConfig,
@@ -66,13 +70,6 @@ import {
 import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store/index';
 import { touchWorkspaceRegistry } from '../session/store/workspace-registry-file';
-import {
-  noopTelemetryClient,
-  withTelemetryContext,
-  withTelemetryProperties,
-  type TelemetryClient,
-  type TelemetryProperties,
-} from '../telemetry';
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
@@ -95,7 +92,6 @@ import type {
   CreateSessionPayload,
   DeleteSessionPayload,
   DetachBackgroundPayload,
-  ClientTelemetryInfo,
   EmptyPayload,
   EnterSwarmPayload,
   GoalSnapshot,
@@ -109,14 +105,13 @@ import type {
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   GetCronTasksResult,
-  GetKimiConfigPayload,
+  GetCloudCodeConfigPayload,
   GetPluginInfoPayload,
   InstallPluginPayload,
   ImportContextPayload,
   ListSessionsPayload,
   ListWorkspaceSkillsPayload,
   McpServerInfo,
-  McpStartupMetrics,
   PluginInfo,
   PluginSummary,
   PromptPayload,
@@ -127,20 +122,28 @@ import type {
   ReloadSessionPayload,
   ReloadPluginsResult,
   RemoveKimiProviderPayload,
+  RemoveCloudCodeModelPayload,
   RemovePluginPayload,
   RenameSessionPayload,
   ResumeSessionPayload,
   SessionSummary,
   SetActiveToolsPayload,
-  SetKimiConfigPayload,
+  SetCloudCodeConfigPayload,
+  SetCloudCodeModelPayload,
+  SetCloudCodeProviderPayload,
+  SetCloudCodeSecondaryModelPayload,
   SetModelPayload,
   SetModelResult,
+  SetOutputStylePayload,
   SetPermissionPayload,
   SetPluginEnabledPayload,
   SetPluginMcpServerEnabledPayload,
+  SetServiceTierPayload,
   SetThinkingPayload,
   SkillSummary,
+  OutputStyleSummary,
   PluginCommandDef,
+  RewindFilesPayload,
   SteerPayload,
   StopBackgroundPayload,
   TestGlobalMcpServerPayload,
@@ -150,19 +153,19 @@ import type {
 } from './core-api';
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
-import type { SessionWarning } from '@moonshot-ai/protocol';
+import type { SessionWarning } from '@cloud-code/protocol';
 import { proxyWithExtraPayload } from './types';
-import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos';
+import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@cloud-code/kaos';
 import type { ToolServices } from '../tools/support/services';
 
-const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
-const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
-const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
+const CLOUD_CODE_PROVIDER_NAME = 'managed:kimi-code';
+const CLOUD_CODE_BASE_URL_ENV = 'CLOUD_CODE_BASE_URL';
+const CLOUD_CODE_OAUTH_HOST_ENV = 'CLOUD_CODE_OAUTH_HOST';
 const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
-const WEB_SEARCH_BASE_URL_ENV = 'KIMI_WEB_SEARCH_BASE_URL';
-const WEB_SEARCH_API_KEY_ENV = 'KIMI_WEB_SEARCH_API_KEY';
-const WEB_FETCH_BASE_URL_ENV = 'KIMI_WEB_FETCH_BASE_URL';
-const WEB_FETCH_API_KEY_ENV = 'KIMI_WEB_FETCH_API_KEY';
+const WEB_SEARCH_BASE_URL_ENV = 'CLOUD_CODE_WEB_SEARCH_BASE_URL';
+const WEB_SEARCH_API_KEY_ENV = 'CLOUD_CODE_WEB_SEARCH_API_KEY';
+const WEB_FETCH_BASE_URL_ENV = 'CLOUD_CODE_WEB_FETCH_BASE_URL';
+const WEB_FETCH_API_KEY_ENV = 'CLOUD_CODE_WEB_FETCH_API_KEY';
 const DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
@@ -173,7 +176,7 @@ interface GlobalMcpOAuthFlow {
   readonly flow: BeginAuthorizationResult;
 }
 
-export interface KimiCoreOptions {
+export interface CloudCodeCoreOptions {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
   readonly runtime?: ToolServices | undefined;
@@ -189,26 +192,48 @@ export interface KimiCoreOptions {
    */
   readonly resolveWorkspaceId?: (workDir: string) => Promise<string | undefined>;
   readonly skillDirs?: readonly string[];
-  readonly telemetry?: TelemetryClient | undefined;
   readonly appVersion?: string;
   /**
-   * Host UI mode (`'print'` for `kimi -p`, `'cli'` for the TUI, ...). When
+   * Host UI mode (`'print'` for `cloud-code -p`, `'cli'` for the TUI, ...). When
    * `'print'`, sessions are created with the print-mode config defaults from
    * `applyPrintModeConfigDefaults` (user-set values still win).
    */
   readonly uiMode?: string | undefined;
 }
 
-export class KimiCore implements PromisableMethods<CoreAPI> {
+/**
+ * The TOML writer merges each record entry over its raw counterpart so
+ * unknown (raw-only) fields survive a read-write round-trip. For a wholesale
+ * replacement, schema-known fields the new entry dropped (e.g. a cleared
+ * base_url) must not resurrect from raw — delete them, while unknown raw
+ * fields are kept.
+ */
+function clearDroppedRawFields(
+  rawSection: unknown,
+  entryName: string,
+  entry: Record<string, unknown>,
+  shape: Record<string, unknown>,
+): void {
+  if (typeof rawSection !== 'object' || rawSection === null || Array.isArray(rawSection)) return;
+  const rawEntry = (rawSection as Record<string, unknown>)[entryName];
+  if (typeof rawEntry !== 'object' || rawEntry === null || Array.isArray(rawEntry)) return;
+  const raw = rawEntry as Record<string, unknown>;
+  for (const camelKey of Object.keys(shape)) {
+    if (entry[camelKey] === undefined) {
+      delete raw[camelToSnake(camelKey)];
+    }
+  }
+}
+
+export class CloudCodeCore implements PromisableMethods<CoreAPI> {
   readonly sdk: Promise<SDKRPC>;
   readonly homeDir: string;
   readonly configPath: string;
   readonly sessions = new Map<string, Session>();
-  readonly telemetry: TelemetryClient;
 
   private kaos: Promise<Kaos> | undefined;
   private runtime: ToolServices | undefined;
-  private config: KimiConfig;
+  private config: CloudCodeConfig;
   private configWarnings: readonly string[] = [];
   private readonly runtimeOverride: ToolServices | undefined;
   private readonly userHomeDir: string;
@@ -224,16 +249,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private pluginsLoadError: Error | undefined;
   private readonly appVersion: string | undefined;
   private readonly experimentalFlags: FlagResolver;
-  /** `true` when the host runs `kimi -p` (v1 print mode); see `withPrintModeDefaults`. */
+  /** `true` when the host runs `cloud-code -p` (v1 print mode); see `withPrintModeDefaults`. */
   private readonly printMode: boolean;
   /** Owner-scoped [image] limits; reload pushes the new config via setConfig. */
   readonly imageLimits: ImageLimits;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
-    options: KimiCoreOptions = {},
+    options: CloudCodeCoreOptions = {},
   ) {
-    this.homeDir = resolveKimiHome(options.homeDir);
+    this.homeDir = resolveCloudCodeHome(options.homeDir);
     this.userHomeDir = homedir();
     this.configPath = resolveConfigPath({
       homeDir: this.homeDir,
@@ -244,10 +269,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.kimiRequestHeaders = options.kimiRequestHeaders;
     this.resolveOAuthTokenProvider = options.resolveOAuthTokenProvider;
     this.skillDirs = options.skillDirs ?? [];
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.appVersion = options.appVersion;
     this.printMode = options.uiMode === 'print';
-    ensureKimiHome(this.homeDir);
+    ensureCloudCodeHome(this.homeDir);
     // One-shot config migrations, before the first load (best-effort, never
     // throws): rewrites a persisted thinking.effort "max" to "high" once.
     migrateThinkingEffortMaxToHigh(this.configPath, this.homeDir);
@@ -274,8 +298,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       resolveWorkspaceId: options.resolveWorkspaceId,
     });
     this.globalMcpConfig = new GlobalMcpConfigStore(this.homeDir);
-    this.globalMcpOAuth = new McpOAuthService({ kimiHomeDir: this.homeDir });
-    this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
+    this.globalMcpOAuth = new McpOAuthService({ cloudCodeHomeDir: this.homeDir });
+    this.plugins = new PluginManager({ cloudCodeHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
     // reads rethrow so the user sees what's wrong; createSession/resumeSession
     // degrade silently (no plugin skills, no sessionStart injections) so the harness still
@@ -320,7 +344,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, options.mcpServers);
     const parentKaos = overrides.kaos ?? (await this.getKaos());
     const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
-    // Read the workspace local config (`.kimi-code/local.toml`) through the
+    // Read the workspace local config (`.cloud-code/local.toml`) through the
     // persistence (local) kaos, not the tool kaos. In ACP mode the tool kaos is
     // the reverse-RPC bridge and the client does not know the session yet during
     // `session/new`, so reading through it fails with "unknown session"
@@ -379,17 +403,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       ...summary,
       metadata: options.metadata,
     };
-    const clientTelemetry = clientTelemetryProperties(options.client);
-    const sessionTelemetryBase = withTelemetryContext(this.telemetry, { sessionId: summary.id });
-    const sessionTelemetry =
-      Object.keys(clientTelemetry).length === 0
-        ? sessionTelemetryBase
-        : withTelemetryProperties(sessionTelemetryBase, clientTelemetry);
-
     await this.pluginsReady;
-    const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const pluginCommands = await this.plugins.enabledCommands();
-    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
+    const pluginScope = await this.plugins.resolveEnableScope(workDir);
+    const pluginSessionStarts = this.plugins.enabledSessionStarts(pluginScope);
+    const pluginCommands = await this.plugins.enabledCommands(pluginScope);
+    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp, pluginScope);
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
@@ -401,13 +419,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       config: sessionConfig,
       id,
       homedir: summary.sessionDir,
-      kimiHomeDir: this.homeDir,
+      cloudCodeHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
       providerManager: this.resolveProviderManager(summary.id),
       background: sessionConfig.background,
-      hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
+      hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks(pluginScope)],
       permissionRules: config.permission?.rules,
-      skills: this.resolveSessionSkillConfig(config),
+      skills: this.resolveSessionSkillConfig(config, pluginScope),
       agents: {
         catalog: agentCatalog,
         profileName: options.agentProfile,
@@ -415,10 +433,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
-      telemetry: sessionTelemetry,
       pluginSessionStarts,
       pluginCommands,
-      pluginSystemPrompts: this.plugins.enabledSystemPrompts(),
+      pluginAgentDirs: this.plugins.pluginAgentDirs(pluginScope),
+      pluginOutputStyleDirs: this.plugins.pluginOutputStyleDirs(pluginScope),
+      pluginSystemPrompts: this.plugins.enabledSystemPrompts(pluginScope),
       appVersion: this.appVersion,
       additionalDirs,
       drainAgentTasksOnStop: options.drainAgentTasksOnStop,
@@ -442,6 +461,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       mainAgent.config.update({
         modelAlias: options.model ?? config.defaultModel,
         thinkingEffort,
+        // An explicit payload tier wins over the config.toml seed ConfigState
+        // applies in its constructor; an absent one leaves the seed untouched.
+        ...(options.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
       });
       if (permissionMode !== undefined) {
         mainAgent.permission.setMode(permissionMode);
@@ -458,9 +480,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       throw error;
     }
     this.sessions.set(id, session);
-    if (Object.keys(clientTelemetry).length > 0) {
-      sessionTelemetry.track('session_started', { resumed: false });
-    }
     return withAdditionalDirs(result, session);
   }
 
@@ -505,7 +524,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
     const parentKaosForRead = overrides.kaos ?? (await this.getKaos());
-    // Read `.kimi-code/local.toml` through the persistence (local) kaos, not the
+    // Read `.cloud-code/local.toml` through the persistence (local) kaos, not the
     // tool kaos — see createSessionWithOverrides and issue #988.
     const localWorkspaceDirs = await readWorkspaceAdditionalDirs(
       overrides.persistenceKaos ?? parentKaosForRead,
@@ -547,9 +566,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     });
     const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, input.mcpServers);
     await this.pluginsReady;
-    const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const pluginCommands = await this.plugins.enabledCommands();
-    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
+    const pluginScope = await this.plugins.resolveEnableScope(summary.workDir);
+    const pluginSessionStarts = this.plugins.enabledSessionStarts(pluginScope);
+    const pluginCommands = await this.plugins.enabledCommands(pluginScope);
+    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp, pluginScope);
     const runtime = await this.resolveRuntime(config);
     const parentKaos = parentKaosForRead;
     const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
@@ -560,28 +580,29 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       config: sessionConfig,
       id: summary.id,
       homedir: summary.sessionDir,
-      kimiHomeDir: this.homeDir,
+      cloudCodeHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
       providerManager: this.resolveProviderManager(summary.id),
       background: sessionConfig.background,
-      hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
+      hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks(pluginScope)],
       permissionRules: config.permission?.rules,
-      skills: this.resolveSessionSkillConfig(config),
+      skills: this.resolveSessionSkillConfig(config, pluginScope),
       agents: {
         userHomeDir: this.userHomeDir,
         extraDirs: config.extraAgentDirs,
         pluginRoots:
-          overrides.refreshPluginAgents === true ? this.plugins.pluginAgentRoots() : undefined,
+          overrides.refreshPluginAgents === true ? this.plugins.pluginAgentRoots(pluginScope) : undefined,
         refreshPluginAgents: overrides.refreshPluginAgents,
       },
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
-      telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
       pluginSessionStarts,
       pluginCommands,
-      pluginSystemPrompts: this.plugins.enabledSystemPrompts(),
+      pluginAgentDirs: this.plugins.pluginAgentDirs(pluginScope),
+      pluginOutputStyleDirs: this.plugins.pluginOutputStyleDirs(pluginScope),
+      pluginSystemPrompts: this.plugins.enabledSystemPrompts(pluginScope),
       appVersion: this.appVersion,
       additionalDirs,
     });
@@ -596,9 +617,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       }
     } catch (error) {
       await session.close().catch(() => {});
-      withTelemetryContext(this.telemetry, { sessionId: summary.id }).track('session_load_failed', {
-        reason: telemetryErrorReason(error),
-      });
       throw error;
     }
     this.sessions.set(summary.id, session);
@@ -620,7 +638,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const summary = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(summary.id);
     if (active?.hasActiveTurn === true) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.TURN_AGENT_BUSY,
         `Session "${summary.id}" cannot be reloaded while a turn is running`,
         { details: { sessionId: summary.id } },
@@ -648,7 +666,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
     if (active?.hasActiveTurn === true) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.SESSION_FORK_ACTIVE_TURN,
         `Session "${source.id}" cannot be forked while a turn is running`,
         { details: { sessionId: source.id } },
@@ -714,7 +732,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return result;
   }
 
-  async getKimiConfig(input?: GetKimiConfigPayload): Promise<KimiConfig> {
+  async getCloudCodeConfig(input?: GetCloudCodeConfigPayload): Promise<CloudCodeConfig> {
     if (input?.reload) {
       this.reloadRuntimeConfig();
     }
@@ -725,13 +743,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return { warnings: this.configWarnings };
   }
 
-  async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
+  async setCloudCodeConfig(input: SetCloudCodeConfigPayload): Promise<CloudCodeConfig> {
     const config = mergeConfigPatch(this.readConfigForWrite(), input);
     await writeConfigFile(this.configPath, config);
     return this.reloadRuntimeConfig();
   }
 
-  async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
+  async removeCloudCodeProvider(input: RemoveKimiProviderPayload): Promise<CloudCodeConfig> {
     const config = this.readConfigForWrite();
     delete config.providers[input.providerId];
 
@@ -754,10 +772,103 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       config.defaultModel = undefined;
     }
 
+    // A secondary model whose alias vanished with the provider is scrubbed,
+    // mirroring the dangling-defaultModel handling.
+    if (
+      config.secondaryModel?.model !== undefined &&
+      existingModels[config.secondaryModel.model] === undefined
+    ) {
+      config.secondaryModel = undefined;
+    }
+
     if (config.defaultProvider === input.providerId) {
       config.defaultProvider = undefined;
     }
 
+    await writeConfigFile(this.configPath, config);
+    return this.reloadRuntimeConfig();
+  }
+
+  /**
+   * Wholesale replacement of a single provider entry. `setCloudCodeConfig`
+   * deep-merges and can never clear a field, so edits that must drop a value
+   * (e.g. an anthropic base URL) go through this instead.
+   */
+  async setCloudCodeProvider(input: SetCloudCodeProviderPayload): Promise<CloudCodeConfig> {
+    const config = this.readConfigForWrite();
+    const provider = ProviderConfigSchema.parse(input.provider);
+    config.providers[input.providerId] = provider;
+    clearDroppedRawFields(config.raw?.['providers'], input.providerId, provider, ProviderConfigSchema.shape);
+    await writeConfigFile(this.configPath, config);
+    return this.reloadRuntimeConfig();
+  }
+
+  /** Wholesale replacement of a single model alias (see setCloudCodeProvider). */
+  async setCloudCodeModel(input: SetCloudCodeModelPayload): Promise<CloudCodeConfig> {
+    const config = this.readConfigForWrite();
+    const models = config.models ?? {};
+    const model = ModelAliasSchema.parse(input.model);
+    models[input.alias] = model;
+    config.models = models;
+    clearDroppedRawFields(config.raw?.['models'], input.alias, model, ModelAliasSchema.shape);
+    await writeConfigFile(this.configPath, config);
+    return this.reloadRuntimeConfig();
+  }
+
+  /**
+   * Delete a single model alias. Mirrors removeCloudCodeProvider's default
+   * handling: dangling `defaultModel` and `[secondary_model]` references are
+   * cleared.
+   */
+  async removeCloudCodeModel(input: RemoveCloudCodeModelPayload): Promise<CloudCodeConfig> {
+    const config = this.readConfigForWrite();
+    const models = config.models ?? {};
+    delete models[input.alias];
+    config.models = models;
+    if (config.defaultModel === input.alias) {
+      config.defaultModel = undefined;
+    }
+    if (config.secondaryModel?.model === input.alias) {
+      config.secondaryModel = undefined;
+    }
+    await writeConfigFile(this.configPath, config);
+    return this.reloadRuntimeConfig();
+  }
+
+  /**
+   * Wholesale replacement of the `[secondary_model]` section (see
+   * setCloudCodeProvider): a present model replaces both fields; an absent or
+   * blank model drops the section, so 'secondary' subagent spawns fall back
+   * to the parent model again.
+   */
+  async setCloudCodeSecondaryModel(
+    input: SetCloudCodeSecondaryModelPayload,
+  ): Promise<CloudCodeConfig> {
+    const config = this.readConfigForWrite();
+    const model = input.model?.trim();
+    if (model === undefined || model.length === 0) {
+      config.secondaryModel = undefined;
+      await writeConfigFile(this.configPath, config);
+      return this.reloadRuntimeConfig();
+    }
+    const effort = input.effort?.trim();
+    const secondaryModel = SecondaryModelConfigSchema.parse({
+      model,
+      ...(effort !== undefined && effort.length > 0 ? { defaultEffort: effort } : {}),
+    });
+    config.secondaryModel = secondaryModel;
+    clearDroppedRawFields(
+      config.raw,
+      'secondary_model',
+      secondaryModel,
+      SecondaryModelConfigSchema.shape,
+    );
+    // Legacy fork key: a dropped `effort` must not resurrect through the
+    // parse-time migration to `default_effort`.
+    const rawSecondary = config.raw?.['secondary_model'];
+    if (typeof rawSecondary === 'object' && rawSecondary !== null && !Array.isArray(rawSecondary)) {
+      delete (rawSecondary as Record<string, unknown>)['effort'];
+    }
     await writeConfigFile(this.configPath, config);
     return this.reloadRuntimeConfig();
   }
@@ -812,7 +923,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<void> {
     const active = this.globalMcpOAuthFlows.get(flowId);
     if (active === undefined) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${flowId}`);
+      throw new CloudCodeError(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${flowId}`);
     }
     try {
       await active.flow.complete({
@@ -882,6 +993,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).undoHistory(payload);
   }
 
+  rewindFiles({ sessionId, ...payload }: SessionAgentPayload<RewindFilesPayload>) {
+    return this.sessionApi(sessionId).rewindFiles(payload);
+  }
+
   async setModel({
     sessionId,
     ...payload
@@ -892,6 +1007,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   setThinking({ sessionId, ...payload }: SessionAgentPayload<SetThinkingPayload>) {
     return this.sessionApi(sessionId).setThinking(payload);
+  }
+
+  setServiceTier({ sessionId, ...payload }: SessionAgentPayload<SetServiceTierPayload>) {
+    return this.sessionApi(sessionId).setServiceTier(payload);
   }
 
   setPermission({ sessionId, ...payload }: SessionAgentPayload<SetPermissionPayload>) {
@@ -924,6 +1043,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getSwarmMode({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
     return this.sessionApi(sessionId).getSwarmMode(payload);
+  }
+
+  enterCoordinator({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).enterCoordinator(payload);
+  }
+
+  exitCoordinator({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).exitCoordinator(payload);
+  }
+
+  getCoordinatorMode({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getCoordinatorMode(payload);
   }
 
   beginCompaction({ sessionId, ...payload }: SessionAgentPayload<BeginCompactionPayload>) {
@@ -992,6 +1123,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).getPermission(payload);
   }
 
+  getSandboxStatus({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getSandboxStatus(payload);
+  }
+
   getPlan({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
     return this.sessionApi(sessionId).getPlan(payload);
   }
@@ -1023,6 +1158,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).listSkills(payload);
   }
 
+  listOutputStyles({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): Promise<readonly OutputStyleSummary[]> {
+    return this.sessionApi(sessionId).listOutputStyles(payload);
+  }
+
+  setOutputStyle({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<SetOutputStylePayload>): Promise<void> {
+    return this.sessionApi(sessionId).setOutputStyle(payload);
+  }
+
   /**
    * List the skills available for a workspace working directory without
    * requiring a session. Mirrors `Session.loadSkills` exactly (same roots,
@@ -1035,7 +1184,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }: ListWorkspaceSkillsPayload): Promise<readonly SkillSummary[]> {
     const cwd = requiredWorkDir('listWorkspaceSkills', workDir);
     await this.pluginsReady;
-    const skills = this.resolveSessionSkillConfig(this.reloadProviderManager());
+    const skills = this.resolveSessionSkillConfig(
+      this.reloadProviderManager(),
+      await this.plugins.resolveEnableScope(cwd),
+    );
     const roots = await resolveSkillRoots({
       paths: {
         userHomeDir: skills.userHomeDir ?? this.userHomeDir,
@@ -1066,13 +1218,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionScopedPayload<EmptyPayload>): readonly McpServerInfo[] {
     return this.sessionApi(sessionId).listMcpServers(payload);
-  }
-
-  getMcpStartupMetrics({
-    sessionId,
-    ...payload
-  }: SessionScopedPayload<EmptyPayload>): Promise<McpStartupMetrics> {
-    return this.sessionApi(sessionId).getMcpStartupMetrics(payload);
   }
 
   reconnectMcpServer({
@@ -1169,9 +1314,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.plugins.summaries();
   }
 
-  async setPluginEnabled({ id, enabled }: SetPluginEnabledPayload): Promise<void> {
+  async setPluginEnabled({ id, enabled, scope, workDir }: SetPluginEnabledPayload): Promise<void> {
     await this.pluginsReady;
     this.assertPluginsLoaded();
+    if (scope === 'project') {
+      if (workDir === undefined || workDir.trim().length === 0) {
+        throw new CloudCodeError(
+          ErrorCodes.REQUEST_INVALID,
+          'setPluginEnabled with scope "project" requires a workDir',
+        );
+      }
+      await this.plugins.setProjectEnabled(id, enabled, workDir);
+      return;
+    }
     await this.plugins.setEnabled(id, enabled);
   }
 
@@ -1198,10 +1353,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       this.pluginsLoadError = undefined;
     } catch (error) {
       this.pluginsLoadError = error instanceof Error ? error : new Error(String(error));
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.PLUGIN_LOAD_FAILED,
         `Failed to reload plugins: ${this.pluginsLoadError.message}`,
-        { cause: error, details: { kimiHomeDir: this.homeDir } },
+        { cause: error, details: { cloudCodeHomeDir: this.homeDir } },
       );
     }
     // Live sessions pick up the reloaded plugin system-prompt contributions
@@ -1219,7 +1374,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.assertPluginsLoaded();
     const info = this.plugins.info(id);
     if (info === undefined) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.PLUGIN_NOT_FOUND,
         `Plugin "${id}" is not installed`,
         { details: { id } },
@@ -1230,15 +1385,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   private assertPluginsLoaded(): void {
     if (this.pluginsLoadError === undefined) return;
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.PLUGIN_LOAD_FAILED,
       `Plugin state failed to load: ${this.pluginsLoadError.message}. ` +
         `Fix the file at ${this.homeDir}/plugins/installed.json and run /plugins reload.`,
-      { cause: this.pluginsLoadError, details: { kimiHomeDir: this.homeDir } },
+      { cause: this.pluginsLoadError, details: { cloudCodeHomeDir: this.homeDir } },
     );
   }
 
-  private async resolveRuntime(config: KimiConfig): Promise<ToolServices> {
+  private async resolveRuntime(config: CloudCodeConfig): Promise<ToolServices> {
     if (this.runtime !== undefined) return this.runtime;
     const runtime = await createRuntimeConfig({
       config,
@@ -1252,21 +1407,24 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private getKaos(): Promise<Kaos> {
     this.kaos ??= LocalKaos.create().catch((error: unknown) => {
       if (error instanceof KaosShellNotFoundError) {
-        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
+        throw new CloudCodeError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
       }
       throw error;
     });
     return this.kaos;
   }
 
-  private resolveSessionSkillConfig(config: KimiConfig): SessionSkillConfig {
+  private resolveSessionSkillConfig(
+    config: CloudCodeConfig,
+    pluginScope?: PluginEnableScope,
+  ): SessionSkillConfig {
     const explicitDirs = this.skillDirs.length > 0 ? this.skillDirs : undefined;
     return {
       userHomeDir: this.userHomeDir,
       brandHomeDir: this.homeDir,
       explicitDirs,
       extraDirs: config.extraSkillDirs,
-      pluginSkillRoots: this.plugins.pluginSkillRoots(),
+      pluginSkillRoots: this.plugins.pluginSkillRoots(pluginScope),
       mergeAllAvailableSkills: config.mergeAllAvailableSkills,
     };
   }
@@ -1280,8 +1438,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     });
   }
 
-  private mergePluginMcpConfig(base: SessionMcpConfig | undefined): SessionMcpConfig | undefined {
-    const pluginServers = this.withManagedKimiPluginEnv(this.plugins.enabledMcpServers());
+  private mergePluginMcpConfig(
+    base: SessionMcpConfig | undefined,
+    pluginScope?: PluginEnableScope,
+  ): SessionMcpConfig | undefined {
+    const pluginServers = this.withManagedCloudCodePluginEnv(
+      this.plugins.enabledMcpServers(pluginScope),
+    );
     if (Object.keys(pluginServers).length === 0) return base;
     return {
       servers: {
@@ -1291,7 +1454,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     };
   }
 
-  private withManagedKimiPluginEnv(
+  private withManagedCloudCodePluginEnv(
     pluginServers: Record<string, McpServerConfig>,
   ): Record<string, McpServerConfig> {
     const managedEnv = this.managedKimiCodeEnvForPlugins();
@@ -1308,23 +1471,23 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private managedKimiCodeEnvForPlugins(): Record<string, string> {
-    const provider = this.config.providers[KIMI_CODE_PROVIDER_NAME];
-    const envBaseUrl = process.env[KIMI_CODE_BASE_URL_ENV];
-    const envOAuthHost = process.env[KIMI_CODE_OAUTH_HOST_ENV] ?? process.env[KIMI_OAUTH_HOST_ENV];
+    const provider = this.config.providers[CLOUD_CODE_PROVIDER_NAME];
+    const envBaseUrl = process.env[CLOUD_CODE_BASE_URL_ENV];
+    const envOAuthHost = process.env[CLOUD_CODE_OAUTH_HOST_ENV] ?? process.env[KIMI_OAUTH_HOST_ENV];
     const hasEnvOverride = envBaseUrl !== undefined || envOAuthHost !== undefined;
     const baseUrl =
       envBaseUrl !== undefined ? envBaseUrl.replace(/\/+$/, '') : provider?.baseUrl;
     const oauthHost = hasEnvOverride ? envOAuthHost : provider?.oauth?.oauthHost;
     const env: Record<string, string> = {};
-    if (baseUrl !== undefined) env[KIMI_CODE_BASE_URL_ENV] = baseUrl;
-    if (oauthHost !== undefined) env[KIMI_CODE_OAUTH_HOST_ENV] = oauthHost;
+    if (baseUrl !== undefined) env[CLOUD_CODE_BASE_URL_ENV] = baseUrl;
+    if (oauthHost !== undefined) env[CLOUD_CODE_OAUTH_HOST_ENV] = oauthHost;
     return env;
   }
 
   private requireSession(sessionId: string): Session {
     const session = this.sessions.get(sessionId);
     if (session === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {
+      throw new CloudCodeError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {
         details: { sessionId },
       });
     }
@@ -1335,15 +1498,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return new SessionAPIImpl(this.requireSession(sessionId));
   }
 
-  private reloadProviderManager(): KimiConfig {
+  private reloadProviderManager(): CloudCodeConfig {
     return this.reloadRuntimeConfig();
   }
 
-  private readConfigForWrite(): KimiConfig {
+  private readConfigForWrite(): CloudCodeConfig {
     return readConfigFileForUpdate(this.configPath);
   }
 
-  private reloadRuntimeConfig(): KimiConfig {
+  private reloadRuntimeConfig(): CloudCodeConfig {
     const loaded = loadRuntimeConfigSafe(this.configPath);
     if (loaded.fileWarnings.length > 0) {
       // Keep the last good config: adopting a salvaged config mid-run could
@@ -1362,7 +1525,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.setRuntimeConfig(loaded.config);
   }
 
-  private setRuntimeConfig(config: KimiConfig): KimiConfig {
+  private setRuntimeConfig(config: CloudCodeConfig): CloudCodeConfig {
     this.config = config;
     this.experimentalFlags.setConfigOverrides(config.experimental);
     this.imageLimits.setConfig(config.image);
@@ -1370,12 +1533,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   /**
-   * Config bound to a newly created/resumed session. In print mode (`kimi -p`,
+   * Config bound to a newly created/resumed session. In print mode (`cloud-code -p`,
    * v1) the print-mode defaults are merged in; explicit user config wins. The
-   * raw `this.config` is left untouched so `getKimiConfig` and config writes
+   * raw `this.config` is left untouched so `getCloudCodeConfig` and config writes
    * still round-trip the user's file values.
    */
-  private withPrintModeDefaults(config: KimiConfig): KimiConfig {
+  private withPrintModeDefaults(config: CloudCodeConfig): CloudCodeConfig {
     return this.printMode ? applyPrintModeConfigDefaults(config) : config;
   }
 
@@ -1386,7 +1549,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   private async refreshSessionRuntimeConfig(
     session: Session,
-    config: KimiConfig,
+    config: CloudCodeConfig,
   ): Promise<void> {
     const api = new SessionAPIImpl(session);
     // A session migrated from an external tool carries no model, and any
@@ -1410,7 +1573,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         const aliasMissing = config.models?.[model] === undefined;
         if (
           aliasMissing &&
-          error instanceof KimiError &&
+          error instanceof CloudCodeError &&
           error.code === ErrorCodes.CONFIG_INVALID
         ) {
           continue;
@@ -1424,7 +1587,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 function requireRemoteMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
   const config = mcpConfigWithoutName(server);
   if (config.transport !== 'stdio') return config;
-  throw new KimiError(
+  throw new CloudCodeError(
     ErrorCodes.REQUEST_INVALID,
     `MCP server "${server.name}" does not use a remote transport`,
   );
@@ -1433,13 +1596,13 @@ function requireRemoteMcpServer(server: GlobalMcpServerConfig): McpRemoteServerC
 function requireOAuthMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
   const config = requireRemoteMcpServer(server);
   if (config.bearerTokenEnvVar !== undefined) {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.REQUEST_INVALID,
       `MCP server "${server.name}" uses a static bearer token`,
     );
   }
   if (config.headers !== undefined && config.auth !== 'oauth') {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.REQUEST_INVALID,
       `MCP server "${server.name}" uses static headers and is not marked for OAuth`,
     );
@@ -1473,7 +1636,7 @@ function standaloneMcpTestResult(
 }
 
 async function createRuntimeConfig(input: {
-  readonly config: KimiConfig;
+  readonly config: CloudCodeConfig;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
 }): Promise<ToolServices> {
@@ -1511,7 +1674,7 @@ async function createRuntimeConfig(input: {
 }
 
 /**
- * Resolve `KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*` without mixing credentials
+ * Resolve `CLOUD_CODE_WEB_SEARCH_*` / `CLOUD_CODE_WEB_FETCH_*` without mixing credentials
  * across service origins. An env base URL starts a fresh service entry so a
  * persisted API key, OAuth token, or custom header cannot reach the env
  * endpoint. An env API key without an env base URL keeps the configured
@@ -1547,7 +1710,7 @@ function serviceCredentials(
     apiKey,
     tokenProvider:
       service.oauth !== undefined
-        ? resolveOAuthTokenProvider?.(KIMI_CODE_PROVIDER_NAME, service.oauth)
+        ? resolveOAuthTokenProvider?.(CLOUD_CODE_PROVIDER_NAME, service.oauth)
         : undefined,
     customHeaders: service.customHeaders,
   };
@@ -1560,7 +1723,7 @@ function nonEmptyString(value: string | undefined): string | undefined {
 
 function requiredWorkDir(operation: string, value: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
+    throw new CloudCodeError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(value);
 }
@@ -1576,26 +1739,6 @@ function withAdditionalDirs<T>(
   return {
     ...result,
     additionalDirs: session.getAdditionalDirs(),
-  };
-}
-
-function telemetryErrorReason(error: unknown): string {
-  if (error instanceof KimiError) return error.code;
-  if (error instanceof Error && error.name.length > 0) return error.name;
-  return typeof error;
-}
-
-function clientTelemetryProperties(client: ClientTelemetryInfo | undefined): TelemetryProperties {
-  if (client === undefined) return {};
-  // Emit a fixed key set (null when the client did not provide a field) so
-  // `session_started` has a stable schema across clients, matching the harness
-  // producer in `kimi-harness.ts`. Other session events also inherit these as
-  // context properties, so they share the same stable client-attribution shape.
-  return {
-    client_id: client.id ?? null,
-    client_name: client.name ?? null,
-    client_version: client.version ?? null,
-    ui_mode: client.uiMode ?? null,
   };
 }
 
@@ -1631,6 +1774,7 @@ async function resumeSessionResult(
     const permission = await api.getPermission({ agentId });
     const plan = await api.getPlan({ agentId });
     const swarmMode = await api.getSwarmMode({ agentId });
+    const coordinatorMode = await api.getCoordinatorMode({ agentId });
     const usage = await api.getUsage({ agentId });
     agents[agentId] = {
       type: agent.type,
@@ -1640,6 +1784,7 @@ async function resumeSessionResult(
       permission,
       plan,
       swarmMode,
+      coordinatorMode,
       usage,
       tools: await api.getTools({ agentId }),
       toolStore: agent.tools.storeData(),

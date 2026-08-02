@@ -1,48 +1,48 @@
 import {
   createRPC,
   ErrorCodes,
-  KimiError,
+  CloudCodeError,
   parseConfigString,
   resolveConfigPath,
   type RPCMethods,
-} from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
 import { z } from 'zod';
 
-export type KimiConfigValidationPathSegment = string | number;
+export type CloudCodeConfigValidationPathSegment = string | number;
 
-export interface KimiConfigValidationIssue {
-  readonly path: readonly KimiConfigValidationPathSegment[];
+export interface CloudCodeConfigValidationIssue {
+  readonly path: readonly CloudCodeConfigValidationPathSegment[];
   readonly message: string;
 }
 
-export interface ResolveKimiConfigPathInput {
+export interface ResolveCloudCodeConfigPathInput {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
 }
 
-export interface ValidateKimiConfigTomlInput {
+export interface ValidateCloudCodeConfigTomlInput {
   readonly text: string;
   readonly filePath?: string | undefined;
 }
 
-export interface KimiConfigRpc {
-  resolveConfigPath(input?: ResolveKimiConfigPathInput): Promise<string>;
-  validateConfigToml(input: ValidateKimiConfigTomlInput): Promise<void>;
+export interface CloudCodeConfigRpc {
+  resolveConfigPath(input?: ResolveCloudCodeConfigPathInput): Promise<string>;
+  validateConfigToml(input: ValidateCloudCodeConfigTomlInput): Promise<void>;
 }
 
-interface KimiConfigCoreRpc {
-  resolveConfigPath(input: ResolveKimiConfigPathInput): string;
-  validateConfigToml(input: ValidateKimiConfigTomlInput): void;
+interface CloudCodeConfigCoreRpc {
+  resolveConfigPath(input: ResolveCloudCodeConfigPathInput): string;
+  validateConfigToml(input: ValidateCloudCodeConfigTomlInput): void;
 }
 
-interface KimiConfigClientRpc {}
+interface CloudCodeConfigClientRpc {}
 
-class KimiConfigCoreRpcImpl implements KimiConfigCoreRpc {
-  resolveConfigPath(input: ResolveKimiConfigPathInput): string {
+class CloudCodeConfigCoreRpcImpl implements CloudCodeConfigCoreRpc {
+  resolveConfigPath(input: ResolveCloudCodeConfigPathInput): string {
     return resolveConfigPath(input);
   }
 
-  validateConfigToml(input: ValidateKimiConfigTomlInput): void {
+  validateConfigToml(input: ValidateCloudCodeConfigTomlInput): void {
     try {
       parseConfigString(input.text, input.filePath);
     } catch (error) {
@@ -55,48 +55,48 @@ class KimiConfigCoreRpcImpl implements KimiConfigCoreRpc {
   }
 }
 
-export class KimiConfigRpcClient implements KimiConfigRpc {
-  private readonly ready: Promise<RPCMethods<KimiConfigCoreRpc>>;
+export class CloudCodeConfigRpcClient implements CloudCodeConfigRpc {
+  private readonly ready: Promise<RPCMethods<CloudCodeConfigCoreRpc>>;
 
   constructor() {
-    const [coreRpc, clientRpc] = createRPC<KimiConfigCoreRpc, KimiConfigClientRpc>();
-    void coreRpc(new KimiConfigCoreRpcImpl());
+    const [coreRpc, clientRpc] = createRPC<CloudCodeConfigCoreRpc, CloudCodeConfigClientRpc>();
+    void coreRpc(new CloudCodeConfigCoreRpcImpl());
     this.ready = clientRpc({});
   }
 
-  async resolveConfigPath(input: ResolveKimiConfigPathInput = {}): Promise<string> {
+  async resolveConfigPath(input: ResolveCloudCodeConfigPathInput = {}): Promise<string> {
     const rpc = await this.ready;
     return rpc.resolveConfigPath(input);
   }
 
-  async validateConfigToml(input: ValidateKimiConfigTomlInput): Promise<void> {
+  async validateConfigToml(input: ValidateCloudCodeConfigTomlInput): Promise<void> {
     const rpc = await this.ready;
     await rpc.validateConfigToml(input);
   }
 }
 
-export function createKimiConfigRpc(): KimiConfigRpc {
-  return new KimiConfigRpcClient();
+export function createCloudCodeConfigRpc(): CloudCodeConfigRpc {
+  return new CloudCodeConfigRpcClient();
 }
 
 function toConfigValidationError(
   error: unknown,
-  validationIssues: readonly KimiConfigValidationIssue[],
-): KimiError {
+  validationIssues: readonly CloudCodeConfigValidationIssue[],
+): CloudCodeError {
   const details =
-    error instanceof KimiError && error.details !== undefined
+    error instanceof CloudCodeError && error.details !== undefined
       ? { ...error.details, validationIssues }
       : { validationIssues };
 
-  if (error instanceof KimiError) {
-    return new KimiError(error.code, error.message, { details });
+  if (error instanceof CloudCodeError) {
+    return new CloudCodeError(error.code, error.message, { details });
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  return new KimiError(ErrorCodes.CONFIG_INVALID, message, { details });
+  return new CloudCodeError(ErrorCodes.CONFIG_INVALID, message, { details });
 }
 
-function extractValidationIssues(error: unknown): readonly KimiConfigValidationIssue[] | undefined {
+function extractValidationIssues(error: unknown): readonly CloudCodeConfigValidationIssue[] | undefined {
   const zodError = findZodError(error);
   if (zodError === undefined) return undefined;
   return zodError.issues.map((issue) => ({

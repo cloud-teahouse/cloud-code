@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto';
 
 import { readApiErrorMessage } from './api-error';
-import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
+import { DEFAULT_CLOUD_CODE_OAUTH_HOST } from './constants';
 import { OAuthUnauthorizedError } from './errors';
 import { parseKimiCodeCustomHeaders } from './identity';
-import { DEFAULT_KIMI_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
+import { DEFAULT_CLOUD_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
 import { MANAGED_KIMI_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
 import { isRecord } from './utils';
 
-export const KIMI_CODE_PLATFORM_ID = 'kimi-code';
-export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
-export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
-const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
+export const CLOUD_CODE_PLATFORM_ID = 'kimi-code';
+export const CLOUD_CODE_PROVIDER_NAME = 'managed:kimi-code';
+export const CLOUD_CODE_OAUTH_KEY = 'oauth/kimi-code';
+const CLOUD_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
 export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic';
 
@@ -43,7 +43,7 @@ export interface ManagedKimiCodeModelInfo {
 }
 
 export interface ManagedKimiCodeProvisionResult {
-  readonly providerName: typeof KIMI_CODE_PROVIDER_NAME;
+  readonly providerName: typeof CLOUD_CODE_PROVIDER_NAME;
   readonly defaultModel: string;
   readonly defaultThinking: boolean;
   readonly models: readonly ManagedKimiCodeModelInfo[];
@@ -70,7 +70,7 @@ export interface ManagedKimiCodeApplyResult {
 }
 
 export interface ManagedKimiCodeCleanupResult {
-  readonly providerName: typeof KIMI_CODE_PROVIDER_NAME;
+  readonly providerName: typeof CLOUD_CODE_PROVIDER_NAME;
   readonly removedProvider: boolean;
   readonly removedModels: readonly string[];
   readonly defaultModelCleared: boolean;
@@ -101,8 +101,8 @@ export interface ManagedKimiLoginAuth {
 }
 
 export interface ManagedKimiEnv {
-  readonly KIMI_CODE_BASE_URL?: string | undefined;
-  readonly KIMI_CODE_OAUTH_HOST?: string | undefined;
+  readonly CLOUD_CODE_BASE_URL?: string | undefined;
+  readonly CLOUD_CODE_OAUTH_HOST?: string | undefined;
   readonly KIMI_OAUTH_HOST?: string | undefined;
 }
 
@@ -117,7 +117,7 @@ export class ManagedKimiCodeModelsAuthError extends OAuthUnauthorizedError {
     readonly credentialKind?: 'oauth' | 'apiKey' | undefined;
   }) {
     super(
-      `Kimi Code models endpoint ${options.baseUrl} rejected ${
+      `Cloud Code models endpoint ${options.baseUrl} rejected ${
         options.credentialKind === 'apiKey' ? 'the API key' : 'OAuth credentials'
       }: ${options.message}`,
     );
@@ -144,6 +144,7 @@ export interface ManagedKimiModelAliasOverrides {
   adaptiveThinking?: boolean | undefined;
   supportEfforts?: readonly string[] | undefined;
   defaultEffort?: string | undefined;
+  serviceTiers?: readonly string[] | undefined;
   readonly [key: string]: unknown;
 }
 
@@ -158,6 +159,11 @@ export interface ManagedKimiModelAlias {
   protocol?: ManagedKimiCodeProtocol;
   betaApi?: boolean;
   adaptiveThinking?: boolean | undefined;
+  /**
+   * Catalog-declared service tier ids (ChatGPT Codex `service_tiers[].id`;
+   * `'priority'` is the fast tier). Drives the model-level /fast gate.
+   */
+  serviceTiers?: readonly string[] | undefined;
   overrides?: ManagedKimiModelAliasOverrides | undefined;
   readonly [key: string]: unknown;
 }
@@ -218,7 +224,7 @@ export interface ProvisionManagedKimiCodeConfigOptions<TConfig> {
 }
 
 function managedModelKey(modelId: string): string {
-  return `${KIMI_CODE_PLATFORM_ID}/${modelId}`;
+  return `${CLOUD_CODE_PLATFORM_ID}/${modelId}`;
 }
 
 interface SelectedDefaultModel {
@@ -267,10 +273,10 @@ function persistedOAuthHost(options: {
   readonly oauthHost?: string | undefined;
 }): string | undefined {
   const oauthHost = options.oauthHost;
-  const normalized = normalizeEndpoint(oauthHost ?? DEFAULT_KIMI_CODE_OAUTH_HOST);
+  const normalized = normalizeEndpoint(oauthHost ?? DEFAULT_CLOUD_CODE_OAUTH_HOST);
   if (
-    options.key === KIMI_CODE_OAUTH_KEY &&
-    normalized === normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST)
+    options.key === CLOUD_CODE_OAUTH_KEY &&
+    normalized === normalizeEndpoint(DEFAULT_CLOUD_CODE_OAUTH_HOST)
   ) {
     return undefined;
   }
@@ -304,35 +310,35 @@ function configuredOAuthRef(
 }
 
 export function kimiCodeEnvBaseUrl(env: ManagedKimiEnv = process.env): string | undefined {
-  return env.KIMI_CODE_BASE_URL;
+  return env.CLOUD_CODE_BASE_URL;
 }
 
 export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string | undefined {
-  return env.KIMI_CODE_OAUTH_HOST ?? env.KIMI_OAUTH_HOST;
+  return env.CLOUD_CODE_OAUTH_HOST ?? env.KIMI_OAUTH_HOST;
 }
 
 // Base URLs that share the default `oauth/kimi-code` credential slot.
 const SHARED_DEFAULT_BASE_URLS: readonly string[] = [
-  normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL),
+  normalizeEndpoint(DEFAULT_CLOUD_CODE_BASE_URL),
 ];
 
 export function resolveKimiCodeOAuthKey(options: {
   readonly oauthHost?: string | undefined;
   readonly baseUrl?: string | undefined;
 }): string {
-  const oauthHost = normalizeEndpoint(options.oauthHost ?? DEFAULT_KIMI_CODE_OAUTH_HOST);
+  const oauthHost = normalizeEndpoint(options.oauthHost ?? DEFAULT_CLOUD_CODE_OAUTH_HOST);
   const baseUrl = defaultBaseUrl(options.baseUrl);
-  const defaultOauthHost = normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST);
+  const defaultOauthHost = normalizeEndpoint(DEFAULT_CLOUD_CODE_OAUTH_HOST);
 
   if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.includes(baseUrl)) {
-    return KIMI_CODE_OAUTH_KEY;
+    return CLOUD_CODE_OAUTH_KEY;
   }
 
   const digest = createHash('sha256')
     .update(JSON.stringify({ oauthHost, baseUrl }))
     .digest('hex')
     .slice(0, 16);
-  return `${KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX}${digest}`;
+  return `${CLOUD_CODE_SCOPED_OAUTH_KEY_PREFIX}${digest}`;
 }
 
 /**
@@ -418,7 +424,7 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   }
   const contextLength = Number(item['context_length']);
   if (!Number.isInteger(contextLength) || contextLength <= 0) {
-    throw new Error(`Kimi Code model "${item['id']}" must include a positive context_length.`);
+    throw new Error(`Cloud Code model "${item['id']}" must include a positive context_length.`);
   }
   const displayName = item['display_name'];
   const normalizedDisplayName =
@@ -500,7 +506,7 @@ export async function fetchManagedKimiCodeModels(
   if (!response.ok) {
     const message = await readApiErrorMessage(
       response,
-      `Failed to list Kimi Code models (HTTP ${response.status}).`,
+      `Failed to list Cloud Code models (HTTP ${response.status}).`,
     );
     if (response.status === 401 || response.status === 402 || response.status === 403) {
       throw new ManagedKimiCodeModelsAuthError({
@@ -571,7 +577,7 @@ export function applyManagedKimiCodeConfig(
   },
 ): ManagedKimiCodeApplyResult {
   if (options.models.length === 0) {
-    throw new Error('No models available for Kimi Code.');
+    throw new Error('No models available for Cloud Code.');
   }
   for (const model of options.models) {
     assertPositiveContextLength(model);
@@ -587,7 +593,7 @@ export function applyManagedKimiCodeConfig(
     preserveExisting: options.preserveDefaultModel === true,
   });
 
-  config.providers[KIMI_CODE_PROVIDER_NAME] = {
+  config.providers[CLOUD_CODE_PROVIDER_NAME] = {
     type: 'kimi',
     baseUrl,
     apiKey: '',
@@ -603,7 +609,7 @@ export function applyManagedKimiCodeConfig(
   for (const [key, model] of Object.entries(existingModels)) {
     if (
       isRecord(model) &&
-      model['provider'] === KIMI_CODE_PROVIDER_NAME &&
+      model['provider'] === CLOUD_CODE_PROVIDER_NAME &&
       !upstreamKeys.has(key)
     ) {
       delete existingModels[key];
@@ -614,7 +620,7 @@ export function applyManagedKimiCodeConfig(
     const existing = isRecord(existingModels[key]) ? existingModels[key] : {};
     existingModels[key] = mergeRefreshedModelAlias(
       existing,
-      toManagedModelAlias(KIMI_CODE_PROVIDER_NAME, model),
+      toManagedModelAlias(CLOUD_CODE_PROVIDER_NAME, model),
       MANAGED_KIMI_MODEL_FIELDS,
     );
   }
@@ -643,7 +649,7 @@ export function applyManagedKimiCodeConfig(
 
 /**
  * Merge refreshed `/models` entries into the aliases of an api-key provider
- * pointing at the managed Kimi Code endpoint (a hand-configured provider using
+ * pointing at the managed Cloud Code endpoint (a hand-configured provider using
  * a distributed API key instead of OAuth). Unlike `applyManagedKimiCodeConfig`
  * this touches ONLY `config.models`: the provider record (type / baseUrl /
  * apiKey and any hand-written extras), `services`, `defaultModel`, and
@@ -690,12 +696,12 @@ export function applyManagedApiKeyProviderModels(
 }
 
 export function applyManagedKimiCodeLogoutConfig(config: ManagedKimiConfigShape): void {
-  delete config.providers[KIMI_CODE_PROVIDER_NAME];
+  delete config.providers[CLOUD_CODE_PROVIDER_NAME];
 
   let removedDefaultModel = false;
   const existingModels = config.models ?? {};
   for (const [key, model] of Object.entries(existingModels)) {
-    if (!isRecord(model) || model['provider'] !== KIMI_CODE_PROVIDER_NAME) continue;
+    if (!isRecord(model) || model['provider'] !== CLOUD_CODE_PROVIDER_NAME) continue;
     delete existingModels[key];
     if (config.defaultModel === key) removedDefaultModel = true;
   }
@@ -705,7 +711,7 @@ export function applyManagedKimiCodeLogoutConfig(config: ManagedKimiConfigShape)
     config.defaultModel = undefined;
   }
 
-  if (config['defaultProvider'] === KIMI_CODE_PROVIDER_NAME) {
+  if (config['defaultProvider'] === CLOUD_CODE_PROVIDER_NAME) {
     config['defaultProvider'] = undefined;
   }
 
@@ -738,7 +744,7 @@ function selectDefaultModel(
 ): SelectedDefaultModel {
   const firstModel = models[0];
   if (firstModel === undefined) {
-    throw new Error('No models available for Kimi Code.');
+    throw new Error('No models available for Cloud Code.');
   }
 
   const managedModels = new Map(models.map((model) => [managedModelKey(model.id), model]));
@@ -776,20 +782,20 @@ function canPreserveDefaultModel(
 ): boolean {
   if (managedModels.has(defaultModel)) return true;
   const existing = existingModels[defaultModel];
-  return isRecord(existing) && existing['provider'] !== KIMI_CODE_PROVIDER_NAME;
+  return isRecord(existing) && existing['provider'] !== CLOUD_CODE_PROVIDER_NAME;
 }
 
 export function clearManagedKimiCodeConfig(
   config: ManagedKimiConfigShape,
 ): ManagedKimiCodeCleanupResult {
-  const removedProvider = Object.hasOwn(config.providers, KIMI_CODE_PROVIDER_NAME);
-  delete config.providers[KIMI_CODE_PROVIDER_NAME];
+  const removedProvider = Object.hasOwn(config.providers, CLOUD_CODE_PROVIDER_NAME);
+  delete config.providers[CLOUD_CODE_PROVIDER_NAME];
 
   const removedModels: string[] = [];
   const models = config.models;
   if (models !== undefined) {
     for (const [key, model] of Object.entries(models)) {
-      if (!isRecord(model) || model['provider'] !== KIMI_CODE_PROVIDER_NAME) continue;
+      if (!isRecord(model) || model['provider'] !== CLOUD_CODE_PROVIDER_NAME) continue;
       delete models[key];
       removedModels.push(key);
     }
@@ -815,7 +821,7 @@ export function clearManagedKimiCodeConfig(
   }
 
   return {
-    providerName: KIMI_CODE_PROVIDER_NAME,
+    providerName: CLOUD_CODE_PROVIDER_NAME,
     removedProvider,
     removedModels,
     defaultModelCleared,
@@ -825,7 +831,7 @@ export function clearManagedKimiCodeConfig(
 
 function assertPositiveContextLength(model: ManagedKimiCodeModelInfo): void {
   if (!Number.isInteger(model.contextLength) || model.contextLength <= 0) {
-    throw new Error(`Kimi Code model "${model.id}" must include a positive context_length.`);
+    throw new Error(`Cloud Code model "${model.id}" must include a positive context_length.`);
   }
 }
 
@@ -849,7 +855,7 @@ export async function provisionManagedKimiCodeConfig<TConfig>(
   });
   await options.adapter.write(config);
   return {
-    providerName: KIMI_CODE_PROVIDER_NAME,
+    providerName: CLOUD_CODE_PROVIDER_NAME,
     defaultModel: applied.defaultModel,
     defaultThinking: applied.defaultThinking,
     models,

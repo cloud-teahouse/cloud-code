@@ -1,19 +1,19 @@
 export {
   ErrorCodes,
-  KIMI_ERROR_INFO,
-  type KimiErrorCode,
-  type KimiErrorInfo,
+  CLOUD_CODE_ERROR_INFO,
+  type CloudCodeErrorCode,
+  type CloudCodeErrorInfo,
 } from './codes';
 export {
-  KimiError,
-  type KimiErrorOptions,
+  CloudCodeError,
+  type CloudCodeErrorOptions,
 } from './classes';
 export {
-  fromKimiErrorPayload,
-  isKimiError,
+  fromCloudCodeErrorPayload,
+  isCloudCodeError,
   makeErrorPayload,
-  toKimiErrorPayload,
-  type KimiErrorPayload,
+  toCloudCodeErrorPayload,
+  type CloudCodeErrorPayload,
 } from './serialize';
 export {
   onUnexpectedError,

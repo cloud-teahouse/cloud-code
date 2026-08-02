@@ -27,7 +27,7 @@ import {
   type ModelCapability,
   type StreamDecodeStats,
   type StreamedMessagePart,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 
 import type {
   LLM,
@@ -37,6 +37,7 @@ import type {
 } from '../../loop';
 import {
   applyCompletionBudget,
+  computeCompletionBudgetCap,
   type CompletionBudgetConfig,
 } from '../../utils/completion-budget';
 import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
@@ -75,6 +76,12 @@ export class KosongLLM implements LLM {
   private readonly generate: GenerateFn;
   private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
   private readonly usedContextTokens: (() => number) | undefined;
+  /**
+   * Session-scoped completion-cap override for the max_output_tokens recovery
+   * chain. Applied per request like the configured budget, but never written
+   * back to durable agent state.
+   */
+  private completionBudgetHardCapOverride: number | undefined;
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
@@ -84,6 +91,35 @@ export class KosongLLM implements LLM {
     this.generate = config.generate ?? kosongGenerate;
     this.completionBudgetConfig = config.completionBudgetConfig;
     this.usedContextTokens = config.usedContextTokens;
+  }
+
+  /**
+   * Override the per-request completion cap (`undefined` clears the override
+   * and returns to the configured budget). Used by the turn's
+   * max_output_tokens recovery chain to escalate the cap for one retry.
+   */
+  setCompletionBudgetHardCapOverride(hardCap: number | undefined): void {
+    this.completionBudgetHardCapOverride = hardCap;
+  }
+
+  /**
+   * True when the user explicitly capped completion tokens (env var or
+   * `maxOutputSize`). The recovery chain must not escalate past user intent.
+   */
+  get hasExplicitCompletionHardCap(): boolean {
+    return this.completionBudgetConfig?.hardCap !== undefined;
+  }
+
+  /**
+   * The effective per-request completion cap before any override; `undefined`
+   * when no budget is applied to requests at all (provider default wins).
+   */
+  currentCompletionCap(): number | undefined {
+    if (this.completionBudgetConfig === undefined) return undefined;
+    return computeCompletionBudgetCap({
+      budget: this.completionBudgetConfig,
+      capability: this.capability,
+    });
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
@@ -111,9 +147,14 @@ export class KosongLLM implements LLM {
     // throwaway shallow clone. `effectiveProvider` is local to this call
     // and never written back to `this.provider`, so retries (handled at
     // a higher layer) keep using the same long-lived provider/client.
+    // A recovery-chain override (max_output_tokens escalation) takes
+    // precedence over the configured budget for this request only.
     const effectiveProvider = applyCompletionBudget({
       provider: this.provider,
-      budget: this.completionBudgetConfig,
+      budget:
+        this.completionBudgetHardCapOverride !== undefined
+          ? { hardCap: this.completionBudgetHardCapOverride }
+          : this.completionBudgetConfig,
       capability: this.capability,
       usedContextTokens: this.usedContextTokens?.(),
     });
@@ -159,6 +200,7 @@ export class KosongLLM implements LLM {
           ? undefined
           : buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt, decodeStats),
       traceId: result.traceId ?? undefined,
+      rateLimit: result.rateLimit ?? undefined,
     };
 
     return response;
@@ -222,6 +264,7 @@ function buildKosongCallbacks(
   };
 
   return {
+    onToolCallReady: params.onToolCallReady,
     onMessagePart: (part: StreamedMessagePart) => {
       markStreamOutput();
       if (part.type === 'text') {

@@ -20,7 +20,7 @@ import { DtIndex } from './dt-index.js';
 import { TextIndex, type TextIndexOptions } from './text-index.js';
 import { createNgramTokenizer } from './trigram.js';
 import { CompoundIndexManager } from './compound-index.js';
-import { getPath, match, project } from './query.js';
+import { compileMatch, compileProject, getPathTokens, projectTokens, tokenizePath } from './query.js';
 import { LockFile, LockError } from './lockfile.js';
 import { encodeFrame, encodeBatchOps, scanBatchOpRefs, HEADER_SIZE, TYPE_SET, TYPE_DEL, TYPE_BATCH } from './codec.js';
 import type { BatchOp as EncodedBatchOp, FrameRef } from './codec.js';
@@ -630,6 +630,11 @@ export class MiniDb<V = unknown> {
   }
 
   private touchAccess(pk: string): void {
+    // `access` is only read by pickEvictionVictim, reachable only when
+    // maxMemoryBytes is set — skip the LRU bookkeeping otherwise. Setting the
+    // public maxMemoryBytes field after open still works: the victim picker's
+    // store.map fallback covers keys never recorded here.
+    if (this.maxMemoryBytes === null) return;
     // Re-insert so the iteration order of `access` is LRU..MRU: delete()+add()
     // moves the key to the most-recently-used end (a plain set() on an existing
     // key would keep its old position, which forced O(N) victim scans).
@@ -638,6 +643,7 @@ export class MiniDb<V = unknown> {
   }
 
   private seedAccessFromStore(): void {
+    if (this.maxMemoryBytes === null) return;
     this.access.clear();
     for (const [k] of this.store.map) this.access.add(k);
   }
@@ -939,7 +945,10 @@ export class MiniDb<V = unknown> {
   private applyOp(op: PreparedOp<V>): StoreRecord | undefined {
     const oldBuf = this.store.get(op.pk);
     const prev = oldBuf !== undefined ? this.store.map.get(op.pk) : undefined;
-    const oldDoc = oldBuf !== undefined ? this.decode(oldBuf) : undefined;
+    // The old doc is only read when a secondary index needs it for removal, so
+    // skip the decode when there are none. The store.get above stays either
+    // way: it lazy-reaps an expired record (onExpire drops its derived state).
+    const oldDoc = oldBuf !== undefined && this.indexes.indexes.size > 0 ? this.decode(oldBuf) : undefined;
     if (op.type === TYPE_SET) {
       // Always applied as an in-memory ref; in valueMode 'disk' the caller
       // swaps in the WAL pointer via publishWalRef() once the frame's bytes
@@ -1454,6 +1463,7 @@ export class MiniDb<V = unknown> {
     // simple equality predicates that have an equality index.
     const eqChecks = this.cheapEqChecks(q.filter);
 
+    const pred = q.filter ? compileMatch(q.filter) : null;
     const out: { key: string; value: V; dt: Record<string, number> | undefined }[] = [];
     let skipped = 0;
     for (const { key: kstr } of this.dt.iterate(col, iterOpts)) {
@@ -1469,7 +1479,7 @@ export class MiniDb<V = unknown> {
       if (buf === undefined) continue;
       const r = this.store.map.get(kstr);
       const value = this.decode(buf)!;
-      if (q.filter && !match(value, q.filter)) continue;
+      if (pred && !pred(value)) continue;
       if (skipped < skip) {
         skipped++;
         continue;
@@ -1478,9 +1488,10 @@ export class MiniDb<V = unknown> {
       if (out.length >= limit) break;
     }
 
+    const projPaths = compileProject(q.project);
     return out.map((d) => ({
       key: fromKStr(d.key),
-      value: q.project ? (project(d.value, q.project) as V) : d.value,
+      value: projPaths ? (projectTokens(d.value, projPaths) as V) : d.value,
       dt: d.dt,
     }));
   }
@@ -1545,6 +1556,7 @@ export class MiniDb<V = unknown> {
     // set (an indexed equality query with limit previously decoded every
     // candidate and sliced at the end).
     const early = !q.sort && !textOrder;
+    const pred = q.filter ? compileMatch(q.filter) : null;
     const docs: ScanEntry<V>[] = [];
     let seen = 0;
     for (const k of keys) {
@@ -1552,7 +1564,7 @@ export class MiniDb<V = unknown> {
       if (buf === undefined) continue;
       const r = this.store.map.get(k);
       const value = this.decode(buf)!;
-      if (q.filter && !match(value, q.filter)) continue;
+      if (pred && !pred(value)) continue;
       if (early) {
         if (seen++ < skip) continue;
         docs.push({ key: k, value, dt: r?.dt ?? undefined });
@@ -1568,11 +1580,12 @@ export class MiniDb<V = unknown> {
     }
 
     if (q.sort) {
-      const entries = Object.entries(q.sort);
+      // Tokenize sort paths once: the comparator walks them per comparison.
+      const entries = Object.entries(q.sort).map(([p, dir]) => ({ tokens: tokenizePath(p), dir }));
       docs.sort((a, b) => {
-        for (const [p, dir] of entries) {
-          const av = getPath(a.value, p) as number | string;
-          const bv = getPath(b.value, p) as number | string;
+        for (const { tokens, dir } of entries) {
+          const av = getPathTokens(a.value, tokens) as number | string;
+          const bv = getPathTokens(b.value, tokens) as number | string;
           const c = av < bv ? -1 : av > bv ? 1 : 0;
           if (c !== 0) return dir < 0 ? -c : c;
         }
@@ -1582,8 +1595,9 @@ export class MiniDb<V = unknown> {
 
     const sliced = early ? docs : skip || limit !== Infinity ? docs.slice(skip, skip + limit) : docs;
 
-    if (q.project) {
-      return sliced.map((d) => ({ key: fromKStr(d.key), value: project(d.value, q.project) as V, dt: d.dt }));
+    const projPaths = compileProject(q.project);
+    if (projPaths) {
+      return sliced.map((d) => ({ key: fromKStr(d.key), value: projectTokens(d.value, projPaths) as V, dt: d.dt }));
     }
     return sliced.map((d) => ({ ...d, key: fromKStr(d.key) }));
   }

@@ -301,22 +301,28 @@ describe('providers without message-level tool declarations', () => {
       .fn()
       .mockImplementation((params: unknown) => {
         captured = params as Record<string, unknown>;
-        return Promise.resolve({
-          id: 'resp_test123',
-          object: 'response',
-          created_at: 1234567890,
-          status: 'completed',
-          model: 'gpt-4.1',
-          output: [
-            {
-              type: 'message',
-              id: 'msg_test',
-              role: 'assistant',
-              content: [{ type: 'output_text', text: 'Hello', annotations: [] }],
-            },
-          ],
-          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
-        });
+        return {
+          withResponse: () =>
+            Promise.resolve({
+              data: {
+                id: 'resp_test123',
+                object: 'response',
+                created_at: 1234567890,
+                status: 'completed',
+                model: 'gpt-4.1',
+                output: [
+                  {
+                    type: 'message',
+                    id: 'msg_test',
+                    role: 'assistant',
+                    content: [{ type: 'output_text', text: 'Hello', annotations: [] }],
+                  },
+                ],
+                usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+              },
+              response: new Response(null),
+            }),
+        };
       });
     const stream = await provider.generate('sys', [], HISTORY);
     for await (const part of stream) void part;

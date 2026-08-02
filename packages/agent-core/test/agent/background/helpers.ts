@@ -1,4 +1,4 @@
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@cloud-code/kaos';
 import { vi } from 'vitest';
 
 import {
@@ -15,10 +15,10 @@ export interface FakeBackgroundAgent {
   emitEvent: ReturnType<typeof vi.fn>;
   emittedEvents: AgentEvent[];
   kimiConfig?: { background?: { maxRunningTasks?: number } };
-  telemetry: { track: ReturnType<typeof vi.fn> };
   context: { appendUserMessage: ReturnType<typeof vi.fn> };
   turn: { steer: ReturnType<typeof vi.fn> };
   hooks?: { fireAndForgetTrigger: ReturnType<typeof vi.fn> };
+  coordinatorMode: { isActive: boolean };
 }
 
 export interface BackgroundManagerFixture {
@@ -31,6 +31,7 @@ export function createBackgroundManager(options: {
   sessionDir?: string;
   maxRunningTasks?: number;
   hooks?: FakeBackgroundAgent['hooks'];
+  coordinatorMode?: boolean;
 } = {}): BackgroundManagerFixture {
   const emittedEvents: AgentEvent[] = [];
   const agent: FakeBackgroundAgent = {
@@ -42,10 +43,10 @@ export function createBackgroundManager(options: {
       options.maxRunningTasks === undefined
         ? undefined
         : { background: { maxRunningTasks: options.maxRunningTasks } },
-    telemetry: { track: vi.fn() },
     context: { appendUserMessage: vi.fn() },
     turn: { steer: vi.fn() },
     hooks: options.hooks,
+    coordinatorMode: { isActive: options.coordinatorMode ?? false },
   };
   const persistence =
     options.sessionDir === undefined

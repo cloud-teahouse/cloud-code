@@ -3,8 +3,8 @@
  * environment-dependent prose blocks that appear in BOTH the builtin default
  * prompt and agent-file prompts:
  *
- * - `profile/default/system.md` renders them through the `KIMI_WINDOWS_NOTES`
- *   / `KIMI_ADDITIONAL_DIRS_SECTION_PROSE` / `KIMI_SKILLS_SECTION_PROSE`
+ * - `profile/default/system.md` renders them through the `CLOUD_CODE_WINDOWS_NOTES`
+ *   / `CLOUD_CODE_ADDITIONAL_DIRS_SECTION_PROSE` / `CLOUD_CODE_SKILLS_SECTION_PROSE`
  *   template variables injected by `resolve.ts#buildTemplateVars`;
  * - `profile/agentfile/from-file.ts` composes them into the agent-file
  *   `${windows_notes}` / `${additional_dirs_section}` / `${skills_section}`

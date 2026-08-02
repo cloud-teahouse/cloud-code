@@ -7,7 +7,7 @@ import {
   renderToolResultForModel,
   selectCompactionUserMessages,
   selectRecentUserMessages,
-} from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
 import type {
   ContentPart,
   ContextMessage,
@@ -69,6 +69,7 @@ export interface ContextProjection {
   planMode: { active: boolean; id?: string };
   goal: GoalSnapshot | null;
   swarm: { active: boolean; trigger?: string };
+  coordinator: { active: boolean };
 }
 
 const ZERO: TokenUsage = { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 };
@@ -122,6 +123,7 @@ export function projectContext(
   let contextTokens = 0;
   let goal: GoalSnapshot | null = null;
   let swarm: { active: boolean; trigger?: string } = { active: false };
+  let coordinator: { active: boolean } = { active: false };
   let microCutoff = 0;
   // Maps step.uuid → the assistant ProjectedMessage that step is filling in.
   // Cleared on context.clear / context.apply_compaction.
@@ -180,7 +182,7 @@ export function projectContext(
         } else if (ev.type === 'step.end') {
           // Absolute context-window fill, mirroring agent-core
           // ContextMemory._tokenCount: the latest step.end usage REPLACES the
-          // snapshot (it is not cumulative — see Task P1.7 note on byScope).
+          // snapshot (it is not cumulative).
           // A zero-usage step.end (e.g. a content-filtered response) is the one
           // exception agent-core makes — it keeps the prior count instead of
           // resetting to 0 — so guard against a false drop here too.
@@ -468,6 +470,22 @@ export function projectContext(
         // runs over the full history at projection time).
         microCutoff = rec.cutoff;
         break;
+      case 'graduated_compaction.apply':
+        // Graduated chain (succeeds MicroCompaction). The pinpoint-clear
+        // layer has cutoff semantics identical to micro-compaction (default
+        // marker/min-content gate match MICRO_TRUNCATED_MARKER /
+        // MICRO_MIN_CONTENT_TOKENS), so it feeds the same blanking pass;
+        // cutoffs extend monotonically, hence Math.max.
+        // The tool_result_budget layer rewrites oversized tool results to a
+        // preview + persisted path under the session dir; reproducing it would
+        // require the session homedir and the session's actual budget config,
+        // neither of which the wire carries — 'model' mode shows the original
+        // content for that layer (recorded deviation), 'full' mode is
+        // unaffected either way.
+        if (rec.layer === 'pinpoint_clear') {
+          microCutoff = Math.max(microCutoff, rec.cutoff);
+        }
+        break;
       case 'goal.create':
         goal = {
           goalId: rec.goalId,
@@ -498,9 +516,18 @@ export function projectContext(
       case 'swarm_mode.exit':
         swarm = { active: false };
         break;
+      case 'coordinator_mode.enter':
+        coordinator = { active: true };
+        break;
+      case 'coordinator_mode.exit':
+        coordinator = { active: false };
+        break;
       // Kinds that don't affect the projected timeline / derived state,
       // including the observability records (request trace — `llm.*`,
-      // `mcp.tools_discovered`), which are never part of context state:
+      // `mcp.tools_discovered`), the shadow-git workspace snapshot records
+      // (`snapshot.*` — worktree state for /rewind, never context content),
+      // rate-limit snapshots, guardian review outcomes, PTY shell-session
+      // lifecycle, and session metadata:
       case 'metadata':
       case 'forked':
       case 'turn.prompt':
@@ -514,9 +541,21 @@ export function projectContext(
       case 'tools.unregister_user_tool':
       case 'tools.set_active_tools':
       case 'tools.update_store':
+      case 'snapshot.track':
+      case 'snapshot.rewind':
       case 'llm.tools_snapshot':
       case 'llm.request':
       case 'mcp.tools_discovered':
+      case 'usage.rate_limit':
+      case 'guardian.assessment':
+      case 'guardian.review_failed':
+      case 'guardian.circuit_breaker_tripped':
+      case 'shell_session.start':
+      case 'shell_session.exit':
+      case 'session.meta':
+      case 'worktree.enter':
+      case 'worktree.exit':
+      case 'context.withdraw_tail_input':
         break;
       default: {
         const _exhaustive: never = rec;
@@ -561,6 +600,7 @@ export function projectContext(
     planMode: { active: planActive, id: planId },
     goal,
     swarm,
+    coordinator,
   };
 }
 

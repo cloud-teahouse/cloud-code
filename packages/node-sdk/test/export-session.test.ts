@@ -7,8 +7,8 @@ import * as zlib from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  createKimiHarness,
-  KimiError,
+  createCloudCodeHarness,
+  CloudCodeError,
   type SessionSummary,
 } from '#/index';
 import { resolveGlobalLogPath } from '../../agent-core/src/logging/logger';
@@ -16,7 +16,6 @@ import {
   WIRE_PROTOCOL_VERSION,
   exportSessionDirectory,
 } from '../../agent-core/src/session/export';
-import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 import { TEST_IDENTITY } from './test-identity';
 
 // agent-core/node-sdk normalize paths to forward slashes (pathe). Mirror that
@@ -182,7 +181,7 @@ describe('exportSessionDirectory', () => {
     });
 
     expect(dirname(result.zipPath)).toBe(toPosix(resolve('.')));
-    expect(basename(result.zipPath)).toMatch(/^kimi-debug-session_-\d{8}-\d{6}\.zip$/);
+    expect(basename(result.zipPath)).toMatch(/^cloud-code-debug-session_-\d{8}-\d{6}\.zip$/);
     expect(existsSync(result.zipPath)).toBe(true);
     await rm(result.zipPath, { force: true });
   });
@@ -233,9 +232,9 @@ describe('exportSessionDirectory', () => {
     });
 
     expect(result.manifest.globalLogPath).toBeUndefined();
-    expect(result.entries).not.toContain('logs/global/kimi-code.log');
+    expect(result.entries).not.toContain('logs/global/cloud-code.log');
     const entries = readZipEntries(await readFile(outputPath));
-    expect(entries.has('logs/global/kimi-code.log')).toBe(false);
+    expect(entries.has('logs/global/cloud-code.log')).toBe(false);
     const manifest = JSON.parse(entries.get('manifest.json')!.toString('utf-8')) as Record<
       string,
       unknown
@@ -289,21 +288,19 @@ describe('exportSessionDirectory', () => {
         summary: makeSummary({ id: sid, sessionDir, workDir: tmp }),
       }),
     ).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'CloudCodeError',
       code: 'session.export_not_found',
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
   });
 });
 
-describe('KimiHarness.exportSession', () => {
+describe('CloudCodeHarness.exportSession', () => {
   it('exports a created session through the public Harness API', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const records: TelemetryRecord[] = [];
-    const harness = createKimiHarness({
+    const harness = createCloudCodeHarness({
       identity: TEST_IDENTITY,
       homeDir,
-      telemetry: recordingTelemetry(records),
     });
 
     const session = await harness.createSession({
@@ -326,22 +323,17 @@ describe('KimiHarness.exportSession', () => {
     expect(result.entries).toContain('wire.jsonl');
     expect(result.entries).toContain('subagents/demo.txt');
     expect(result.manifest.sessionId).toBe(session.id);
-    expect(records).toContainEqual({
-      event: 'export',
-      sessionId: session.id,
-      properties: undefined,
-    });
   });
 
   it('rejects missing session ids', async () => {
     const homeDir = await makeTempDir();
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     const missingExport = harness.exportSession({ id: 'ses_missing', version: '1.0.0-test' });
-    await expect(missingExport).rejects.toBeInstanceOf(KimiError);
+    await expect(missingExport).rejects.toBeInstanceOf(CloudCodeError);
     await expect(missingExport).rejects.toMatchObject({
       code: 'session.not_found',
       details: { sessionId: 'ses_missing' },
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<CloudCodeError>);
   });
 });

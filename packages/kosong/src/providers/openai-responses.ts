@@ -2,6 +2,7 @@ import {
   APIContextOverflowError,
   APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
+  APIQuotaExceededError,
   ChatProviderError,
   isContextOverflowErrorCode,
 } from '#/errors';
@@ -16,6 +17,7 @@ import type {
   StreamedMessage,
   ThinkingEffort,
 } from '#/provider';
+import { parseCodexRateLimitHeaders, type RateLimitSnapshot } from '#/rate-limit';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
@@ -253,6 +255,12 @@ function errorFromOpenAIResponsesEvent(
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
   }
+  // Quota exhaustion surfacing mid-stream: terminal like its HTTP 429 twin
+  // (see convertOpenAIError). The event carries no x-codex-* headers, so the
+  // plan/reset/window fields stay unknown here.
+  if (code === 'usage_limit_reached') {
+    return new APIQuotaExceededError(fullMessage);
+  }
   // Quota/balance exhaustion first — otherwise an `insufficient_quota` event
   // falls through to the base ChatProviderError (whose unclassified fallback
   // is retryable), and a quota message with an embedded status_code=429 would
@@ -355,6 +363,15 @@ export interface OpenAIResponsesOptions {
   model: string;
   maxOutputTokens?: number | undefined;
   /**
+   * Omit `max_output_tokens` from every request. Some Responses-compatible
+   * backends (e.g. the ChatGPT Codex endpoint at
+   * `chatgpt.com/backend-api/codex`) reject the parameter outright
+   * (`400 Unsupported parameter`), while the official OpenAI endpoint accepts
+   * it. When true, `withMaxCompletionTokens` is honored as a no-op so the
+   * completion-budget machinery can run unchanged for other providers.
+   */
+  omitMaxOutputTokens?: boolean | undefined;
+  /**
    * The effort value that encodes "thinking off" on this wire (e.g. `'none'`
    * for xai grok). When set, `withThinking('off')` sends it as
    * `reasoning_effort` instead of omitting the field — required by models
@@ -379,6 +396,8 @@ export interface OpenAIResponsesGenerationKwargs {
   temperature?: number | undefined;
   top_p?: number | undefined;
   reasoning_effort?: string | undefined;
+  /** Fast-tier inference (`priority`) on backends that honor it, e.g. ChatGPT Codex. */
+  service_tier?: string | undefined;
   [key: string]: unknown;
 }
 interface ResponseInputItem {
@@ -516,11 +535,11 @@ function mapAudioUrlToInputItem(url: string): unknown {
 
 function convertMessage(
   message: Message,
-  modelName: string,
+  useDeveloperRole: boolean,
   toolMessageConversion: ToolMessageConversion,
 ): ResponseInputItem[] {
   let role: string = message.role;
-  if (usesOpenAIResponsesDeveloperRole(modelName) && role === 'system') {
+  if (useDeveloperRole && role === 'system') {
     role = 'developer';
   }
 
@@ -640,7 +659,7 @@ function convertTool(tool: Tool): ResponseToolParam {
  */
 function convertHistoryMessages(
   history: readonly Message[],
-  modelName: string,
+  useDeveloperRole: boolean,
   toolMessageConversion: ToolMessageConversion,
 ): unknown[] {
   const input: unknown[] = [];
@@ -667,7 +686,7 @@ function convertHistoryMessages(
     if (msg.role !== 'tool') {
       flushPendingMedia();
     }
-    input.push(...convertMessage(msg, modelName, toolMessageConversion));
+    input.push(...convertMessage(msg, useDeveloperRole, toolMessageConversion));
     if (msg.role === 'tool' && toolMessageConversion === 'extract_text') {
       pendingToolResultMedia.push(
         ...messageContentToFunctionOutputItems(msg.content.filter(isMediaPart)),
@@ -685,7 +704,11 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
   private _rawFinishReason: string | null = null;
   private readonly _iter: AsyncGenerator<StreamedMessagePart>;
 
-  constructor(response: unknown, isStream: boolean) {
+  constructor(
+    response: unknown,
+    isStream: boolean,
+    private readonly _rateLimit: RateLimitSnapshot | null = null,
+  ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(response as AsyncIterable<RawObject>);
     } else {
@@ -707,6 +730,10 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
 
   get rawFinishReason(): string | null {
     return this._rawFinishReason;
+  }
+
+  get rateLimit(): RateLimitSnapshot | null {
+    return this._rateLimit;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
@@ -1054,6 +1081,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
+  private _omitMaxOutputTokens: boolean;
 
   constructor(options: OpenAIResponsesOptions) {
     const apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'];
@@ -1067,8 +1095,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
+    this._omitMaxOutputTokens = options.omitMaxOutputTokens === true;
 
-    if (options.maxOutputTokens !== undefined) {
+    if (options.maxOutputTokens !== undefined && !this._omitMaxOutputTokens) {
       this._generationKwargs.max_output_tokens = options.maxOutputTokens;
     }
 
@@ -1106,7 +1135,14 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       OPENAI_RESPONSES_TOOL_CALL_ID_POLICY,
     );
     input.push(
-      ...convertHistoryMessages(normalizedHistory, this._model, this._toolMessageConversion),
+      // The developer-role policy depends only on `_model` (fixed for the
+      // request), so resolve it once here rather than per message inside
+      // convertMessage.
+      ...convertHistoryMessages(
+        normalizedHistory,
+        usesOpenAIResponsesDeveloperRole(this._model),
+        this._toolMessageConversion,
+      ),
     );
 
     const kwargs: Record<string, unknown> = { ...this._generationKwargs };
@@ -1159,12 +1195,27 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       }
 
       options?.onRequestSent?.();
-      const response = await (
+      // `withResponse()` resolves as soon as the response headers arrive
+      // (before the stream body), so the Codex backend's `x-codex-*` rate
+      // limit headers are captured even for a stream the caller later cancels
+      // mid-flight. Backends that do not emit the family parse to `null`.
+      const { data, response } = await (
         client.responses as {
-          create(params: unknown, opts?: unknown): Promise<unknown>;
+          create(
+            params: unknown,
+            opts?: unknown,
+          ): {
+            withResponse(): Promise<{ data: unknown; response: { headers: Headers } }>;
+          };
         }
-      ).create(createParams, options?.signal ? { signal: options.signal } : undefined);
-      return new OpenAIResponsesStreamedMessage(response, this._stream);
+      )
+        .create(createParams, options?.signal ? { signal: options.signal } : undefined)
+        .withResponse();
+      return new OpenAIResponsesStreamedMessage(
+        data,
+        this._stream,
+        parseCodexRateLimitHeaders(response.headers),
+      );
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }
@@ -1190,6 +1241,12 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 
   withMaxCompletionTokens(maxCompletionTokens: number): OpenAIResponsesChatProvider {
+    if (this._omitMaxOutputTokens) {
+      // Backend rejects max_output_tokens: honor the budget contract as a
+      // no-op so callers (completion-budget, recovery chain) behave uniformly
+      // across providers.
+      return this._clone();
+    }
     return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
   }
 

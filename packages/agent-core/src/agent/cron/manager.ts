@@ -3,7 +3,7 @@
  *
  * This layer sits between the raw `CronScheduler` (which knows nothing
  * about agents) and the rest of the agent runtime (Agent / turn /
- * telemetry / tool surface). Its job is small but important:
+ * tool surface). Its job is small but important:
  *
  *   - own the `SessionCronStore` for this session;
  *   - hand `() => store.list()` to the scheduler so add / delete are
@@ -11,13 +11,24 @@
  *   - gate fires on `agent.turn.hasActiveTurn` rather than maintaining a
  *     duplicate idle flag — the turn machinery already knows;
  *   - translate a fired `CronTask` into a `steer(...)` call carrying a
- *     `CronJobOrigin`, plus the `cron_fired` telemetry event;
+ *     `CronJobOrigin`;
  *   - mirror every store mutation to `<sessionDir>/cron/<id>.json`
- *     (via {@link addTask} / {@link removeTasks}) so that a resumed
- *     session can call {@link loadFromDisk} to rehydrate
- *     previously-scheduled tasks. When no `sessionDir` is supplied
- *     (subagents, tests, ephemeral sessions) the manager stays purely
- *     in-memory.
+ *     (via {@link addTask} / {@link removeTasks}) so that `cloud-code resume`
+ *     can call {@link loadFromDisk} to rehydrate previously-scheduled
+ *     tasks. When no `sessionDir` is supplied (subagents, tests,
+ *     ephemeral sessions) the manager stays purely in-memory.
+ *   - manage PROJECT-DURABLE tasks (`durable: true`): these live in
+ *     `<projectDir>/.cloud-code/scheduled_tasks.json` instead of the
+ *     session store, so any session in the same project — including a
+ *     brand-new one — reloads them on startup. A cross-session lock
+ *     (`lock.ts`, PID-liveness with stale recovery) elects a single
+ *     owner session; only the owner adopts project tasks into the
+ *     firing store. Missed fire times that passed while no session was
+ *     running collapse into ONE coalesced delivery on the next startup
+ *     through the scheduler's normal `coalescedCount` semantics — the
+ *     same contract the resume path already honours. The project layer
+ *     only engages for local workspaces (kaos `local`): the lock's PID
+ *     liveness is a same-machine concept.
  *   - provide a `handleMissed(...)` entry point that future boot-time
  *     missed-task notification will call. Today the scheduler's
  *     `coalescedCount` semantics handle missed fires inline, so this
@@ -37,7 +48,7 @@
  * `task.recurring !== false` to keep that default behaviour even when
  * the field is omitted by the caller.
  */
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
 import type { Agent } from '../index';
 import type { CronJobOrigin, CronMissedOrigin } from '../context/types';
@@ -47,18 +58,24 @@ import {
   type ClockSources,
 } from '../../tools/cron/clock';
 import { renderCronFireXml } from '../../tools/cron/cron-fire-xml';
+import {
+  tryAcquireProjectCronLock,
+  releaseProjectCronLock,
+} from '../../tools/cron/lock';
 import { createCronPersistStore } from '../../tools/cron/persist';
-import { SessionCronStore } from '../../tools/cron/session-store';
+import {
+  createProjectCronStore,
+  projectCronFilePath,
+  type ProjectCronStore,
+} from '../../tools/cron/project-store';
+import {
+  generateCronTaskId,
+  SessionCronStore,
+} from '../../tools/cron/session-store';
 import {
   createCronScheduler,
   type CronScheduler,
 } from '../../tools/cron/scheduler';
-import {
-  CRON_DELETED,
-  CRON_FIRED,
-  CRON_MISSED,
-  CRON_SCHEDULED,
-} from '../../tools/cron/telemetry-events';
 import type { CronTask } from '../../tools/cron/types';
 import type { PerIdJsonStore } from '../../utils/per-id-json-store';
 
@@ -77,8 +94,18 @@ import type { SessionCronTaskInit } from '../../tools/cron/session-store';
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * How often the project-schedule probe runs: a non-owner session retries
+ * the cross-session lock at this cadence (taking over when the owner
+ * died), and the owner re-reads the tasks file when its mtime changed
+ * (picking up tasks another session created). Five seconds mirrors the
+ * takeover cadence of Claude Code's cronTasksLock and keeps a freshly
+ * written task at most one probe away from the owner's scheduler.
+ */
+const DEFAULT_PROJECT_PROBE_MS = 5_000;
+
+/**
  * Point-in-time view of a scheduled cron task, exposed over RPC so host
- * applications (e.g. the `kimi -p` flow deciding whether pending work
+ * applications (e.g. the `cloud-code -p` flow deciding whether pending work
  * remains before exit) can enumerate scheduled tasks without going
  * through the model-facing CronList tool.
  */
@@ -86,6 +113,11 @@ export interface CronTaskSnapshot {
   readonly id: string;
   readonly cron: string;
   readonly recurring: boolean;
+  /**
+   * Scope marker: `true` for project-durable tasks (shared via
+   * `.cloud-code/scheduled_tasks.json`), `false` for session-scoped ones.
+   */
+  readonly durable: boolean;
   readonly createdAt: number;
   readonly lastFiredAt: number | undefined;
   /** Post-jitter next fire (epoch ms), or null when no future fire exists. */
@@ -108,6 +140,30 @@ export interface CronManagerOptions {
    * means "no automatic timer — caller drives `tick()` manually".
    */
   readonly pollIntervalMs?: number | null;
+
+  /**
+   * Project directory for durable cron tasks. Defaults to
+   * `agent.config.cwd` when the agent's kaos is local; `undefined`
+   * (non-local kaos, ephemeral stubs) disables the project layer
+   * entirely — `durable: true` requests then fall back to
+   * session-scoped with a warning.
+   */
+  readonly projectDir?: string;
+
+  /**
+   * Lock identity for the project-schedule lock. Defaults to the
+   * agent's homedir (unique per session) or a random id for ephemeral
+   * agents. Tests inject explicit identities to simulate two sessions.
+   */
+  readonly projectLockIdentity?: string;
+
+  /**
+   * Override for the project-schedule probe interval. Defaults to
+   * {@link DEFAULT_PROJECT_PROBE_MS}; `KIMI_CRON_MANUAL_TICK=1` forces
+   * `null` (no automatic probe) so benches stay deterministic — drive
+   * {@link CronManager.probeProjectSchedule} manually instead.
+   */
+  readonly projectProbeMs?: number | null;
 }
 
 export class CronManager {
@@ -125,9 +181,9 @@ export class CronManager {
   private readonly agent: Agent;
   /**
    * Tracks whether `start()` has been called without a matching `stop()`.
-   * Used to keep `start()` / `stop()` idempotent and — more importantly
-   * for P1.8 — to gate SIGUSR1 binding so we don't accumulate handlers
-   * across repeated start() calls.
+   * Used to keep `start()` / `stop()` idempotent and to gate SIGUSR1
+   * binding so we don't accumulate handlers across repeated start()
+   * calls.
    */
   private started = false;
   /**
@@ -144,7 +200,7 @@ export class CronManager {
    * `sessionDir` was supplied — the manager then behaves as pure
    * in-memory, matching pre-persistence semantics. When defined,
    * `addTask` / `removeTasks` schedule fire-and-forget writes so a
-   * later session resume can reload via {@link loadFromDisk}.
+   * later `cloud-code resume` can reload via {@link loadFromDisk}.
    */
   private readonly persistStore: PerIdJsonStore<CronTask> | undefined;
 
@@ -157,6 +213,37 @@ export class CronManager {
    */
   private readonly persistQueues: Map<string, Promise<void>> = new Map();
 
+  // ── Project-durable schedule ───────────────────────────────────────
+  /**
+   * Whole-file store for `<projectDir>/.cloud-code/scheduled_tasks.json`.
+   * `undefined` when the project layer is disabled (non-local kaos,
+   * ephemeral agent without a cwd).
+   */
+  private readonly projectStore: ProjectCronStore | undefined;
+  /** Identity written into the cross-session lock file. */
+  private readonly projectIdentity: string;
+  /** Probe interval for lock takeover / file-change reload. */
+  private readonly projectProbeMs: number | null;
+  /** True while this session holds the project schedule lock. */
+  private projectLockOwned = false;
+  /** Timer driving {@link probeProjectSchedule}; null when disarmed. */
+  private projectProbeTimer: ReturnType<typeof setInterval> | null = null;
+  /** Last observed mtime of the tasks file (owner-side change detection). */
+  private projectFileMtimeMs: number | null = null;
+  /**
+   * Serializes every project-file job (claim → write → adopt, delete,
+   * cursor stamps, probe reloads) so a reload always observes this
+   * session's own earlier writes. Mirrors {@link persistQueues}' role
+   * for the session store, but the whole file shares one chain.
+   */
+  private projectChain: Promise<unknown> = Promise.resolve();
+  /**
+   * Settles when the constructor's initial project-schedule scan (read
+   * file, claim lock if tasks exist, adopt) has finished. Tests await
+   * this before ticking; production treats it as fire-and-forget.
+   */
+  readonly projectReady: Promise<void>;
+
   constructor(agent: Agent, opts: CronManagerOptions = {}) {
     this.agent = agent;
     this.store = new SessionCronStore();
@@ -168,6 +255,25 @@ export class CronManager {
       agent.homedir === undefined
         ? undefined
         : createCronPersistStore(agent.homedir);
+
+    // Project-durable layer. Only engages for local workspaces: the
+    // cross-session lock's PID liveness is a same-machine concept, so
+    // SSH-remote cwds keep cron strictly session-scoped.
+    const projectDir =
+      opts.projectDir ??
+      (agent.kaos?.name === 'local' ? agent.config?.cwd : undefined);
+    this.projectStore =
+      projectDir === undefined ? undefined : createProjectCronStore(projectDir);
+    this.projectIdentity =
+      opts.projectLockIdentity ??
+      agent.homedir ??
+      `ephemeral-${Math.random().toString(16).slice(2, 10)}`;
+    this.projectProbeMs =
+      process.env['KIMI_CRON_MANUAL_TICK'] === '1'
+        ? null
+        : opts.projectProbeMs === undefined
+          ? DEFAULT_PROJECT_PROBE_MS
+          : opts.projectProbeMs;
 
     this.scheduler = createCronScheduler({
       clocks: this.clocks,
@@ -183,7 +289,7 @@ export class CronManager {
       onAdvanceCursor: (id, lastFiredAt) => {
         this.advanceCursor(id, lastFiredAt);
       },
-      // P1.8: `KIMI_CRON_MANUAL_TICK=1` forces the scheduler into
+      // `KIMI_CRON_MANUAL_TICK=1` forces the scheduler into
       // manual-drive mode (no setInterval), so bench / time-injected
       // tests can step time forward and call `tick()` explicitly without
       // racing a 1-second auto-tick. Explicit caller overrides
@@ -193,6 +299,17 @@ export class CronManager {
         process.env['KIMI_CRON_MANUAL_TICK'] === '1'
           ? null
           : opts.pollIntervalMs,
+    });
+
+    // Initial project-schedule scan: read the tasks file (no lock) and,
+    // when it holds tasks, try to claim ownership and adopt them.
+    // Fire-and-forget like the session persist path — failures are
+    // logged, never thrown into the constructor. Tests await
+    // `projectReady` before driving ticks.
+    this.projectReady = this.projectEnqueueAwait(() =>
+      this.initProjectSchedule(),
+    ).catch((error: unknown) => {
+      this.agent.log?.warn?.('cron project init failed', error);
     });
 
     this.start();
@@ -211,12 +328,71 @@ export class CronManager {
    * Persistence failures are logged via `agent.log.warn` and swallowed
    * — a flaky disk drops cross-resume durability but must not crash
    * the agent loop.
+   *
+   * Tasks whose `init.durable === true` are PROJECT-durable: they skip
+   * the session mirror and go to `.cloud-code/scheduled_tasks.json`
+   * instead (see {@link addProjectTask} for the ownership rules). When
+   * the project layer is disabled, a durable request degrades to
+   * session-scoped with a warning rather than an error.
    */
   addTask(init: SessionCronTaskInit): CronTask {
+    if (init.durable === true && this.projectStore !== undefined) {
+      return this.addProjectTask(init);
+    }
+    if (init.durable === true && this.projectStore === undefined) {
+      this.agent.log?.warn?.(
+        'cron: durable task requested but project cron is unavailable (non-local workspace); falling back to session scope',
+      );
+    }
     const task = this.store.add(init, this.clocks.wallNow());
     this.persistEnqueue(task.id, () =>
       this.persistStore!.write(task.id, task),
     );
+    return task;
+  }
+
+  /**
+   * Durable add path. Two cases:
+   *
+   *   - This session OWNS the project schedule: adopt into the firing
+   *     store immediately (the scheduler picks it up next tick) and
+   *     mirror the record to the project file.
+   *   - This session does NOT own it (another live session holds the
+   *     lock, or ownership hasn't been attempted yet): mint the record
+   *     WITHOUT adopting it. Adopting here would fire the task in a
+   *     non-owner session while the owner also fires it — the double-fire
+   *     the lock exists to prevent. The queued job claims the lock if
+   *     possible; on success the record is adopted, otherwise it lives
+   *     only in the file until this session takes ownership (probe) or
+   *     restarts (startup scan).
+   */
+  private addProjectTask(init: SessionCronTaskInit): CronTask {
+    if (this.projectLockOwned) {
+      const task = this.store.add(
+        { ...init, durable: true },
+        this.clocks.wallNow(),
+      );
+      this.projectEnqueue(async () => {
+        await this.projectStore!.add(task);
+        this.projectFileMtimeMs = await this.projectStore!.statMtimeMs();
+      });
+      return task;
+    }
+
+    const task: CronTask = {
+      ...init,
+      id: generateCronTaskId((id) => this.store.get(id) !== undefined),
+      createdAt: this.clocks.wallNow(),
+      durable: true,
+    };
+    this.projectEnqueue(async () => {
+      await this.claimAndLoadProjectSchedule();
+      await this.projectStore!.add(task);
+      if (this.projectLockOwned) {
+        this.projectFileMtimeMs = await this.projectStore!.statMtimeMs();
+        this.store.adopt(task);
+      }
+    });
     return task;
   }
 
@@ -226,25 +402,65 @@ export class CronManager {
    * subset of ids that were actually present, matching
    * `SessionCronStore.remove`'s contract — callers (CronDelete /
    * scheduler one-shot cleanup / stale auto-expire) read this to
-   * decide whether to emit telemetry.
+   * report whether anything was actually removed.
    *
    * Persistence failures are logged and swallowed; cross-resume the
    * worst case is a ghost entry that gets dropped on the next
    * `list()` shape-guard pass.
    */
   removeTasks(ids: readonly string[]): readonly string[] {
+    // Snapshot durability BEFORE removal — the routing decision needs
+    // the record, not just the id.
+    const durableIds = new Set(
+      ids.filter((id) => this.store.get(id)?.durable === true),
+    );
     const removed = this.store.remove(ids);
     for (const id of removed) {
-      this.persistEnqueue(id, () => this.persistStore!.remove(id));
+      if (durableIds.has(id)) {
+        this.projectEnqueue(async () => {
+          await this.projectStore!.remove([id]);
+          this.projectFileMtimeMs = await this.projectStore!.statMtimeMs();
+        });
+      } else {
+        this.persistEnqueue(id, () => this.persistStore!.remove(id));
+      }
     }
     return removed;
   }
 
   /**
+   * Delete project-file tasks by id, regardless of whether they are in
+   * this session's in-memory store. This is the CronDelete fallback for
+   * sessions that don't own the project schedule: they never adopted
+   * the file's tasks, so a plain {@link removeTasks} would miss. Also
+   * drops any matching in-memory records (an owner session sweeping its
+   * own task lands here when the record already left the store).
+   *
+   * Returns the ids that were actually present in the file — CronDelete
+   * reports "not found" when both this and the in-memory sweep miss.
+   */
+  async removeProjectTasks(ids: readonly string[]): Promise<readonly string[]> {
+    if (this.projectStore === undefined || ids.length === 0) return [];
+    try {
+      return await this.projectEnqueueAwait(async () => {
+        const removed = await this.projectStore!.remove(ids);
+        if (removed.length > 0) {
+          this.projectFileMtimeMs = await this.projectStore!.statMtimeMs();
+          this.store.remove(removed);
+        }
+        return removed;
+      });
+    } catch (error) {
+      this.agent.log?.warn?.('cron project delete failed', error);
+      return [];
+    }
+  }
+
+  /**
    * Persist the scheduler's `lastFiredAt` cursor for a recurring task
-   * so resuming the session does not coalesce-replay an
-   * already-delivered fire. Called by the scheduler's `onAdvanceCursor`
-   * callback after a successful recurring fire.
+   * so a `cloud-code resume` does not coalesce-replay an already-delivered
+   * fire. Called by the scheduler's `onAdvanceCursor` callback after a
+   * successful recurring fire.
    *
    * No-op when the task has already been removed between fire and
    * callback (concurrent CronDelete is the canonical case). When
@@ -257,15 +473,21 @@ export class CronManager {
   private advanceCursor(id: string, lastFiredAt: number): void {
     const updated = this.store.markFired(id, lastFiredAt);
     if (updated === undefined) return;
+    if (updated.durable === true) {
+      this.projectEnqueue(async () => {
+        await this.projectStore!.markFired(id, lastFiredAt);
+        this.projectFileMtimeMs = await this.projectStore!.statMtimeMs();
+      });
+      return;
+    }
     if (this.persistStore === undefined) return;
     this.persistEnqueue(id, () => this.persistStore!.write(id, updated));
   }
 
   /**
-   * Rehydrate the in-memory store from `<sessionDir>/cron/` after the
-   * session is resumed. No-op when persistence is not attached.
-   * Idempotent: clears the in-memory map and re-inserts every record on
-   * disk.
+   * Rehydrate the in-memory store from `<sessionDir>/cron/` after
+   * `cloud-code resume`. No-op when persistence is not attached. Idempotent:
+   * clears the in-memory map and re-inserts every record on disk.
    *
    * Tasks are inserted via {@link SessionCronStore.adopt} so the
    * original `id` and `createdAt` survive — `createdAt` is the
@@ -275,7 +497,15 @@ export class CronManager {
   async loadFromDisk(): Promise<void> {
     if (this.persistStore === undefined) return;
     const tasks = await this.persistStore.list();
-    this.store.clear();
+    // Clear SESSION-scoped tasks only. Project-durable records are
+    // owned by the project file (startup scan / probe), not the session
+    // mirror — clearing them here would race the constructor's
+    // fire-and-forget `initProjectSchedule`.
+    const sessionIds = this.store
+      .list()
+      .filter((t) => t.durable !== true)
+      .map((t) => t.id);
+    this.store.remove(sessionIds);
     for (const task of tasks) {
       this.store.adopt(task);
     }
@@ -321,11 +551,193 @@ export class CronManager {
     // map iteration would observe the deletions and miss tails.
     const inFlight = Array.from(this.persistQueues.values());
     await Promise.allSettled(inFlight);
+    await this.projectChain.catch(() => {});
+  }
+
+  // ── Project-durable schedule ───────────────────────────────────────
+
+  /** Whether project-durable cron is available in this session. */
+  get projectCronAvailable(): boolean {
+    return this.projectStore !== undefined;
+  }
+
+  /** Whether this session currently owns the project schedule. */
+  get ownsProjectSchedule(): boolean {
+    return this.projectLockOwned;
+  }
+
+  /** Absolute path of the project tasks file, or undefined when disabled. */
+  get projectCronTasksPath(): string | undefined {
+    return this.projectStore === undefined
+      ? undefined
+      : projectCronFilePath(this.projectStore.projectDir);
   }
 
   /**
+   * Raw project-file task list for the CronList merge. Returns durable-
+   * flagged tasks straight from disk so a non-owner session can still
+   * SHOW the project schedule even though it never fires it. Empty when
+   * the project layer is disabled; read failures surface as `[]` (a
+   * listing must not fail because the file is mid-rename elsewhere).
+   */
+  async listProjectFileTasks(): Promise<readonly CronTask[]> {
+    if (this.projectStore === undefined) return [];
+    try {
+      const tasks = await this.projectEnqueueAwait(() =>
+        this.projectStore!.list(),
+      );
+      return tasks.map((t) => ({ ...t, durable: true as const }));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Constructor-time project scan. Reads the tasks file WITHOUT the
+   * lock first: an empty or missing file means this session stays
+   * fully passive (no lock file, no probe timer) until someone creates
+   * a durable task. A non-empty file triggers a claim attempt — owning
+   * sessions adopt + fire, non-owners arm the takeover probe.
+   */
+  private async initProjectSchedule(): Promise<void> {
+    if (this.projectStore === undefined) return;
+    if (process.env['KIMI_DISABLE_CRON'] === '1') return;
+    const tasks = await this.projectStore.list();
+    if (tasks.length === 0) return;
+    await this.claimAndLoadProjectSchedule();
+  }
+
+  /**
+   * Try to claim the project schedule and, on success, adopt every file
+   * task into the firing store. On failure (another live session owns
+   * it) just arm the probe — the next successful probe retries this.
+   *
+   * Must only be called from within a {@link projectChain} job; it is
+   * the shared tail of the constructor scan, durable adds, and the
+   * probe's takeover path.
+   */
+  private async claimAndLoadProjectSchedule(): Promise<void> {
+    if (this.projectStore === undefined) return;
+    const acquired = await tryAcquireProjectCronLock(
+      this.projectStore.projectDir,
+      this.projectIdentity,
+      this.clocks.wallNow(),
+    );
+    if (!acquired) {
+      this.armProjectProbe();
+      return;
+    }
+    this.projectLockOwned = true;
+    const tasks = await this.projectStore.list();
+    this.projectFileMtimeMs = await this.projectStore.statMtimeMs();
+    this.adoptProjectTasks(tasks);
+    this.armProjectProbe();
+  }
+
+  /**
+   * File-authoritative merge of project tasks into the firing store.
+   * File tasks are adopted with `durable: true` re-attached (the flag is
+   * stripped on disk); in-memory durable tasks missing from the file
+   * are dropped (another session deleted them). Session-scoped tasks
+   * are untouched. The scheduler's per-task cursors survive adoption,
+   * so an unchanged task's fire schedule is not disturbed by a reload.
+   */
+  private adoptProjectTasks(tasks: readonly CronTask[]): void {
+    const fileIds = new Set(tasks.map((t) => t.id));
+    const vanished = this.store
+      .list()
+      .filter((t) => t.durable === true && !fileIds.has(t.id))
+      .map((t) => t.id);
+    if (vanished.length > 0) {
+      this.store.remove(vanished);
+    }
+    for (const task of tasks) {
+      this.store.adopt({ ...task, durable: true });
+    }
+  }
+
+  /**
+   * One probe cycle, serialized onto {@link projectChain}. Non-owners
+   * retry the lock (takeover after owner death → adopt → the scheduler's
+   * normal coalesced delivery compensates everything missed while no
+   * session was running). The owner reloads the file when its mtime
+   * moved, picking up tasks other sessions created or deleted.
+   *
+   * Public so tests with `projectProbeMs: null` can drive it manually.
+   */
+  probeProjectSchedule(): Promise<void> {
+    return this.projectEnqueueAwait(async () => {
+      if (this.projectStore === undefined) return;
+      if (!this.projectLockOwned) {
+        await this.claimAndLoadProjectSchedule();
+        return;
+      }
+      const mtime = await this.projectStore.statMtimeMs();
+      if (mtime === null) {
+        // File vanished externally (e.g. deleted by hand) — the project
+        // schedule is empty now.
+        this.projectFileMtimeMs = null;
+        this.adoptProjectTasks([]);
+        return;
+      }
+      if (mtime !== this.projectFileMtimeMs) {
+        const tasks = await this.projectStore.list();
+        this.projectFileMtimeMs = mtime;
+        this.adoptProjectTasks(tasks);
+      }
+    });
+  }
+
+  /** Arm the periodic probe. Idempotent; no-op when probes are disabled. */
+  private armProjectProbe(): void {
+    if (this.projectProbeTimer !== null) return;
+    const interval = this.projectProbeMs;
+    if (interval === null || interval === 0) return;
+    const handle = setInterval(() => {
+      void this.probeProjectSchedule().catch((error: unknown) => {
+        this.agent.log?.warn?.('cron project probe failed', error);
+      });
+    }, interval);
+    // Don't keep the event loop alive on the probe alone — matches the
+    // scheduler's unref'd auto-tick.
+    if (typeof handle === 'object' && handle !== null && 'unref' in handle) {
+      (handle as { unref: () => void }).unref();
+    }
+    this.projectProbeTimer = handle;
+  }
+
+  /**
+   * Fire-and-forget project job: chained onto {@link projectChain},
+   * errors logged and swallowed (same discipline as
+   * {@link persistEnqueue} — a flaky disk must never crash the agent
+   * loop or surface as an unhandled rejection).
+   */
+  private projectEnqueue(work: () => Promise<void>): void {
+    const next = this.projectChain
+      .catch(() => {})
+      .then(work)
+      .catch((error: unknown) => {
+        this.agent.log?.warn?.('cron project persist failed', error);
+      });
+    this.projectChain = next;
+  }
+
+  /**
+   * Awaitable project job: same chain, but the returned promise carries
+   * the job's result (and rejection) to the caller. Used by the
+   * constructor scan, CronDelete's project sweep, CronList's merge, and
+   * manual probe drives.
+   */
+  private projectEnqueueAwait<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.projectChain.then(work, work);
+    this.projectChain = next.catch(() => {});
+    return next;
+  }
+
+
+  /**
    * Begin the scheduler's auto-tick loop and bind the SIGUSR1 manual-tick
-   * hook (P1.8). Idempotent: a second call is a no-op so the boot
+   * hook. Idempotent: a second call is a no-op so the boot
    * sequence and tests can opt into "ensure started" without bookkeeping.
    */
   start(): void {
@@ -349,12 +761,28 @@ export class CronManager {
    */
   async stop(): Promise<void> {
     this.unbindSigusr1();
+    if (this.projectProbeTimer !== null) {
+      clearInterval(this.projectProbeTimer);
+      this.projectProbeTimer = null;
+    }
+    // Release the project lock AFTER any queued project writes (so a
+    // pending add lands before another session takes over), but only
+    // when we actually own it — releasing someone else's lock would
+    // open a double-fire window.
+    if (this.projectLockOwned && this.projectStore !== undefined) {
+      const store = this.projectStore;
+      const identity = this.projectIdentity;
+      this.projectEnqueueAwait(() =>
+        releaseProjectCronLock(store.projectDir, identity),
+      ).catch(() => {});
+      this.projectLockOwned = false;
+    }
     await this.scheduler.stop();
     await this.flushPersist();
     this.started = false;
   }
 
-  /** Drive one scheduler tick synchronously. Used by tests + P1.8 SIGUSR1. */
+  /** Drive one scheduler tick synchronously. Used by tests and the SIGUSR1 manual-tick hook. */
   tick(): void {
     this.scheduler.tick();
   }
@@ -388,6 +816,7 @@ export class CronManager {
       id: task.id,
       cron: task.cron,
       recurring: task.recurring !== false,
+      durable: task.durable === true,
       createdAt: task.createdAt,
       lastFiredAt: task.lastFiredAt,
       nextFireAt: this.scheduler.getNextFireForTask(task.id),
@@ -415,13 +844,7 @@ export class CronManager {
   }
 
   /**
-   * Translate a scheduler fire into a steer + telemetry event.
-   *
-   * `agent.turn.steer` returns the new turnId, or `null` when the input
-   * was buffered because a turn is in flight (see turn/index.ts:84).
-   * We propagate that as `buffered` on the telemetry props so dashboards
-   * can distinguish "fired into a fresh turn" from "fired into a steer
-   * buffer that may not run until the user's turn ends".
+   * Translate a scheduler fire into a steer.
    *
    * Honours the documented 7-day auto-expire contract for recurring
    * tasks: a stale recurring task gets exactly one final delivery
@@ -455,23 +878,15 @@ export class CronManager {
       origin,
       prompt: task.prompt,
     });
-    const turnId = this.agent.turn.steer(content, origin);
-    this.agent.telemetry.track(CRON_FIRED, {
-      recurring: task.recurring !== false,
-      coalesced_count: ctx.coalescedCount,
-      stale,
-      buffered: turnId === null,
-    });
+    this.agent.turn.steer(content, origin);
 
     // 7-day auto-expire — the recurring branch of CronCreate's tool
     // description promises this contract to the model. Without the
     // removal a long-lived session keeps re-injecting a multi-day-old
     // cron prompt forever; with it, the task fires one last time
-    // (above) and is then dropped. Emit `cron_deleted` symmetrically
-    // with manual deletion so dashboards see the lifecycle close.
+    // (above) and is then dropped.
     if (stale && task.recurring !== false) {
       this.removeTasks([task.id]);
-      this.emitDeleted(task.id);
     }
   }
 
@@ -507,30 +922,6 @@ export class CronManager {
       count: tasks.length,
     };
     this.agent.turn.steer(content, origin);
-    this.agent.telemetry.track(CRON_MISSED, { count: tasks.length });
-  }
-
-  /**
-   * Emit `cron_scheduled` for a freshly-added task. Called by
-   * `CronCreate` after a successful `store.add(...)`. Kept as an
-   * explicit method so the tool layer never reaches into
-   * `manager.agent.telemetry` — preserves the "tools see the manager,
-   * the manager sees the agent" layering and matches the symmetric
-   * `emitDeleted` used by `CronDelete` (P1.6).
-   */
-  emitScheduled(task: CronTask): void {
-    this.agent.telemetry.track(CRON_SCHEDULED, {
-      recurring: task.recurring !== false,
-    });
-  }
-
-  /**
-   * Emit `cron_deleted` for a removed task. Wired up here so P1.6 can
-   * land without touching this file again. `task_id` matches the field
-   * naming used elsewhere in the telemetry surface (snake_case).
-   */
-  emitDeleted(taskId: string): void {
-    this.agent.telemetry.track(CRON_DELETED, { task_id: taskId });
   }
 
   /**
@@ -559,7 +950,7 @@ export class CronManager {
    *
    * The handler swallows any throw from `tick()` because a signal-driven
    * bench tool must never crash the host process; the tick failure mode
-   * is already surfaced via telemetry / logs inside the scheduler.
+   * is already surfaced via logs inside the scheduler.
    * Set `KIMI_CRON_DEBUG=1` to surface the swallowed error to stderr —
    * mirrors `scheduler.ts`'s debugLog pattern so bench debugging can
    * see a bad tick.

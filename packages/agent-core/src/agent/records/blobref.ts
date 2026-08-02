@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile } from 'node:fs/promises';
 import { join } from 'pathe';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 import type { AgentRecord } from './types';
 
 const DEFAULT_THRESHOLD = 4096;
@@ -9,6 +9,18 @@ const DEFAULT_MAX_CACHE_SIZE = 50 * 1024 * 1024;
 const BLOBREF_PROTOCOL = 'blobref:';
 const DATA_URI_HEADER_RE = /^data:([^;]+);base64,/;
 const MISSING_MEDIA_PLACEHOLDER = '[media missing]';
+/**
+ * Write-side hashes are always sha256 hex digests, so a valid blob filename is
+ * exactly 64 lowercase hex chars. Wire records are untrusted input: anything
+ * else (`../…` traversal, empty, oversized) must never reach `join(blobsDir, …)`.
+ */
+const BLOBREF_HASH_RE = /^[a-f0-9]{64}$/;
+/**
+ * Media top-level types the store ever writes. A crafted record carrying any
+ * other mime is treated like a missing blob instead of being rehydrated into
+ * an arbitrary `data:` URI.
+ */
+const BLOBREF_MIME_RE = /^(?:image|video|audio)\/[a-z0-9][a-z0-9.+-]*$/;
 
 export function isBlobRef(url: string): boolean {
   return url.startsWith(BLOBREF_PROTOCOL);
@@ -100,8 +112,12 @@ export class BlobStore {
   }
 
   async rehydrateParts(parts: readonly ContentPart[]): Promise<void> {
-    for (const part of parts) {
-      await this.rehydrateContentPart(part);
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index]!;
+      const rehydrated = await this.rehydrateContentPart(part);
+      if (rehydrated !== part) {
+        (parts as ContentPart[])[index] = rehydrated;
+      }
     }
   }
 
@@ -123,7 +139,7 @@ export class BlobStore {
     return updated === undefined ? part : (updated as unknown as ContentPart);
   }
 
-  private async rehydrateContentPart(part: ContentPart): Promise<void> {
+  private async rehydrateContentPart(part: ContentPart): Promise<ContentPart> {
     const record = part as unknown as Record<string, unknown>;
     for (const value of Object.values(record)) {
       const mediaObj = asMediaContainer(value);
@@ -133,8 +149,17 @@ export class BlobStore {
       if (typeof url !== 'string' || !isBlobRef(url)) continue;
 
       const newUrl = await this.rehydrateBlobRefUrl(url);
-      mediaObj.url = newUrl ?? MISSING_MEDIA_PLACEHOLDER;
+      if (newUrl !== undefined) {
+        mediaObj.url = newUrl;
+        continue;
+      }
+      // The blob is gone (or the ref failed validation): degrade the whole
+      // part to a text marker. Keeping the media shape with a placeholder URL
+      // would put an invalid URL on the wire, which strict providers reject
+      // (400) on every request carrying this history.
+      return { type: 'text', text: MISSING_MEDIA_PLACEHOLDER };
     }
+    return part;
   }
 
   private async rehydrateBlobRefUrl(url: string): Promise<string | undefined> {
@@ -145,7 +170,9 @@ export class BlobStore {
     }
     const mimeType = rest.slice(0, semiIdx);
     const hash = rest.slice(semiIdx + 1);
-    if (hash.length === 0) {
+    // Validate before touching the filesystem: the hash comes from a wire
+    // record and must be a plain sha256 digest, never a path.
+    if (!BLOBREF_HASH_RE.test(hash) || !BLOBREF_MIME_RE.test(mimeType)) {
       return undefined;
     }
     const payload = await this.readBlob(hash);

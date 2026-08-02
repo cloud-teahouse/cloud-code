@@ -1,8 +1,12 @@
 export {
   ToolInputDisplaySchema,
   ToolResultDisplaySchema,
-} from '@moonshot-ai/protocol';
+  toolResultDisplayRefSchema,
+  toolResultStructuredSchema,
+} from '@cloud-code/protocol';
 export type {
   ToolInputDisplay,
   ToolResultDisplay,
-} from '@moonshot-ai/protocol';
+  ToolResultDisplayRef,
+  ToolResultStructured,
+} from '@cloud-code/protocol';

@@ -15,7 +15,7 @@
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import { Emitter } from '../../base/common/event';
-import type { Event as ProtocolEvent } from '@moonshot-ai/protocol';
+import type { Event as ProtocolEvent } from '@cloud-code/protocol';
 
 import { IEventService } from './event';
 

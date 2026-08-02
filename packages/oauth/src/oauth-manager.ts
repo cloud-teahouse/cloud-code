@@ -17,6 +17,10 @@ import { dirname } from 'node:path';
 
 import lockfile from 'proper-lockfile';
 
+import {
+  accountSnapshotFromTokenState,
+  type OAuthAccountSnapshot,
+} from './account-snapshot';
 import { DeviceCodeTimeoutError, OAuthError, OAuthUnauthorizedError } from './errors';
 import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';
 import type { DevicePollResult, RefreshOptions } from './oauth';
@@ -73,14 +77,14 @@ export interface OAuthManagerOptions {
    * Root directory for per-provider lock files; resolves to
    * `{configDir}/oauth/{providerName}.lock`.
    *
-   * **Production callers MUST pass this explicitly** (KimiCoreClient /
+   * **Production callers MUST pass this explicitly** (CloudCodeCoreClient /
    * session-manager wire it through from the resolved config root). A
    * missing `configDir` disables the cross-process lock entirely, so
    * silently falling back to an env var in production would mask a
    * genuine mis-wiring.
    *
    * When omitted AND `process.env.NODE_ENV === 'test'`, the manager
-   * falls back to `process.env.KIMI_CODE_HOME` so multi-process test
+   * falls back to `process.env.CLOUD_CODE_HOME` so multi-process test
    * harnesses don't need to thread the dir through every fixture. In
    * production the fallback is inert. Windows platforms and
    * `process.env.KIMI_DISABLE_OAUTH_LOCK === '1'` always skip; the
@@ -105,6 +109,7 @@ export class OAuthManager {
   private readonly requestImpl: NonNullable<OAuthManagerOptions['requestDeviceImpl']>;
   private readonly pollImpl: NonNullable<OAuthManagerOptions['pollDeviceImpl']>;
   private readonly deviceHeaders: (() => OAuthRequestHeaders | undefined) | undefined;
+  private deviceHeadersMemo: { readonly value: OAuthRequestHeaders | undefined } | undefined;
   private readonly configDir: string | undefined;
   private readonly onRefresh: ((outcome: OAuthRefreshOutcome) => void) | undefined;
 
@@ -146,17 +151,25 @@ export class OAuthManager {
         pollDeviceToken(config, deviceCode, {
           deviceHeaders: this.resolveDeviceHeaders(),
         }));
-    // The `KIMI_CODE_HOME` fallback MUST stay test-only so production
+    // The `CLOUD_CODE_HOME` fallback MUST stay test-only so production
     // entry points can't silently run without a lock just because the
     // env happens to be unset. vitest sets `NODE_ENV='test'` by default,
     // so multi-process test workers still pick up the test home path.
     const envConfigDir =
-      process.env['NODE_ENV'] === 'test' ? process.env['KIMI_CODE_HOME'] : undefined;
+      process.env['NODE_ENV'] === 'test' ? process.env['CLOUD_CODE_HOME'] : undefined;
     this.configDir = options.configDir ?? envConfigDir;
   }
 
   private resolveDeviceHeaders(): OAuthRequestHeaders | undefined {
-    return this.deviceHeaders?.();
+    if (this.deviceHeaders === undefined) return undefined;
+    // All closure inputs (homeDir, host identity version, machine identity)
+    // are fixed for the process lifetime, and computing them hits the
+    // filesystem (plus `sw_vers` on macOS), so memoize per manager instance.
+    // Precedent: the toolkit memoizes the same headers process-wide in
+    // `_identityHeaders` (toolkit.ts). The wrapper object distinguishes
+    // "computed as undefined" from "not yet computed".
+    this.deviceHeadersMemo ??= { value: this.deviceHeaders() };
+    return this.deviceHeadersMemo.value;
   }
 
   private async loadState(): Promise<TokenState> {
@@ -241,6 +254,15 @@ export class OAuthManager {
   async getCachedAccessToken(): Promise<string | undefined> {
     const state = await this.loadState();
     return state.kind === 'valid' ? state.token.accessToken : undefined;
+  }
+
+  /**
+   * Network-free account state for status surfaces: logged-in / expired
+   * (rejected-refresh tombstone — re-login required) / not-logged-in. Kimi
+   * tokens carry no account claims, so no email/plan is reported.
+   */
+  async getAccountSnapshot(): Promise<OAuthAccountSnapshot> {
+    return accountSnapshotFromTokenState(await this.loadState());
   }
 
   async logout(): Promise<void> {

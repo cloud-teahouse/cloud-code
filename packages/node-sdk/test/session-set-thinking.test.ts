@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, type KimiError } from '#/index';
+import { createCloudCodeHarness, type CloudCodeError } from '#/index';
 
 import { makeTempDir, removeTempDirs, waitForAgentWireEvent } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -15,7 +15,7 @@ describe('Session.setThinking', () => {
   it('sends config.update with the new thinking effort', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_thinking_wire', workDir });
@@ -41,15 +41,15 @@ describe('Session.setThinking', () => {
   it('rejects empty thinking efforts', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_thinking_empty', workDir });
 
       await expect(session.setThinking('   ')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.thinking_empty',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }
@@ -58,16 +58,16 @@ describe('Session.setThinking', () => {
   it('rejects after the session is closed', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-work-');
-    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createCloudCodeHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_thinking_closed', workDir });
       await session.close();
 
       await expect(session.setThinking('high')).rejects.toMatchObject({
-        name: 'KimiError',
+        name: 'CloudCodeError',
         code: 'session.closed',
-      } satisfies Partial<KimiError>);
+      } satisfies Partial<CloudCodeError>);
     } finally {
       await harness.close();
     }

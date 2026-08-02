@@ -17,7 +17,7 @@ The rules are identical in both modes — only the posture changes (produce vs. 
 ## Test contract, not implementation
 
 - Drive the system through its **public control plane** and assert on **observable effects** (returned values, persisted state, emitted events, injected messages), never on source details.
-- Resolve collaborators through their contract — the interface plus its identifier — not the module that binds a concrete implementation.
+- Resolve collaborators through their contract — the interface plus its identifier — not the module that binds a concrete implementation. For DI services this means `ix.get(IXxxService)` through the container, never `new XxxService(...)`.
 - Do not reach into private fields or add backdoors "for testing". If you feel the need, the seam is wrong — fix the design, not the test.
 
 ## One behavior per `it`
@@ -31,7 +31,7 @@ it('does not double-fire when the same tick repeats', ...);
 
 ## Name and structure
 
-- `describe('<slice> (<responsibilities>)'` — name the **responsibility**, not the class.
+- `describe('<slice> (<responsibilities>)')` — name the **responsibility**, not the class.
 - An `it(...)` reads as a sentence, but it must still encode three things — the **behavior / method**, the **state or condition**, and the **expected outcome**: `it('<behavior> when <condition>, <outcome>')`. A name like `does X when Y` with no result is too vague to fail usefully.
   - Use spaces, not the Java-style `method_state_outcome` underscores — that convention exists only because Java test methods cannot contain spaces. A string-named test reads fine as a sentence.
   - Good: `it('returns 401 when the caller is unauthorized')` · `it('advances the cursor and does not double-fire on a repeat tick')`
@@ -46,7 +46,7 @@ When several tests share setup, write a factory (`rig()`, `createHost()`, whatev
 
 Default to real collaborators wired the way production wires them. Stub the **minimum seam** that is genuinely external:
 
-- A remote / model / service boundary — spy on the contract method (the interface), and capture what the system sends across it. Do not stand up the real external thing.
+- A remote / model / service boundary — spy on the contract method (the injected `LLM`, kosong's `generate`, the SDK callback), and capture what the system sends across it. Do not stand up the real external thing.
 - Network / other-process boundaries — stub at the boundary, not the internals.
 - Time, timers, jitter — use the documented control knobs the system exposes (env, an injected clock, a manual tick). Do **not** use fake timers or real `setTimeout` to drive time.
 - Env / config knobs are usually snapshotted at bootstrap — set them **before** building the system under test, and restore them in `afterEach`.
@@ -73,9 +73,9 @@ Every test must be hermetic and order-independent. In `afterEach`:
 
 - restore every mock / spy
 - restore every env var you touched (snapshot in `beforeEach`)
-- dispose the host / container and reset its reference
+- dispose the host / container (`DisposableStore`) and reset its reference
 
-No dependence on wall-clock time, run order, or leftover on-disk state — give each scenario its own isolated identity / workspace when state persists.
+No dependence on wall-clock time, run order, or leftover on-disk state — give each scenario its own isolated identity / temp workspace when state persists, and never touch the real `~/.cloud-code`.
 
 ## Quality bar: CCCR
 

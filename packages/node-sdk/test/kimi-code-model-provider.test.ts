@@ -3,15 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  KimiOAuthToolkit,
+  CloudCodeOAuthToolkit,
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
   RetryableRefreshError,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ErrorCodes, KimiError, KimiForCodingProvider } from '#/index';
+import { ErrorCodes, CloudCodeError, KimiForCodingProvider } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
 
@@ -33,7 +33,7 @@ describe('KimiForCodingProvider OAuth error mapping', () => {
   }
 
   it('maps unauthorized token failures to auth.login_required', async () => {
-    vi.spyOn(KimiOAuthToolkit.prototype, 'ensureFresh').mockRejectedValue(
+    vi.spyOn(CloudCodeOAuthToolkit.prototype, 'ensureFresh').mockRejectedValue(
       new OAuthUnauthorizedError('No token for "kimi-code". Run /login to authenticate.'),
     );
 
@@ -50,12 +50,12 @@ describe('KimiForCodingProvider OAuth error mapping', () => {
     ];
 
     for (const tokenError of tokenErrors) {
-      vi.spyOn(KimiOAuthToolkit.prototype, 'ensureFresh').mockRejectedValue(tokenError);
+      vi.spyOn(CloudCodeOAuthToolkit.prototype, 'ensureFresh').mockRejectedValue(tokenError);
 
       const auth = resolveAuth();
       const caught = await auth(async () => 'ok').catch((error: unknown) => error);
 
-      expect(caught).toBeInstanceOf(KimiError);
+      expect(caught).toBeInstanceOf(CloudCodeError);
       expect(caught).toMatchObject({
         code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
         message: expect.stringContaining(tokenError.message),
@@ -68,7 +68,7 @@ describe('KimiForCodingProvider OAuth error mapping', () => {
 
   it('rethrows unrecognized OAuth errors raw instead of guessing a category', async () => {
     const oauthError = new OAuthError('Token refresh failed (HTTP 400).');
-    vi.spyOn(KimiOAuthToolkit.prototype, 'ensureFresh').mockRejectedValue(oauthError);
+    vi.spyOn(CloudCodeOAuthToolkit.prototype, 'ensureFresh').mockRejectedValue(oauthError);
 
     const auth = resolveAuth();
     await expect(auth(async () => 'ok')).rejects.toBe(oauthError);

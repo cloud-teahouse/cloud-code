@@ -8,3 +8,11 @@ export type { PluginManagerOptions } from './manager';
 export { resolveInstallSource } from './source';
 export type { InstallSource, ResolvedSource } from './source';
 export { downloadZip, extractZip } from './archive';
+export {
+  findProjectRoot,
+  isPluginEnabledInScope,
+  projectPluginsFilePath,
+  readProjectPluginOverrides,
+  writeProjectPluginOverride,
+} from './project-scope';
+export type { PluginEnableScope } from './project-scope';

@@ -11,7 +11,7 @@
  * their own `WorkspaceConfig` with narrower bounds.
  */
 
-import type { Environment, Kaos } from '@moonshot-ai/kaos';
+import type { Environment, Kaos } from '@cloud-code/kaos';
 import type { ExecutableToolResult } from '#/loop';
 
 import type { WorkspaceConfig } from '../../../src/tools/support/workspace';
@@ -59,6 +59,7 @@ export function createFakeKaos(
     writeText: () => notImplemented('writeText'),
     mkdir: () => notImplemented('mkdir'),
     exec: () => notImplemented('exec'),
+    ptyExec: () => notImplemented('ptyExec'),
     execWithEnv: (args, invocationEnv) => {
       const mergedEnv = mergeEnvLayers(invocationEnv, envLayers);
       if (overrides?.execWithEnv) return overrides.execWithEnv(args, mergedEnv);

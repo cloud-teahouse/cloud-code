@@ -9,8 +9,8 @@ import { ServiceCollection } from '#/di/serviceCollection';
 /**
  * Cycle-detection tests trigger cycles by capturing the accessor (or the
  * container) inside the ctor body and synchronously calling `.get(peer)` —
- * this is the only way to express a circular runtime dependency until
- * ctor-arg `@IFoo` decorators land in a later phase.
+ * this is the only way to express a circular runtime dependency without
+ * ctor-arg `@IFoo` decorators.
  *
  * The accessor used in the ctor must be the same accessor object passed by
  * the outer `invokeFunction` so the tree-wide in-progress stack is shared.
@@ -22,8 +22,6 @@ describe('Cyclic dependency detection', () => {
       tag: 'A';
     }
     const IA = createDecorator<IA>('A');
-    // Capture the outer accessor inside the ctor by stashing it on a
-    // class-static. The ctor calls accessor.get(IA) synchronously.
     let accessorRef: ServicesAccessor | undefined;
     class A implements IA {
       tag = 'A' as const;
@@ -131,7 +129,6 @@ describe('Cyclic dependency detection', () => {
     class B implements ITagged {
       tag = 'B';
       constructor() {
-        // Constructs A — A finishes, then we keep going.
         accessorRef!.get(IA);
       }
     }
@@ -161,15 +158,13 @@ describe('Cyclic dependency detection', () => {
     const IB = createDecorator<IB>('B');
     let accessorRef: ServicesAccessor | undefined;
 
-    // A is registered in parent; A's ctor depends on B.
     class A implements IA {
       tag = 'A' as const;
       constructor() {
         accessorRef!.get(IB);
       }
     }
-    // B is registered in CHILD; B's ctor depends on A — completing the cycle
-    // across the parent boundary.
+    // B is registered in the child — closing the cycle across the parent boundary.
     class B implements IB {
       tag = 'B' as const;
       constructor() {

@@ -1,14 +1,12 @@
 import type {
   ExportSessionManifest,
   ResumeSessionResult,
+  ServiceTier,
   ShellEnvironment,
-  TelemetryClient,
-  TelemetryContextPatch,
-  TelemetryProperties,
-} from '@moonshot-ai/agent-core';
-import type { Kaos } from '@moonshot-ai/kaos';
-import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/kosong';
+} from '@cloud-code/agent-core';
+import type { Kaos } from '@cloud-code/kaos';
+import type { CloudCodeHostIdentity, OAuthRefreshOutcome } from '@cloud-code/oauth';
+import type { ContentPart, RateLimitSnapshot } from '@cloud-code/kosong';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
@@ -37,14 +35,14 @@ export type {
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
-  KimiConfig,
-  KimiConfigPatch,
+  CloudCodeConfig,
+  CloudCodeConfigPatch,
   LoopControl,
   McpServerInfo,
-  McpStartupMetrics,
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  OutputStyleSummary,
   PluginCommandDef,
   PluginGithubMetadata,
   PluginGithubRef,
@@ -59,6 +57,9 @@ export type {
   QuestionBackgroundTaskInfo,
   ReloadSummary,
   ResumedAgentState,
+  RewindFilesResult,
+  SandboxStatusData,
+  ServiceTier,
   ServicesConfig,
   ShellEnvironment,
   SkillSummary,
@@ -66,18 +67,49 @@ export type {
   ToolInfo,
   GlobalMcpServerConfig as McpServerConfig,
   GlobalMcpServerTestResult as McpTestResult,
-} from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
 
-export type { KimiHostIdentity, OAuthRefreshOutcome };
-export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
-export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+export type { CloudCodeHostIdentity, OAuthRefreshOutcome };
+export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@cloud-code/kosong';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
 
 /**
- * Trust state of a workspace directory. Only meaningful on the agent-core-v2
- * engine; the v1 engine has no workspace-trust concept and reports
- * `{ trusted: true, gatedMcpServers: [] }`.
+ * stdio transport: spawn a `cloud-code serve`-style child process and speak
+ * JSON-RPC 2.0 (JSONL framing) over its stdin/stdout.
+ *
+ * `command`/`args` default to the installed CLI (`cloud-code serve
+ * --transport stdio`); tests pass an explicit node+tsx invocation instead.
+ * `env` is merged over `process.env` for the child.
+ */
+export interface StdioServerTransport {
+  readonly type: 'stdio';
+  readonly command?: string | undefined;
+  readonly args?: readonly string[] | undefined;
+  readonly env?: Readonly<Record<string, string>> | undefined;
+}
+
+/**
+ * WebSocket transport (Phase 4 v2): connect to a running `cloud-code serve
+ * --transport ws` daemon. `url` is its ws URL (`ws://127.0.0.1:<port>`) and
+ * `token` the bearer token printed at server startup (design §2.3).
+ */
+export interface WsServerTransport {
+  readonly type: 'ws';
+  readonly url: string;
+  readonly token: string;
+}
+
+/**
+ * Harness transport: `'local'` (default) runs the core in-process via the
+ * in-memory RPC seam; a transport object switches to the JSON-RPC protocol
+ * client (stdio spawn or ws attach).
+ */
+export type HarnessTransport = 'local' | StdioServerTransport | WsServerTransport;
+
+/**
+ * Trust state of a workspace directory. The v1 engine has no workspace-trust
+ * concept and reports `{ trusted: true, gatedMcpServers: [] }`.
  */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
@@ -95,16 +127,21 @@ export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'vi
 
 export type PromptInput = readonly PromptPart[];
 
-export interface KimiHarnessOptions {
-  readonly identity?: KimiHostIdentity | undefined;
+export interface CloudCodeHarnessOptions {
+  readonly identity?: CloudCodeHostIdentity | undefined;
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
   readonly autoLoadConfig?: boolean | undefined;
   readonly uiMode?: string;
   readonly skillDirs?: readonly string[];
-  readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
-  readonly sessionStartedProperties?: TelemetryProperties;
+  /**
+   * Transport selection (Phase 4). Omitted or `'local'`: in-process core
+   * (current behavior). `{type:'stdio', ...}` spawns a `cloud-code serve`
+   * child; `{type:'ws', url, token}` attaches to a running daemon — either
+   * way the harness/Session API is identical.
+   */
+  readonly transport?: HarnessTransport | undefined;
 }
 
 export interface CreateSessionOptions {
@@ -113,6 +150,11 @@ export interface CreateSessionOptions {
   readonly model?: string | undefined;
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;
+  /**
+   * Explicit fast-tier override (`'priority'`). When omitted, the session
+   * seeds from the persisted config.toml `service_tier` preference.
+   */
+  readonly serviceTier?: ServiceTier | undefined;
   readonly planMode?: boolean;
   readonly metadata?: JsonObject | undefined;
   readonly kaos?: Kaos | undefined;
@@ -128,9 +170,8 @@ export interface CreateSessionOptions {
    * highest precedence; an invalid file fails session creation.
    */
   readonly agentFiles?: readonly string[];
-  readonly sessionStartedProperties?: TelemetryProperties;
   /**
-   * Print-mode (`kimi -p`) only: when the main agent ends a turn while
+   * Print-mode (`cloud-code -p`) only: when the main agent ends a turn while
    * background subagents (`kind === 'agent'`) are still running, hold the turn
    * open and idle-wait until they all finish, flushing their completions into
    * the turn so the model can react before the run exits. Ignored by
@@ -159,7 +200,6 @@ export interface ResumeSessionInput {
    * transferring the entire history over the RPC boundary.
    */
   readonly replayTurnLimit?: number;
-  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export interface ReloadSessionInput extends ResumeSessionInput {
@@ -256,7 +296,15 @@ export interface SessionUsage {
   readonly byModel?: Record<string, TokenUsage> | undefined;
   readonly currentTurn?: TokenUsage | undefined;
   readonly total?: TokenUsage | undefined;
+  /**
+   * Latest account rate-limit snapshot captured from provider response
+   * headers (ChatGPT Codex `x-codex-*` family); undefined until the session
+   * makes a request against a backend that reports quota headers.
+   */
+  readonly rateLimit?: RateLimitSnapshot | undefined;
 }
+
+export type { RateLimitSnapshot } from '@cloud-code/kosong';
 
 export interface SessionStatus {
   readonly model?: string;
@@ -264,6 +312,9 @@ export interface SessionStatus {
   readonly permission: PermissionMode;
   readonly planMode: boolean;
   readonly swarmMode?: boolean | undefined;
+  readonly coordinatorMode?: boolean | undefined;
+  /** Fast tier (`'priority'`) currently active on the session; absent when off. */
+  readonly serviceTier?: ServiceTier | undefined;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

@@ -18,7 +18,7 @@ import {
   type SessionUpdate,
   type UndoSessionRequest,
   type UndoSessionResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 export interface SessionListQuery extends CursorQuery {
   busy?: boolean;
@@ -34,21 +34,10 @@ export interface SessionListQuery extends CursorQuery {
   excludeEmpty?: boolean;
 }
 
-export interface SessionClientTelemetry {
-  id?: string;
-  name?: string;
-  version?: string;
-  uiMode?: string;
-}
-
-export interface SessionCreateOptions {
-  client?: SessionClientTelemetry;
-}
-
 export interface ISessionService {
   readonly _serviceBrand: undefined;
 
-  create(input: SessionCreate, options?: SessionCreateOptions): Promise<Session>;
+  create(input: SessionCreate): Promise<Session>;
 
   list(query: SessionListQuery): Promise<PageResponse<Session>>;
 

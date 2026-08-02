@@ -12,18 +12,26 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize } from 'pathe';
-import type { Readable, Writable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 
 import { detectEnvironmentFromNode, type Environment } from './environment';
 import { KaosFileExistsError } from './errors';
-import { BufferedReadable, decodeTextWithErrors, globPatternToRegex } from './internal';
+import {
+  BufferedReadable,
+  decodeTextWithErrors,
+  globPatternToRegex,
+  ignoreBrokenPipe,
+} from './internal';
 import type { Kaos } from './kaos';
 import { applyLoginShellPathFromNode } from './login-shell-path';
 import type { KaosProcess } from './process';
+import type { KaosPtyProcess, PtyExecOptions } from './pty';
 import type { StatResult } from './types';
 
 const isWindows: boolean = process.platform === 'win32';
 const READ_CHUNK_SIZE = 64 * 1024;
+const DEFAULT_PTY_COLS = 80;
+const DEFAULT_PTY_ROWS = 24;
 
 type TextDecodeErrors = 'strict' | 'replace' | 'ignore';
 
@@ -86,6 +94,9 @@ class LocalProcess implements KaosProcess {
 
     this._child = child;
     this.stdin = child.stdin;
+    // A child that exits before draining our writes breaks the pipe; without
+    // a listener that EPIPE would crash the process (see ignoreBrokenPipe).
+    ignoreBrokenPipe(this.stdin);
     this.stdout = new BufferedReadable(child.stdout);
     this.stderr = new BufferedReadable(child.stderr);
     this.pid = child.pid ?? -1;
@@ -99,6 +110,11 @@ class LocalProcess implements KaosProcess {
         reject(error);
       });
     });
+    // Attach a sink immediately: a spawn/'error' event rejects this promise,
+    // and Node must not flag it as unhandled when nobody awaits wait().
+    // Awaiting wait() still delivers the rejection (same pattern as
+    // SSHPtyProcess).
+    void this._exitPromise.catch(() => {});
   }
 
   get exitCode(): number | null {
@@ -177,6 +193,146 @@ class LocalProcess implements KaosProcess {
   }
 }
 
+type NodePtyModule = typeof import('node-pty');
+type NodePtyHandle = ReturnType<NodePtyModule['spawn']>;
+
+let nodePtyPromise: Promise<NodePtyModule> | undefined;
+
+/**
+ * Lazily load node-pty (native module). Mirrors the dynamic-import pattern in
+ * agent-core's terminalService: a native load failure must degrade PTY
+ * sessions with a clear error instead of breaking non-PTY execution paths.
+ * Successful loads are memoised; failures are not, so a later call may retry.
+ */
+function importNodePty(): Promise<NodePtyModule> {
+  nodePtyPromise ??= import('node-pty').catch((error: unknown) => {
+    nodePtyPromise = undefined;
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `LocalKaos.ptyExec(): failed to load node-pty (${reason}); ` +
+        'PTY sessions are unavailable on this installation.',
+    );
+  });
+  return nodePtyPromise;
+}
+
+/**
+ * A {@link KaosPtyProcess} backed by node-pty.
+ *
+ * node-pty delivers the merged stdout+stderr byte stream through `onData`
+ * callbacks rather than a Node stream, so `output` is a `Readable` fed from
+ * those callbacks. node-pty offers no backpressure; consumers (the shell
+ * session manager) are expected to attach immediately and keep the stream
+ * drained.
+ */
+class LocalPtyProcess implements KaosPtyProcess {
+  readonly stdin: Writable;
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+  readonly output: Readable;
+  readonly pid: number;
+
+  private readonly _pty: NodePtyHandle;
+  private _exitCode: number | null = null;
+  private readonly _exitPromise: Promise<number>;
+  private _disposed = false;
+  private _eofPushed = false;
+
+  constructor(pty: NodePtyHandle) {
+    this._pty = pty;
+    this.pid = pty.pid;
+
+    this.output = new Readable({
+      read: () => {},
+      // An escaping consumer (dispose) must not surface as an unhandled
+      // stream error; there is nothing to clean up on the Readable side.
+    });
+    pty.onData((data: string) => {
+      // node-pty does not guarantee onData/onExit ordering: residual bytes
+      // from the kernel pty buffer can arrive after onExit pushed EOF, and
+      // pushing past EOF emits ERR_STREAM_PUSH_AFTER_EOF on the stream.
+      if (this._disposed || this._eofPushed) return;
+      this.output.push(data);
+    });
+    this._exitPromise = new Promise<number>((resolve) => {
+      pty.onExit(({ exitCode }) => {
+        this._exitCode = exitCode;
+        this._eofPushed = true;
+        if (!this._disposed) this.output.push(null);
+        resolve(exitCode);
+      });
+    });
+
+    this.stdout = this.output;
+    // A PTY has no separate stderr; satisfy the KaosProcess contract with an
+    // already-ended empty stream.
+    this.stderr = Readable.from([]);
+    this.stdin = new Writable({
+      write: (chunk: Uint8Array | string, _encoding, callback) => {
+        try {
+          pty.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
+          callback();
+        } catch (error) {
+          callback(error instanceof Error ? error : new Error(String(error)));
+        }
+      },
+    });
+  }
+
+  get exitCode(): number | null {
+    return this._exitCode;
+  }
+
+  async wait(): Promise<number> {
+    return this._exitPromise;
+  }
+
+  write(data: string): void {
+    this._pty.write(data);
+  }
+
+  resize(cols: number, rows: number): void {
+    this._pty.resize(cols, rows);
+  }
+
+  kill(signal?: NodeJS.Signals): Promise<void> {
+    if (this._exitCode !== null || this.pid <= 0) {
+      return Promise.resolve();
+    }
+    // node-pty on POSIX makes the child a session leader (setsid), so its
+    // children share its process group (pgid === pid). Signal the group so a
+    // shell that forked grandchildren (`bash` running `sleep 100 &`) does not
+    // leave orphans — the same semantics as LocalProcess.kill. node-pty's own
+    // `kill()` only signals the direct child and is the fallback.
+    if (!isWindows) {
+      try {
+        process.kill(-this.pid, signal ?? 'SIGTERM');
+        return Promise.resolve();
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        // ESRCH = group already gone (child exited + reaped between
+        // `wait()` racing spawn + this call). Treat as successful kill.
+        if (err.code === 'ESRCH') return Promise.resolve();
+        // Anything else (e.g. EPERM): fall through to the direct kill.
+      }
+    }
+    try {
+      this._pty.kill(signal);
+    } catch {
+      /* process already gone */
+    }
+    return Promise.resolve();
+  }
+
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.stdin.destroy();
+    this.output.destroy();
+    this.stderr.destroy();
+  }
+}
+
 /**
  * A KAOS implementation that directly interacts with the local filesystem.
  *
@@ -215,7 +371,7 @@ export class LocalKaos implements Kaos {
   static async create(): Promise<LocalKaos> {
     // Enrich process.env.PATH from the user's login shell so spawned
     // commands find user-installed tools (e.g. Homebrew's gh) even when
-    // kimi-code itself was launched without the full profile PATH. Both
+    // Cloud Code itself was launched without the full profile PATH. Both
     // probes are memoised, independent, and run concurrently.
     const [osEnv] = await Promise.all([detectEnvironmentFromNode(), applyLoginShellPathFromNode()]);
     return new LocalKaos(osEnv);
@@ -754,6 +910,28 @@ export class LocalKaos implements Kaos {
     );
     await waitForSpawn(child);
     return new LocalProcess(child);
+  }
+
+  async ptyExec(
+    args: string[],
+    env?: Record<string, string>,
+    opts?: PtyExecOptions,
+  ): Promise<KaosPtyProcess> {
+    const command = args[0];
+    if (command === undefined) {
+      throw new Error(
+        'LocalKaos.ptyExec(): at least one argument (the command to run) is required.',
+      );
+    }
+    const pty = await importNodePty();
+    const proc = pty.spawn(command, args.slice(1), {
+      name: opts?.term ?? 'dumb',
+      cols: opts?.cols ?? DEFAULT_PTY_COLS,
+      rows: opts?.rows ?? DEFAULT_PTY_ROWS,
+      cwd: this._cwd,
+      env: this._buildExecEnv(env) ?? (process.env as Record<string, string>),
+    });
+    return new LocalPtyProcess(proc);
   }
 
   private _buildExecEnv(invocationEnv?: Record<string, string>): Record<string, string> | undefined {

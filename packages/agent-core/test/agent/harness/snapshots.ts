@@ -1,4 +1,4 @@
-import type { Message, Tool as LLMTool } from '@moonshot-ai/kosong';
+import type { Message, Tool as LLMTool } from '@cloud-code/kosong';
 import { expect } from 'vitest';
 
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../../src/agent/records';
@@ -224,6 +224,9 @@ function formatText(text: string): string {
   if (isPlanModeReminder(text)) {
     return '<plan-mode-reminder>';
   }
+  if (isBehaviorRulesReminder(text)) {
+    return '<behavior-rules-reminder>';
+  }
   if (text.includes('<!-- Compression Priorities (in order) -->')) {
     return '<compaction-instruction>';
   }
@@ -253,6 +256,7 @@ function normalizeValue(value: unknown, uuidLabels: Map<string, string>): unknow
     if (isAutoModeEnterReminder(value)) return '<auto-mode-enter-reminder>';
     if (isAutoModeExitReminder(value)) return '<auto-mode-exit-reminder>';
     if (isPlanModeReminder(value)) return '<plan-mode-reminder>';
+    if (isBehaviorRulesReminder(value)) return '<behavior-rules-reminder>';
     if (!isUuid(value)) return value;
     let label = uuidLabels.get(value);
     if (label === undefined) {
@@ -326,10 +330,11 @@ function isVolatileDurationKey(key: string): boolean {
 }
 
 function isPlanModeReminder(value: string): boolean {
-  return (
-    value.includes('Plan mode is active. You MUST NOT make any edits') &&
-    value.includes('Plan file:')
-  );
+  return value.includes('Plan mode is active.') && value.includes('Plan file:');
+}
+
+function isBehaviorRulesReminder(value: string): boolean {
+  return value.includes('key behavioral rules from your system prompt are restated below');
 }
 
 function isAutoModeEnterReminder(value: string): boolean {

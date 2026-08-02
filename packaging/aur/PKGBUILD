@@ -1,0 +1,20 @@
+# Maintainer: Cloud_Yun <1770669041@qq.com>
+pkgname=cloudcode-bin
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Cloud Code CLI — an independent coding agent for the terminal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/cloud-teahouse/cloud-code"
+license=('MIT')
+depends=()
+provides=('cloudcode')
+conflicts=('cloudcode')
+source_x86_64=("${pkgname%-bin}-linux-x64::https://github.com/cloud-teahouse/cloud-code/releases/download/v${pkgver}/cloud-code-linux-x64")
+source_aarch64=("${pkgname%-bin}-linux-arm64::https://github.com/cloud-teahouse/cloud-code/releases/download/v${pkgver}/cloud-code-linux-arm64")
+# Update both sums from the release's sha256sums.txt on every version bump.
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  install -Dm755 "${pkgname%-bin}-linux-x64" "$pkgdir/usr/bin/cloudcode"
+}

@@ -6,7 +6,7 @@ import { IInstantiationService, createDecorator, type IInstantiationService as I
 import { ServiceCollection } from '#/di/serviceCollection';
 
 /**
- * P1.2 — `supportsDelayedInstantiation: true` returns a Proxy that defers
+ * `supportsDelayedInstantiation: true` returns a Proxy that defers
  * real construction until the first non-event property access.
  *
  * Vitest runs in Node — `requestIdleCallback` is absent, so the

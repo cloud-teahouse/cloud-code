@@ -1,9 +1,9 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
-import { resolveKimiHome } from '#/config/path';
+import { resolveCloudCodeHome } from '#/config/path';
 import { McpServerConfigSchema, type McpServerConfig } from '#/config/schema';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import { atomicWrite } from '#/utils/fs';
 
 export type GlobalMcpServerConfig = McpServerConfig & { readonly name: string };
@@ -18,7 +18,7 @@ export class GlobalMcpConfigStore {
   readonly path: string;
 
   constructor(homeDir?: string) {
-    this.path = join(resolveKimiHome(homeDir), 'mcp.json');
+    this.path = join(resolveCloudCodeHome(homeDir), 'mcp.json');
   }
 
   async list(): Promise<readonly GlobalMcpServerConfig[]> {
@@ -36,7 +36,7 @@ export class GlobalMcpConfigStore {
     const normalized = parseServerInput(server);
     const file = await this.read();
     if (Object.hasOwn(file.rawServers, normalized.name)) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.REQUEST_INVALID,
         `MCP server "${normalized.name}" already exists`,
       );
@@ -140,15 +140,15 @@ function persistedEntry(server: GlobalMcpServerConfig): McpServerConfig {
 function normalizeServerName(name: string): string {
   const normalized = name.trim();
   if (normalized.length > 0) return normalized;
-  throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP server name cannot be empty');
+  throw new CloudCodeError(ErrorCodes.REQUEST_INVALID, 'MCP server name cannot be empty');
 }
 
-function serverNotFound(name: string): KimiError {
-  return new KimiError(ErrorCodes.MCP_SERVER_NOT_FOUND, `MCP server "${name}" was not found`);
+function serverNotFound(name: string): CloudCodeError {
+  return new CloudCodeError(ErrorCodes.MCP_SERVER_NOT_FOUND, `MCP server "${name}" was not found`);
 }
 
-function configError(message: string, cause?: unknown): KimiError {
-  return new KimiError(ErrorCodes.CONFIG_INVALID, message, { cause });
+function configError(message: string, cause?: unknown): CloudCodeError {
+  return new CloudCodeError(ErrorCodes.CONFIG_INVALID, message, { cause });
 }
 
 function errorCode(error: unknown): unknown {

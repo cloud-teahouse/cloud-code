@@ -1,68 +1,66 @@
 import {
   SECONDARY_DERIVED_MODEL_ALIAS,
-  SECONDARY_MODEL_ENV,
   secondaryModelPatch,
-  type KimiConfig,
+  type CloudCodeConfig,
   type SecondaryModelConfig,
 } from '../config';
-import { ErrorCodes, KimiError } from '../errors';
-import type { ExperimentalFlagResolver } from '../flags';
-import type { AgentModelPreference } from '../profile';
+import { CloudCodeError, ErrorCodes } from '../errors';
 
 /**
  * Subagent model binding — the secondary-model half of the spawn decision.
  *
- * When the `secondary-model` experiment is enabled and `[secondary_model]` is
- * configured, newly spawned subagents bind to it by default instead of
- * inheriting the caller's model. The caller (the parent model, through the
- * `Agent` / `AgentSwarm` tool `model` parameter) or the spawned profile (via
- * `model_preference`) can force `primary`. A recipe with patch fields binds
- * the synthesized derived entry ({@link SECONDARY_DERIVED_MODEL_ALIAS},
- * materialized by `applySecondaryModelConfig`); a pointer-only recipe binds
- * the pointed entry directly. `default_effort` is passed as the explicit
- * subagent thinking effort; without it the child resolves thinking naturally
- * (global thinking config → the bound model's default effort) rather than
- * inheriting the caller's level. When unset, spawning behavior is unchanged:
- * subagents inherit the caller's model and effort.
+ * `[secondary_model]` is a recipe: `model` points at a `[models]` entry and
+ * every remaining field is a subagent-only patch. When patch fields exist,
+ * the config loader synthesizes the derived model entry
+ * ({@link SECONDARY_DERIVED_MODEL_ALIAS}) into the in-memory `models` view
+ * (see `applySecondaryModelConfig` in `config/secondary-model.ts`), so the
+ * binding here resolves it by alias like any other model. The
+ * `CLOUD_CODE_SECONDARY_MODEL` / `CLOUD_CODE_SECONDARY_EFFORT` env vars
+ * override `model` / `default_effort` in memory only — they are overlaid at
+ * config load time, so by the time a session reads `config.secondaryModel`
+ * the env has already been applied.
+ *
+ * Unlike upstream, Cloud Code's secondary model is a stable feature: it is
+ * not gated behind an experiment flag.
  */
 
-export type SubagentModelChoice = AgentModelPreference;
+/** The Agent/AgentSwarm `model` parameter value that selects the `[secondary_model]` config. */
+export const SECONDARY_MODEL_KEYWORD = 'secondary';
 
-export interface SubagentModelBinding {
-  readonly modelAlias: string | undefined;
-  readonly thinkingEffort?: string;
+/** The `[secondary_model]` section after resolution. */
+export interface SecondaryModelResolution {
+  readonly model: string | undefined;
+  readonly effort: string | undefined;
 }
 
-export function resolveSecondaryModel(
-  config: KimiConfig | undefined,
-  flags: ExperimentalFlagResolver,
+/**
+ * The `[secondary_model]` recipe in effect for a session (used by the
+ * startup-warning computation). Cloud Code's secondary model is a stable
+ * feature, so unlike upstream this is not gated on an experiment flag.
+ */
+export function resolveSecondaryModelRecipe(
+  config: CloudCodeConfig | undefined,
 ): SecondaryModelConfig | undefined {
-  if (!flags.enabled('secondary-model')) return undefined;
   return config?.secondaryModel;
 }
 
 /**
- * Resolve which model a newly spawned subagent binds to. `requested` is the
- * explicit per-spawn choice (tool argument or profile preference); `own` is
- * the caller's current model state, used when inheriting.
+ * Resolve the `[secondary_model]` binding for a subagent spawn. A recipe with
+ * patch fields binds the synthesized derived entry; a pointer-only recipe
+ * binds the pointed entry directly. `default_effort` applies as the explicit
+ * subagent thinking effort; without it the child inherits the caller's level.
  */
-export function resolveSubagentBinding(
-  config: KimiConfig | undefined,
-  flags: ExperimentalFlagResolver,
-  own: { readonly modelAlias: string | undefined; readonly thinkingEffort: string },
-  requested?: SubagentModelChoice,
-): SubagentModelBinding {
-  const secondary = resolveSecondaryModel(config, flags);
-  if (requested !== 'primary' && secondary?.model !== undefined) {
-    return {
-      modelAlias:
-        secondaryModelPatch(secondary) === undefined
-          ? secondary.model
-          : SECONDARY_DERIVED_MODEL_ALIAS,
-      thinkingEffort: secondary.defaultEffort,
-    };
-  }
-  return { modelAlias: own.modelAlias, thinkingEffort: own.thinkingEffort };
+export function resolveSecondaryModel(
+  config: SecondaryModelConfig | undefined,
+): SecondaryModelResolution {
+  const model = nonBlank(config?.model);
+  return {
+    model:
+      model !== undefined && secondaryModelPatch(config) !== undefined
+        ? SECONDARY_DERIVED_MODEL_ALIAS
+        : model,
+    effort: nonBlank(config?.defaultEffort),
+  };
 }
 
 /**
@@ -71,24 +69,21 @@ export function resolveSubagentBinding(
  * secondary model is not configured or the caller's model is not bound yet.
  */
 export function buildSubagentModelDescriptions(
-  config: KimiConfig | undefined,
-  flags: ExperimentalFlagResolver,
+  config: CloudCodeConfig | undefined,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  const secondaryModel = resolveSecondaryModel(config, flags)?.model;
+  const secondaryModel = resolveSecondaryModel(config?.secondaryModel).model;
   if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
   return [
     'Available models (pass via model):',
-    `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
+    `- secondary: ${secondaryModel} — the configured secondary model; prefer it for routine subagent tasks`,
     `- primary: ${callerModelAlias} — the main model you are running on; use it for hard, quality-sensitive subagent tasks`,
   ].join('\n');
 }
 
 /**
  * Strip the `model` property from a subagent collaboration tool's advertised
- * JSON schema. While the `secondary-model` experiment is off the parameter is
- * a silent no-op, so the schema the model sees (and the args validator
- * compiled from the same advertised schema) drops it entirely — the
+ * JSON schema. Callers that gate the parameter off use this so the
  * secondary-model concept never enters the prompt, and a stray `model`
  * argument is rejected instead of silently inheriting the caller's model.
  * Returns the input unchanged when there is no `model` property; otherwise a
@@ -112,6 +107,11 @@ export function stripSubagentModelParameter(
   return next;
 }
 
+function nonBlank(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
 /**
  * Point a spawn-time model resolution failure at the secondary-model
  * configuration when the bound model is not the caller's own — otherwise the
@@ -124,23 +124,14 @@ export function wrapSubagentModelError(
   callerModelAlias: string | undefined,
 ): unknown {
   if (boundModel === callerModelAlias) return error;
-  if (!(error instanceof KimiError) || error.code !== ErrorCodes.CONFIG_INVALID) return error;
+  if (!(error instanceof CloudCodeError) || error.code !== ErrorCodes.CONFIG_INVALID) return error;
   // ProviderManager tags only the missing-alias failure with details.model;
   // malformed aliases and providers must keep their own actionable errors.
   if (error.details?.['model'] !== boundModel) return error;
-  const displayModel =
-    boundModel === SECONDARY_DERIVED_MODEL_ALIAS
-      ? `the derived entry "${SECONDARY_DERIVED_MODEL_ALIAS}"`
-      : `"${boundModel}"`;
-  return new KimiError(
-    error.code,
-    `${error.message} (secondary model ${displayModel} comes from [secondary_model].model / ${SECONDARY_MODEL_ENV} — check that it names a valid [models] entry)`,
-    {
-      cause: error,
-      details: {
-        ...error.details,
-        secondaryModel: boundModel,
-      },
-    },
+  return new CloudCodeError(
+    ErrorCodes.CONFIG_INVALID,
+    `[secondary_model].model is "${boundModel}", but no model with that name is configured. ` +
+      'Fix the [secondary_model] section or define the model.',
+    { details: error.details },
   );
 }

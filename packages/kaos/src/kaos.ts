@@ -1,5 +1,6 @@
 import type { Environment } from './environment';
 import type { KaosProcess } from './process';
+import type { KaosPtyProcess, PtyExecOptions } from './pty';
 import type { StatResult } from './types';
 
 /**
@@ -94,4 +95,18 @@ export interface Kaos {
   exec(...args: string[]): Promise<KaosProcess>;
   /** Spawn a process with explicit environment variables. */
   execWithEnv(args: string[], env?: Record<string, string>): Promise<KaosProcess>;
+  /**
+   * Spawn a process attached to a pseudo-terminal (PTY).
+   *
+   * Unlike `exec`/`execWithEnv` (piped stdio, stdin meant to be closed), a
+   * PTY process is built for long-lived interactive sessions: stdout and
+   * stderr arrive merged on `KaosPtyProcess.output`, and terminal input is
+   * written via `KaosPtyProcess.write`. Local and SSH backends implement it;
+   * a backend that cannot provide a PTY rejects with a clear error.
+   */
+  ptyExec(
+    args: string[],
+    env?: Record<string, string>,
+    opts?: PtyExecOptions,
+  ): Promise<KaosPtyProcess>;
 }

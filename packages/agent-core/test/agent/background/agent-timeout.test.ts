@@ -70,7 +70,7 @@ describe('AgentBackgroundTask — timeoutMs', () => {
 
   // Explicit per-task timeoutMs must be surfaced on the task info so
   // downstream wait-cap consumers can honour the agent-supplied value
-  // instead of falling back to a hard-coded default. (gap #6 family.)
+  // instead of falling back to a hard-coded default.
   //
   // Uses fake timers so the 30-min deadline armed by registerAgentTask
   // does not leak across the test boundary into the Vitest worker —
@@ -87,9 +87,9 @@ describe('AgentBackgroundTask — timeoutMs', () => {
   });
 
   // Decision (confirmed with team, 2026-05-19): background tasks in
-  // kimi-code do NOT carry an implicit default timeout. The Python
+  // Cloud Code do NOT carry an implicit default timeout. The Python
   // kimi-cli enforced a 30-min default because its agents were
-  // expected to be short-lived; kimi-code's agents may legitimately
+  // expected to be short-lived; Cloud Code's agents may legitimately
   // run a dev server, a long compile, or a watch loop, and an
   // auto-kill would be a footgun. The shutdown wait-cap that reads
   // timeoutMs falls back to its own policy when the field is
@@ -105,7 +105,7 @@ describe('AgentBackgroundTask — timeoutMs', () => {
     expect((info as unknown as { timeoutMs?: number }).timeoutMs).toBeUndefined();
   });
 
-  // Contract decision (2026-05-21): kimi-code treats `timeoutMs: 0`
+  // Contract decision (2026-05-21): Cloud Code treats `timeoutMs: 0`
   // as "record the value but do NOT arm a deadline" rather than
   // Python's "fire immediately" semantics. The field is preserved on
   // the task info so shutdown wait-caps / UI can read it; the
@@ -117,7 +117,6 @@ describe('AgentBackgroundTask — timeoutMs', () => {
     const taskId = manager.registerTask(agentTask(new Promise(() => {}), 'zero timeout'), {
       timeoutMs: 0,
     });
-    // The literal zero is preserved on the task info.
     const initial = manager.getTask(taskId);
     expect((initial as unknown as { timeoutMs?: number }).timeoutMs).toBe(0);
 

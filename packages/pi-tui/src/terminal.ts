@@ -91,6 +91,14 @@ export interface Terminal {
 
 	// Progress indicator (OSC 9;4)
 	setProgress(active: boolean): void;
+
+	// Alternate screen buffer (fullscreen mode)
+	enterAltScreen(): void; // Enter the alternate screen buffer (\x1b[?1049h)
+	exitAltScreen(): void; // Leave the alternate screen buffer (\x1b[?1049l)
+
+	// Mouse reporting (SGR extended coordinates + button presses, incl. wheel,
+	// + any-motion tracking for hover highlighting)
+	setMouseReporting(enabled: boolean): void;
 }
 
 /**
@@ -408,6 +416,14 @@ export class ProcessTerminal implements Terminal {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
 
+		// Restore terminal state if the owner forgot to (crash-safe defaults)
+		if (this.mouseReportingActive) {
+			this.setMouseReporting(false);
+		}
+		if (this.altScreenActive) {
+			this.exitAltScreen();
+		}
+
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
 
@@ -423,13 +439,11 @@ export class ProcessTerminal implements Terminal {
 		}
 		this.disableModifyOtherKeys();
 
-		// Clean up StdinBuffer
 		if (this.stdinBuffer) {
 			this.stdinBuffer.destroy();
 			this.stdinBuffer = undefined;
 		}
 
-		// Remove event handlers
 		if (this.stdinDataHandler) {
 			process.stdin.removeListener("data", this.stdinDataHandler);
 			this.stdinDataHandler = undefined;
@@ -445,7 +459,6 @@ export class ProcessTerminal implements Terminal {
 		// where Ctrl+D could close the parent shell over SSH.
 		process.stdin.pause();
 
-		// Restore raw mode state
 		if (process.stdin.setRawMode) {
 			process.stdin.setRawMode(this.wasRaw);
 		}
@@ -472,10 +485,8 @@ export class ProcessTerminal implements Terminal {
 
 	moveBy(lines: number): void {
 		if (lines > 0) {
-			// Move down
 			process.stdout.write(`\x1b[${lines}B`);
 		} else if (lines < 0) {
-			// Move up
 			process.stdout.write(`\x1b[${-lines}A`);
 		}
 		// lines === 0: no movement
@@ -527,5 +538,32 @@ export class ProcessTerminal implements Terminal {
 		clearInterval(this.progressInterval);
 		this.progressInterval = undefined;
 		return true;
+	}
+
+	private altScreenActive = false;
+	private mouseReportingActive = false;
+
+	enterAltScreen(): void {
+		if (this.altScreenActive) return;
+		this.altScreenActive = true;
+		process.stdout.write("\x1b[?1049h");
+	}
+
+	exitAltScreen(): void {
+		if (!this.altScreenActive) return;
+		this.altScreenActive = false;
+		process.stdout.write("\x1b[?1049l");
+	}
+
+	setMouseReporting(enabled: boolean): void {
+		if (this.mouseReportingActive === enabled) return;
+		this.mouseReportingActive = enabled;
+		// SGR extended coordinates (1006) + button-press tracking (1000, includes
+		// wheel) + any-motion tracking (1003) for hover highlighting. Motion events
+		// flood stdin while the pointer moves, but the TUI dedupes per cell and
+		// components skip re-renders when the hover target is unchanged, so the
+		// cost stays bounded. Terminal-native selection stays reachable via
+		// Shift+drag.
+		process.stdout.write(enabled ? "\x1b[?1006h\x1b[?1000h\x1b[?1003h" : "\x1b[?1003l\x1b[?1000l\x1b[?1006l");
 	}
 }

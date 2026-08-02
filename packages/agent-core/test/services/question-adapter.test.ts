@@ -1,5 +1,5 @@
 /**
- * Question adapter unit tests (W8.2 / Chain 6).
+ * Question adapter unit tests.
  *
  * Covers the 5-kind ↔ Record<string, string | true> normalization: wire
  * answers arrive keyed by synthesized ids (`q_<idx>` / `opt_<q>_<o>`), and

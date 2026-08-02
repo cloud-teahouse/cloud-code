@@ -2,7 +2,7 @@
  * Login-shell PATH probe — enrich `process.env.PATH` with entries from the
  * user's login shell.
  *
- * When kimi-code is launched from a context that skipped the user's shell
+ * When Cloud Code is launched from a context that skipped the user's shell
  * profile (GUI launchers, non-login parent shells), `process.env.PATH`
  * misses entries like `/opt/homebrew/bin`, so commands spawned by the Bash
  * tool can't find tools the user has in their interactive shell (e.g.

@@ -62,7 +62,7 @@ describe('ServiceCollection', () => {
     const c = new ServiceCollection([ILogger, inst], [IClock, new SyncDescriptor(FixedClock)]);
     const seen: Array<[string, unknown]> = [];
     c.forEach((id, value) => {
-      // P0.3: identifier name is exposed via `toString()` (krow style), no
+      // Identifier name is exposed via `toString()` (krow style), no
       // longer a `serviceName` property.
       seen.push([id.toString(), value]);
     });

@@ -136,6 +136,10 @@ describe('ToolManager SkillTool registration', () => {
       listInvocableSkills: () => [skill],
       getSkillRoots: () => ['/skills/review'],
       getModelSkillListing: () => '- review: desc for review',
+      hasPendingConditionalSkills: () => false,
+      activateSkillsForPaths: () => [],
+      listActivatedConditionalSkills: () => [],
+      activatePendingConditionalSkill: () => undefined,
     };
 
     const agent = makeAgent(skills);
@@ -177,9 +181,9 @@ describe('ToolManager SkillTool registration', () => {
             text: [
               'Skill tool loaded instructions for this request. Follow them.',
               '',
-              '<kimi-skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
+              '<cloud-code-skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
               'body of review',
-              '</kimi-skill-loaded>',
+              '</cloud-code-skill-loaded>',
             ].join('\n'),
           },
         ],
@@ -204,7 +208,7 @@ describe('ToolManager SkillTool registration', () => {
     try {
       const homeDir = join(tmp, 'home');
       const workDir = join(tmp, 'work');
-      const skillDir = join(workDir, '.kimi-code', 'skills', 'review');
+      const skillDir = join(workDir, '.cloud-code', 'skills', 'review');
       await mkdir(skillDir, { recursive: true });
       await writeFile(
         join(skillDir, 'SKILL.md'),

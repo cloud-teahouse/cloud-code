@@ -18,14 +18,6 @@
  *     thought it deleted. Surfacing `isError: true` lets the model
  *     correct itself (typically by calling `CronList` again).
  *
- * Why the manager is not consulted for telemetry on the not-found
- * branch:
- *
- *   - `cron_deleted` records an actual state change. Emitting it on a
- *     miss would inflate the metric and break parity with `cron_create`
- *     (which never fires on a rejected schedule). The branch is fully
- *     observable through tool-call telemetry already.
- *
  * Refresh-cron pattern this tool participates in:
  *
  *   When `CronList` (or a fired job's origin) reports `stale: true`, the
@@ -85,6 +77,10 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
         output: `Invalid cron job id ${JSON.stringify(
           args.id,
         )} — must be 8 lowercase hex characters.`,
+        display: {
+          key: 'toolResult.cron.invalidId',
+          params: { id: JSON.stringify(args.id) },
+        },
       };
     }
 
@@ -93,25 +89,34 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
       approvalRule: this.name,
       execute: async () => {
         const removed = this.manager.removeTasks([args.id]);
-        if (removed.length === 0) {
-          // Not found is reported as an error so the model can correct
-          // itself — see the module header for the rationale. We
-          // deliberately do NOT emit `cron_deleted` here; the metric
-          // tracks real state changes.
+        if (removed.length > 0) {
           return {
-            isError: true,
-            output: `No cron job with id ${args.id}.`,
+            output: `Deleted cron job ${args.id}.`,
+            isError: false,
+            display: { key: 'toolResult.cron.deleted', params: { id: args.id } },
           };
         }
 
-        // Telemetry goes through the manager so the tool stays out of
-        // `manager.agent.telemetry` — symmetric with `CronCreate`'s use
-        // of `emitScheduled`.
-        this.manager.emitDeleted(args.id);
+        // Fall back to the shared project file: a session that doesn't
+        // own the project schedule never adopted its tasks into memory,
+        // so the in-memory sweep above misses them.
+        const removedFromProject = await this.manager.removeProjectTasks([
+          args.id,
+        ]);
+        if (removedFromProject.length > 0) {
+          return {
+            output: `Deleted cron job ${args.id} (project schedule).`,
+            isError: false,
+            display: { key: 'toolResult.cron.deletedProject', params: { id: args.id } },
+          };
+        }
 
+        // Not found is reported as an error so the model can correct
+        // itself — see the module header for the rationale.
         return {
-          output: `Deleted cron job ${args.id}.`,
-          isError: false,
+          isError: true,
+          output: `No cron job with id ${args.id}.`,
+          display: { key: 'toolResult.cron.notFound', params: { id: args.id } },
         };
       },
     };

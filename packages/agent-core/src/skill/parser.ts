@@ -238,6 +238,12 @@ function normalizeMetadata(raw: Record<string, unknown>): SkillMetadata {
   const description = nonEmptyString(out['description']);
   if (description !== undefined) out['description'] = description;
 
+  const paths = stringList(out['paths']);
+  if (paths !== undefined) out['paths'] = paths;
+  // Do not leave a non-normalizable raw value behind: `metadata.paths` is
+  // typed `readonly string[]`, so anything else must be dropped, not kept.
+  else delete out['paths'];
+
   return out as SkillMetadata;
 }
 
@@ -289,6 +295,12 @@ function tokenizeArgs(raw: string): string[] {
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
+
+function stringList(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter((item): item is string => typeof item === 'string' && item.trim() !== '');
+  return out.length === 0 ? undefined : out;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

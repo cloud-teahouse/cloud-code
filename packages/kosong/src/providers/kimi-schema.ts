@@ -120,10 +120,10 @@ const NUMERIC_STRUCTURE_KEYS = new Set([
  * and is not itself normalized.
  */
 export function normalizeKimiToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  return ensureKimiPropertyTypes(derefJsonSchema(schema));
+  return ensureCloudCodePropertyTypes(derefJsonSchema(schema));
 }
 
-function ensureKimiPropertyTypes(schema: Record<string, unknown>): Record<string, unknown> {
+function ensureCloudCodePropertyTypes(schema: Record<string, unknown>): Record<string, unknown> {
   const normalized = cloneJsonValue(schema);
   if (!isRecord(normalized)) {
     throw new Error('JSON Schema root must normalize to an object.');

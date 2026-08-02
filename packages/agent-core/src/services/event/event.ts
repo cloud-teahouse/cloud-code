@@ -1,6 +1,6 @@
 /**
  * `IEventService` — in-process pub-sub bus that fans out `Event`s coming out of
- * `KimiCore` (and synthetic events from daemon-side services) to all
+ * `CloudCodeCore` (and synthetic events from daemon-side services) to all
  * in-process subscribers. Transport-agnostic: this interface does NOT know
  * about WS fan-out, ring buffers, sequence numbers, or replay — those are
  * daemon transport concerns, handled by kap-server's session event
@@ -27,15 +27,15 @@
 
 import { createDecorator } from '../../di';
 import type { Event } from '../../base/common/event';
-import type { Event as ProtocolEvent } from '@moonshot-ai/protocol';
+import type { Event as ProtocolEvent } from '@cloud-code/protocol';
 
 /**
  * Naming convention inside this file:
  *
- * - `Event` (from `@moonshot-ai/agent-core/base/common/event`) — the generic
+ * - `Event` (from `@cloud-code/agent-core/base/common/event`) — the generic
  *   VSCode-style emitter accessor type. `Event<T>` is the listener-tuple
  *   type used to declare `readonly onDidXxx: Event<T>`.
- * - `ProtocolEvent` (alias of `@moonshot-ai/protocol`'s `Event`) — the
+ * - `ProtocolEvent` (alias of `@cloud-code/protocol`'s `Event`) — the
  *   wire-level event union published through the bus. Aliased here because
  *   the top-level `Event` symbol must refer to the emitter type so the
  *   accessor declarations read naturally (`Event<ProtocolEvent>` not

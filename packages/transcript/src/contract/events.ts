@@ -1,6 +1,6 @@
 /**
  * Transcript WS event types — owned exclusively by this package (nothing
- * transcript-specific lives in `@moonshot-ai/protocol`).
+ * transcript-specific lives in `@cloud-code/protocol`).
  *
  * Transcript events ride the v1 WS envelope (`{ type, seq, epoch, volatile,
  * session_id, timestamp, payload }`), and the payloads below are exactly the

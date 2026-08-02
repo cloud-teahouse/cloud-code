@@ -306,6 +306,29 @@ describe('reduceWireRecords', () => {
     expect(entries.map((e) => textOf(e.message))).toEqual(['u1', 'SUM']);
   });
 
+  it('withdraw_tail_input drops an unanswered tail user input, skipping injections', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      appendMessage(userMessage('note', { kind: 'injection', variant: 'x' })),
+      { type: 'context.withdraw_tail_input' } as AgentRecord,
+    ]);
+    // Injection skipped (kept), u2 removed; u1 and its answer stay.
+    expect(entries.map((e) => textOf(e.message))).toEqual(['u1', 'a1', 'note']);
+    expect(foldedLength).toBe(3);
+  });
+
+  it('withdraw_tail_input is a no-op when output sits at the tail', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      { type: 'context.withdraw_tail_input' } as AgentRecord,
+    ]);
+    expect(entries.map((e) => textOf(e.message))).toEqual(['u1', 'a1']);
+    expect(foldedLength).toBe(2);
+  });
+
   it('clear keeps prior messages in the transcript and floors later undos', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),

@@ -3,7 +3,7 @@
  * the known-workspaces catalog, shared by `WorkspaceRegistryService` (the
  * services-layer facade, which adds locking and events on top) and by
  * in-process runtime callers that only need a best-effort touch (e.g.
- * `KimiCore` registering the cwd on session creation). It lives next to
+ * `CloudCodeCore` registering the cwd on session creation). It lives next to
  * `session-index.ts` because the runtime must not import back into
  * `services/` (see `src/services/AGENTS.md`).
  *

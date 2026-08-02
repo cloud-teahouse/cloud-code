@@ -9,7 +9,7 @@ import type {
   FsGitStatus,
   FsGitStatusRequest,
   FsGitStatusResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 export class FsGitUnavailableError extends Error {
   readonly cwd: string;

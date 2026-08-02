@@ -1,4 +1,4 @@
-import { LocalKaos, type Environment } from '@moonshot-ai/kaos';
+import { LocalKaos, type Environment } from '@cloud-code/kaos';
 
 export const TEST_OS_ENV: Environment = {
   osKind: 'Linux',

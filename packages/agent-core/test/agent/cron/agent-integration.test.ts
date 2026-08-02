@@ -57,7 +57,7 @@ describe('Agent + Cron integration (P1.7)', () => {
     // manager rather than driving a full tool-dispatch loop — the
     // killswitch lives in `resolveExecution`, so a direct call is the
     // precise unit being asserted, and it stays robust if the loop /
-    // dispatch surface changes around it (P1.8 onwards).
+    // dispatch surface changes around it.
     const tool = new CronCreateTool(ctx.agent.cron!);
     const args: CronCreateInput = {
       cron: '*/5 * * * *',

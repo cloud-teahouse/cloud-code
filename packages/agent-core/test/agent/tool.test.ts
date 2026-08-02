@@ -8,11 +8,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ToolCall } from '@moonshot-ai/kosong';
+import type { ToolCall } from '@cloud-code/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import { budgetToolResultForModel } from '../../src/agent/turn/tool-result-budget';
-import type { KimiConfig } from '../../src/config';
+import type { CloudCodeConfig } from '../../src/config';
 import { HookEngine } from '../../src/session/hooks';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
@@ -392,7 +392,7 @@ describe('Agent tools', () => {
     expect(description).toContain('- coder: General coding.\n  Model preference: primary');
   });
 
-  it('hides model preferences when the experiment is disabled', () => {
+  it('shows model preferences (the secondary model is a stable feature)', () => {
     const subagentHost = {
       delegatableSubagents: vi.fn(() => ({
         coder: {
@@ -412,7 +412,7 @@ describe('Agent tools', () => {
 
     const description = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent')?.description;
 
-    expect(description).not.toContain('Model preference:');
+    expect(description).toContain('Model preference:');
   });
 
   it('self-heals the builtin tool table when the provider becomes resolvable after construction', () => {
@@ -420,7 +420,7 @@ describe('Agent tools', () => {
     // provider, so hasProvider is false at Agent construction and
     // initializeBuiltinTools() is skipped — the state the asynchronous
     // free-tokens / OAuth model registration produces.
-    const liveConfig: KimiConfig = { providers: {}, models: {} };
+    const liveConfig: CloudCodeConfig = { providers: {}, models: {} };
     const ctx = testAgent({
       providerManager: new ProviderManager({ config: () => liveConfig }),
     });
@@ -481,7 +481,7 @@ describe('Agent tools', () => {
       }),
     ).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "auto", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "auto" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "auto" }
       [wire] tools.register_user_tool    { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "time": "<time>" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
@@ -489,8 +489,8 @@ describe('Agent tools', () => {
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [wire] llm.tools_snapshot          { "hash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "tools": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false } } ], "time": "<time>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "messageCount": 2, "turnStep": "0.1", "time": "<time>" }
+      [wire] llm.tools_snapshot          { "hash": "218c181386faa7d0f22e7605d751dda45d9103c4eccd2ade15de6c66780bbd4f", "tools": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "additionalProperties": false, "properties": { "query": { "type": "string" } }, "required": [ "query" ], "type": "object" } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "218c181386faa7d0f22e7605d751dda45d9103c4eccd2ade15de6c66780bbd4f", "messageCount": 2, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I will look it up." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will look it up." } }, "time": "<time>" }
@@ -513,16 +513,16 @@ describe('Agent tools', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "messageId": "mock-1" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 160, "maxContextTokens": 1000000, "contextUsage": 0.00016, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 164, "maxContextTokens": 1000000, "contextUsage": 0.000164, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 144, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999840, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999840, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "218c181386faa7d0f22e7605d751dda45d9103c4eccd2ade15de6c66780bbd4f", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "The lookup result is moon-result." }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "The lookup result is moon-result." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 164, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-2" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 164, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 164, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 176, "maxContextTokens": 1000000, "contextUsage": 0.000176, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 308, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 308, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 308, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 176, "maxContextTokens": 1000000, "contextUsage": 0.000176, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 308, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 308, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 308, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -544,13 +544,13 @@ describe('Agent tools', () => {
       [wire] context.append_loop_event    { "event": { "type": "step.begin", "uuid": "<uuid-5>", "turnId": "1", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started            { "turnId": 1, "step": 1, "stepId": "<uuid-5>" }
       [wire] llm.tools_snapshot           { "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "tools": [], "time": "<time>" }
-      [wire] llm.request                  { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999824, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 6, "turnStep": "1.1", "time": "<time>" }
+      [wire] llm.request                  { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999824, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 6, "turnStep": "1.1", "prefixDriftReasons": [ "tools" ], "time": "<time>" }
       [emit] assistant.delta              { "turnId": 1, "delta": "No lookup tool is available." }
       [wire] context.append_loop_event    { "event": { "type": "content.part", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "stepUuid": "<uuid-5>", "part": { "type": "text", "text": "No lookup tool is available." } }, "time": "<time>" }
       [wire] context.append_loop_event    { "event": { "type": "step.end", "uuid": "<uuid-5>", "turnId": "1", "step": 1, "usage": { "inputOther": 184, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-3" }, "time": "<time>" }
       [emit] turn.step.completed          { "turnId": 1, "step": 1, "stepId": "<uuid-5>", "usage": { "inputOther": 184, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                 { "model": "mock-model", "usage": { "inputOther": 184, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated         { "model": "mock-model", "contextTokens": 194, "maxContextTokens": 1000000, "contextUsage": 0.000194, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 492, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 492, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 184, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated         { "model": "mock-model", "contextTokens": 194, "maxContextTokens": 1000000, "contextUsage": 0.000194, "planMode": false, "swarmMode": false, "coordinatorMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 492, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 492, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 184, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                   { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -591,8 +591,10 @@ describe('Agent tools', () => {
 
       const toolText = ctx.compactHistory().find((message) => message.role === 'tool')?.text ?? '';
       const outputPath = /^output_path: (.+)$/m.exec(toolText)?.[1];
-      expect(toolText).toContain('Tool output exceeded 50000 characters');
-      expect(toolText).not.toContain('tail survives');
+      expect(toolText).toContain('Tool output exceeded the size limit (51200 bytes or 2000 lines)');
+      expect(toolText).toContain('[preview head]');
+      // The tail preview keeps the end of the output (where errors land).
+      expect(toolText).toContain('tail survives');
       expect(outputPath).toBeTruthy();
       expect(readFileSync(outputPath!, 'utf8')).toBe(largeOutput);
     } finally {

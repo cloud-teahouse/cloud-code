@@ -1,70 +1,76 @@
 ---
 name: agent-core-dev
-description: Use when developing in packages/agent-core-v2 (the DI × Scope agent engine) — adding or modifying a domain Service, choosing a LifecycleScope, wiring DI dependencies, splitting a domain across scopes, owning or migrating a config section, gating behavior behind an experimental flag, raising coded errors, working on the permission system, writing DI/Scope tests, porting business logic from agent-core (v1) to v2, triaging a main-branch commit against v2, or exposing a v2 domain over server-v2 while keeping the /api/v1 wire contract compatible with released clients. Self-contained guide organized by development stage (orient → design → implement → test → verify) plus align workflows for v1→v2 migration, main-branch commit triage, and server-v2 wire exposure; each file carries the rules, examples, and red lines for its step.
+description: Use when developing in packages/agent-core (the Cloud Code agent engine) — adding or modifying a DI service, a builtin tool, an RPC method, a wire record type, a permission policy, a config key, an experimental flag, or a coded error; working on the compaction, swarm, coordinator, teammate, or background-task subsystems; touching the apps/cloud-code TUI (hit zones, DialogFrame, layout slots, keyboard contract, i18n); or porting/triaging an upstream kimi-code commit. Self-contained guide organized by development stage (orient → design → implement → test → verify) plus topic guides for services, domain boundaries, persistence, compaction, config, errors, flags, permission, edge exposure, TUI, brand, and the no-telemetry rule; each file carries the rules, examples, and red lines for its step.
 ---
 
 # agent-core-dev
 
-> Develop `packages/agent-core-v2` by lifecycle stage. This skill is **self-contained**: every rule, recipe, and red line lives in the stage files below — it does not delegate to `packages/agent-core-v2/docs/`.
+> Develop `packages/agent-core` (and its `apps/cloud-code` TUI surface) by lifecycle stage. This skill is **self-contained**: every rule, recipe, and red line lives in the stage files below. It codifies the root `AGENTS.md`, `packages/agent-core/src/services/AGENTS.md`, `apps/cloud-code/AGENTS.md`, and `docs/` contracts so you can work without re-deriving them; those documents remain the source of truth when they disagree with this skill.
 
-`agent-core-v2` is the new agent engine built on the **DI × Scope** architecture (a port of `packages/agent-core`). Everything resolves through the container: a service declares an **identity**, its **dependencies**, and a **lifetime**; the container decides construction, singleton-per-scope, ordering, and disposal. The stage files restate the rules in imperative form so you can work without reading the source docs.
+`packages/agent-core` (`@cloud-code/agent-core`) is the agent engine: a stateless `loop/`, plain per-session `Session` and per-agent `Agent` classes, a VSCode-style DI service layer (`di/` + `services/`), and the in-process RPC surface (`rpc/`) that `node-sdk` / `server` / the TUI talk to. Cloud Code CLI is a fork of kimi-code; where our architecture has diverged (graduated compaction, guardian approval, teammates/coordinator, sandboxed kaos, wire-format extensions), the stage files say so explicitly.
 
 ## Lifecycle at a glance
 
 ```text
 Orient → Design → Implement → Test → Verify
   │        │          │          │        │
-  │        │          │          │        └─ lint:imports · typecheck · test · dep graph · red lines
+  │        │          │          │        └─ pnpm build · pnpm test · pnpm lint · guards · red lines
   │        │          │          └─ test.md
-  │        │          └─ implement.md (+ errors.md · flags.md · permission.md)
+  │        │          └─ implement.md (+ errors.md · flags.md · permission.md · config.md)
   │        └─ design.md
   └─ orient.md
 ```
 
-Stages are ordered but not strictly linear: a test failure (stage 4) that reveals a wrong scope sends you back to design (stage 2); a `CyclicDependencyError` sends you to `design.md` §dependency-direction and `implement.md` §cycles.
+Stages are ordered but not strictly linear: a test failure (stage 4) that reveals wrong state ownership sends you back to design (stage 2); a `CyclicDependencyError` sends you to `design.md` §dependency-direction.
 
 ## Workflows
 
 End-to-end procedures that span the stages. Reach for these before reading the stage files individually.
 
-- [Align (port `agent-core` → `agent-core-v2`)](align.md): split a v1 class into semantic units, fix each unit's domain / scope / Service / dependencies, then migrate the logic and tests. Use when the task is "move feature X from v1 to v2" or "port `IXxxService` to v2".
-- [Commit align (triage a `main` commit against v2)](commit-align.md): given one `main` commit hash + a short note, find the v1 logic it changed, check whether v2 already has the corresponding implementation, bucket it (aligned / partial / missing / not-applicable), and recommend a minimal fix. Use in the `kimi-code-v2`-catching-up-to-`main` phase, for one commit at a time; escalate to [align.md](align.md) if the gap is a whole domain.
-- [Server align (expose `agent-core-v2` over `server-v2`)](server-align.md): wire a v2 domain into `packages/kap-server` over `/api/v2` (native) and `/api/v1` (v1-compatible mirror), keep the wire schema byte-compatible with the established v1 contract by sharing the `@moonshot-ai/protocol` schema, and isolate v1-only behavior in a `<domain>Legacy` edge adapter instead of distorting the native v2 Service. Use when the task is "expose the new v2 Service on the server", "add a route to the `/api/v1` surface", or "keep server-v2 wire-compatible with released v1 clients".
+- [Upstream align (port `kimi-code` → Cloud Code)](align.md): split an upstream feature into semantic units, map each to our packages/domains, re-wire dependencies under our architecture constraints, then migrate logic and tests — applying the brand contract and our subsystem divergences. Use when the task is "port upstream feature X" or "align our fork with upstream's Y".
+- [Commit align (triage an `upstream/main` commit)](commit-align.md): given one upstream commit hash + a short note, find the logic it changed, check whether we already have the corresponding implementation, bucket it (aligned / partial / missing / not-applicable), and recommend a minimal fix. Use when catching the fork up to `upstream/main`, one commit at a time; escalate to [align.md](align.md) if the gap is a whole domain.
 
 ## Stages
 
-- [Stage 1 — Orient](orient.md): the DI black box (identity / dependencies / lifetime), the four `LifecycleScope` tiers and visibility, and the file-header comment convention. Read before touching business code.
-- [Stage 2 — Design a service](design.md): pick a scope, split a domain across scopes, choose a calling style (direct call vs event vs hook), and direct dependencies. Decide *where things live and who knows whom* before coding.
-  - Topic: [Domain boundaries vs Scope](domain-boundaries.md) — keep `session` / `agent` / `turn` from becoming god objects; data-ownership test and their split conclusions.
-  - Topic: [Persistence layering](persistence.md) — the three-layer `Store → Storage → backend` model, naming Stores by access pattern, and which layer business code should depend on.
-  - Topic: [Edge exposure — `resource:action` + WS events](edge-exposure.md) — which Services are exposed over `/api/v2` (per-scope action map) and which events stream over WS; what to wrap in a facade.
-- [Stage 3 — Implement](implement.md): the standard Service recipe and the DI building blocks — interface + identity, constructor injection, scoped registration, `Disposable`, eager vs delayed, `invokeFunction`, `createInstance`, child scopes, and the cycle-refactor playbook.
-  - Topic: [Service authoring](service-authoring.md) — file layout, naming, contract vs impl contents, interface style, constructor/field conventions, events, multi-Service domains, comment rules.
-  - Topic: [Config](config.md) — the section-registry model, App vs Session split, owning a config section, the TOML format, and the env overlay.
-  - Topic: [Errors](errors.md) — co-located `XxxError`, the central code registry, wire serialization, boundary translation.
-  - Topic: [Flags](flags.md) — `registerFlagDefinition`, `IFlagService.enabled(id)`, the `[experimental]` config section, resolution precedence.
-  - Topic: [Permission](permission.md) — risk-only chain-of-responsibility kernel, harness constraints and product reviews as domain `onBeforeExecuteTool` veto listeners (`veto` / `allow` / `pass` / cold `waitUntil` factories), shared `toolApproval` round-trip, policy registry + composer, `modes`/`agentTypes` metadata, `resolveExecution`/`accesses`.
-  - Topic: [Telemetry](telemetry.md) — emitting events via `ITelemetryService`, context propagation, and appender destinations (`ConsoleAppender` / `CloudAppender`).
-- [Stage 4 — Test](test.md): resolve the system under test by interface, pick `TestInstantiationService` vs `createScopedTestHost`, shared stubs, service groups, teardown.
-- [Stage 5 — Verify & submit](verify.md): `lint:imports`, `typecheck`, `test`, and the pre-submit checklist.
+- [Stage 1 — Orient](orient.md): the package map, the service DI black box (identity / dependencies / lifetime), the Session/Agent/loop runtime, and the import boundaries. Read before touching business code.
+- [Stage 2 — Design](design.md): decide *where things live and who knows whom* — state ownership (Core vs Session vs Agent vs loop), calling style (direct call vs event vs hook vs wire record), and dependency direction.
+  - Topic: [Domain boundaries](domain-boundaries.md) — keep `Session` / `Agent` from becoming god objects; the data-ownership test and their split conclusions.
+  - Topic: [Persistence & wire records](persistence.md) — what must be a replayable wire record vs runtime state vs config; the session on-disk layout.
+  - Topic: [Compaction layers](compaction.md) — the graduated three-layer model (tool-result budget → pinpoint purge → full LLM summary), thresholds, and the effective-count rule.
+  - Topic: [Edge exposure](edge-exposure.md) — how a capability becomes visible over `CoreAPI` → `node-sdk` → `server` → TUI; what may be exposed directly vs adapted.
+- [Stage 3 — Implement](implement.md): the standard recipes — add a service, a builtin tool, an RPC method, a wire record type, a config key, a flag, a permission policy.
+  - Topic: [Service authoring](service-authoring.md) — file layout, naming (`Service` suffix only), contract vs impl contents, registration, comment rules.
+  - Topic: [Config](config.md) — the central zod schema model, snake_case ↔ camelCase, env overlays, `tui.toml`, project-local `.cloud-code/`.
+  - Topic: [Errors](errors.md) — the central `ErrorCodes` + `CloudCodeError` + `CLOUD_CODE_ERROR_INFO` registry, wire serialization, boundary translation.
+  - Topic: [Flags](flags.md) — `FLAG_DEFINITIONS`, `FlagResolver` precedence, scoped resolver threading, TUI gating.
+  - Topic: [Permission](permission.md) — the ordered policy chain (first hit wins), rules DSL, approve-always persistence, guardian, sandbox escalation, topology denies, the teammate permission bridge.
+  - Topic: [Close vs Dispose](close-vs-dispose.md) — sync `dispose()` for resources, async `close()` for business shutdown; where abort belongs.
+  - Topic: [TUI](tui.md) — pi-tui components, declarative hit zones, DialogFrame, layout slots, the keyboard contract, i18n rules.
+  - Topic: [Brand](brand.md) — the Cloud Code brand rules and the untouchable Moonshot service contract list.
+  - Topic: [Telemetry](telemetry.md) — **we do not have telemetry; do not add it.**
+- [Stage 4 — Test](test.md): vitest conventions, the DI test harness, stub discipline, guard tests, e2e.
+- [Stage 5 — Verify & submit](verify.md): `pnpm build && pnpm test && pnpm lint` three-green, typecheck, and the pre-submit checklist.
 
 ## How to use this skill
 
-Jump to the stage you are in and read that one file; each is self-contained and ends with its own red lines. Skim the global red lines below before submitting — they catch most mistakes across every stage. The repo's source of truth remains the code in `packages/agent-core-v2/src/`; this skill codifies the same rules so you do not have to re-derive them.
+Jump to the stage you are in and read that one file; each is self-contained and ends with its own red lines. Skim the global red lines below before submitting — they catch most mistakes across every stage. The repo's source of truth remains the code plus the `AGENTS.md` files; this skill codifies the same rules so you do not have to re-derive them.
 
 ## Global red lines
 
-Invariants that hold across every stage. Each is expanded in the stage file noted.
+Invariants that hold across every stage. Each is expanded in the file noted.
 
-1. No `new` on a class whose constructor carries `@IService` deps — inject with `@IX` or `accessor.get(IX)`. (implement.md)
-2. `@IX` decorates constructor parameters only; parameter order depends on construction (static-first for `createInstance`, `@IX`-first for scoped services). (service-authoring.md)
-3. Both interface and impl carry `_serviceBrand`; the `createDecorator` name is globally unique. (implement.md)
-4. Parent scope never depends on child scope — short-lived may inject long-lived, never the reverse. (orient.md)
-5. No cyclic dependencies — refactor (extract a third Service / use an event / re-scope); activation timing does not break dependency cycles. (design.md, implement.md)
-6. `ServicesAccessor` is valid only during `invokeFunction` — never stash it for async use. (implement.md)
-7. Scope follows state identity — no `Map<sessionId, …>` at `App` to fake per-session state. (design.md)
-8. Foundational layers never know upstream ones; business code never depends on the edge layer (`gateway`/`rpc`). (design.md)
-9. Throw coded errors; register codes centrally; branch on `code` across the wire, never `instanceof`. (errors.md)
-10. Gate unreleased behavior behind a flag contributed via `registerFlagDefinition` and resolved through `IFlagService.enabled(id)`; no ad-hoc env toggles. (flags.md)
-11. Tests resolve the SUT by interface; shared stubs live under `test/`, never `src/`. (test.md)
-12. Config is the preference registry: only preferences that are persistable, schema'd, and user/operator-facing go in `IConfigService`. Domain-specific config (including env-only operational toggles) goes through `registerSection` + `envOverlay`. Facts → `IBootstrapService`, and host invocation arguments (CLI flags, host identity headers, prompt identity) → `BootstrapInput.args` / `IBootstrapService.args` — never new per-domain runtime-options services; domain runtime state (cron/flags/model) never goes onto `IBootstrapService`; session state → Session scope; constants → code. Business domains never call `IBootstrapService.getEnv()` directly. (config.md)
+1. `apps/cloud-code` depends on `@cloud-code/sdk` only — never import `@cloud-code/agent-core` internals from app code. (orient.md)
+2. `loop/` stays stateless: `LLM` / `buildMessages` / `dispatchEvent` are injected by the host; the loop never imports host implementations. (orient.md, design.md)
+3. Every file/process operation goes through `kaos` — tools never touch `node:fs` / `node:child_process` directly. (design.md)
+4. Services follow the VSCode convention: `IXxxService` interface with `_serviceBrand` + `createDecorator('xxxService')` + `XxxService` impl + bottom-of-file `registerSingleton(IXxxService, XxxService, InstantiationType.Delayed)`. The `Service` suffix is mandatory — no `Bus` / `Broker` / `Bridge` / `Registry` / `Manager`. (service-authoring.md)
+5. Never `new` a class whose constructor carries `@IService` deps — resolve by interface through the container. (implement.md, test.md)
+6. Throw coded errors: `CloudCodeError` with an `ErrorCodes` entry and a matching `CLOUD_CODE_ERROR_INFO`; branch on `code` across the wire, never `instanceof`. (errors.md)
+7. Gate unreleased behavior behind a `FLAG_DEFINITIONS` flag resolved through `FlagResolver.enabled(id)`; no ad-hoc env toggles. (flags.md)
+8. The permission chain adjudicates risk in order — first hit wins. Harness constraints are hard denies placed above the approve cascade; new rule specifics go through the data path (`PermissionRule`), not a new policy. (permission.md)
+9. Durable, replayable facts are wire records; runtime-only state stays in memory; `config.toml` is rewritten only through the config write path. (persistence.md, config.md)
+10. New user-visible TUI strings go through `t()` in **both** `en` and `zh-CN` dictionaries; CJK column alignment uses `padEndVisible()`, never `.padEnd()`. (tui.md)
+11. No user-visible "Kimi Code" / "kimi-code" strings; the Moonshot service contract (provider literal `'kimi'`, `managed:kimi-code`, OAuth keys, `X-Msh-Platform`, `KIMI_API_KEY`, model IDs, `*.kimi.com` URLs) is untouchable. (brand.md)
+12. No telemetry — the package was deleted from this repo; do not add event reporting, metrics beacons, or a telemetry facade. (telemetry.md)
+13. Tool-result visible order strictly equals provider order — concurrency may start results early, never show them early. (design.md)
+14. Single-file soft cap of 800 lines; split at review time. (implement.md)
+15. New features ship with vitest coverage; a phase ends only when `pnpm build && pnpm test && pnpm lint` are all green. (verify.md)

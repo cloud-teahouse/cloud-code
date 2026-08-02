@@ -1,4 +1,4 @@
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@cloud-code/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ReadTool } from '../../src/tools/builtin/file/read';

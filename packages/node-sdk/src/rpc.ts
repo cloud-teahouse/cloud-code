@@ -2,7 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   ErrorCodes,
-  KimiError,
+  CloudCodeError,
+  log,
   makeErrorPayload,
   type AgentContextData,
   type ApprovalRequest,
@@ -19,8 +20,8 @@ import {
   type ToolCallRequest,
   type ToolCallResponse,
   type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
-import type { Kaos } from '@moonshot-ai/kaos';
+} from '@cloud-code/agent-core';
+import type { Kaos } from '@cloud-code/kaos';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
@@ -38,24 +39,29 @@ import type {
   GoalSnapshot,
   GoalToolResult,
   JsonObject,
-  KimiConfig,
-  KimiConfigPatch,
+  CloudCodeConfig,
+  CloudCodeConfigPatch,
   ListSessionsOptions,
   McpServerInfo,
-  McpStartupMetrics,
   McpTestResult,
+  ModelAlias,
   PermissionMode,
   PluginInfo,
   PluginSummary,
+  ProviderConfig,
   ReloadSummary,
   CompactOptions,
   SessionPlan,
   SessionStatus,
   SessionUsage,
+  OutputStyleSummary,
   PromptInput,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
+  RewindFilesResult,
+  SandboxStatusData,
+  ServiceTier,
   SessionSummary,
   SkillSummary,
   PluginCommandDef,
@@ -98,8 +104,17 @@ export interface SetSessionModelRpcResult {
   readonly providerName?: string | undefined;
 }
 
+export interface SetSessionOutputStyleRpcInput extends SessionIdRpcInput {
+  /** Style name to activate; `'default'` restores the stock prompt. */
+  readonly style: string;
+}
+
 export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
   readonly effort: string;
+}
+
+export interface SetSessionServiceTierRpcInput extends SessionIdRpcInput {
+  readonly serviceTier: ServiceTier | null;
 }
 
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
@@ -116,6 +131,10 @@ export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
 
 export type SetSessionSwarmModeRpcInput =
   | (SessionIdRpcInput & { readonly enabled: true; readonly trigger: SwarmModeTrigger })
+  | (SessionIdRpcInput & { readonly enabled: false });
+
+export type SetSessionCoordinatorModeRpcInput =
+  | (SessionIdRpcInput & { readonly enabled: true })
   | (SessionIdRpcInput & { readonly enabled: false });
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
@@ -256,9 +275,9 @@ export abstract class SDKRpcClientBase {
     });
   }
 
-  async getConfig(input?: GetConfigOptions): Promise<KimiConfig> {
+  async getConfig(input?: GetConfigOptions): Promise<CloudCodeConfig> {
     const rpc = await this.getRpc();
-    return rpc.getKimiConfig(input ?? {});
+    return rpc.getCloudCodeConfig(input ?? {});
   }
 
   async getConfigDiagnostics(): Promise<ConfigDiagnostics> {
@@ -271,14 +290,41 @@ export abstract class SDKRpcClientBase {
     return rpc.getExperimentalFeatures({});
   }
 
-  async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {
+  async setConfig(input: CloudCodeConfigPatch): Promise<CloudCodeConfig> {
     const rpc = await this.getRpc();
-    return rpc.setKimiConfig(input);
+    return rpc.setCloudCodeConfig(input);
   }
 
-  async removeProvider(providerId: string): Promise<KimiConfig> {
+  async removeProvider(providerId: string): Promise<CloudCodeConfig> {
     const rpc = await this.getRpc();
-    return rpc.removeKimiProvider({ providerId });
+    return rpc.removeCloudCodeProvider({ providerId });
+  }
+
+  /** Wholesale replacement of one provider entry (edits can clear fields). */
+  async setProvider(providerId: string, provider: ProviderConfig): Promise<CloudCodeConfig> {
+    const rpc = await this.getRpc();
+    return rpc.setCloudCodeProvider({ providerId, provider });
+  }
+
+  /** Wholesale replacement of one model alias (edits can clear fields). */
+  async setModelAlias(alias: string, model: ModelAlias): Promise<CloudCodeConfig> {
+    const rpc = await this.getRpc();
+    return rpc.setCloudCodeModel({ alias, model });
+  }
+
+  /** Delete a single model alias; clears `defaultModel` when it points at it. */
+  async removeModel(alias: string): Promise<CloudCodeConfig> {
+    const rpc = await this.getRpc();
+    return rpc.removeCloudCodeModel({ alias });
+  }
+
+  /** Wholesale replacement of the `[secondary_model]` section (edits can clear it). */
+  async setSecondaryModel(input: {
+    model?: string;
+    effort?: string;
+  }): Promise<CloudCodeConfig> {
+    const rpc = await this.getRpc();
+    return rpc.setCloudCodeSecondaryModel(input);
   }
 
   /**
@@ -298,7 +344,7 @@ export abstract class SDKRpcClientBase {
    * expressed by the written record itself.
    */
   replaceConfigSections(_sections: Record<string, unknown>): Promise<void> {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support atomic config section replacement.',
     );
@@ -425,12 +471,13 @@ export abstract class SDKRpcClientBase {
     });
   }
 
-  async cancel(input: SessionIdRpcInput): Promise<void> {
+  async cancel(input: SessionIdRpcInput & { readonly withdrawInput?: boolean }): Promise<void> {
     const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.cancel({
       sessionId: input.sessionId,
       agentId,
+      withdrawInput: input.withdrawInput === true,
     });
   }
 
@@ -467,6 +514,15 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
       effort: input.effort,
+    });
+  }
+
+  async setServiceTier(input: SetSessionServiceTierRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setServiceTier({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      serviceTier: input.serviceTier,
     });
   }
 
@@ -511,6 +567,20 @@ export abstract class SDKRpcClientBase {
   async setSwarmMode(input: SetSessionSwarmModeRpcInput): Promise<void> {
     if (input.enabled) return this.enterSwarmMode(input);
     return this.exitSwarmMode(input);
+  }
+
+  async setCoordinatorMode(input: SetSessionCoordinatorModeRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    if (!input.enabled) {
+      return rpc.exitCoordinator({
+        sessionId: input.sessionId,
+        agentId: this.interactiveAgentId,
+      });
+    }
+    return rpc.enterCoordinator({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
   async swarm(input: SessionPromptRpcInput): Promise<void> {
@@ -579,6 +649,15 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async rewindFiles(input: SessionIdRpcInput & { count: number }): Promise<RewindFilesResult> {
+    const rpc = await this.getRpc();
+    return rpc.rewindFiles({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      count: input.count,
+    });
+  }
+
   async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
     const rpc = await this.getRpc();
     return rpc.getContext({
@@ -618,6 +697,10 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
+    const coordinatorMode = await rpc.getCoordinatorMode({
+      sessionId: input.sessionId,
+      agentId,
+    });
     const usage = await rpc.getUsage({
       sessionId: input.sessionId,
       agentId,
@@ -637,6 +720,8 @@ export abstract class SDKRpcClientBase {
       permission: permission.mode,
       planMode: plan !== null,
       swarmMode,
+      coordinatorMode,
+      serviceTier: config.serviceTier,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -647,6 +732,16 @@ export abstract class SDKRpcClientBase {
   async listSkills(input: SessionIdRpcInput): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSkills({ sessionId: input.sessionId });
+  }
+
+  async listOutputStyles(input: SessionIdRpcInput): Promise<readonly OutputStyleSummary[]> {
+    const rpc = await this.getRpc();
+    return rpc.listOutputStyles({ sessionId: input.sessionId });
+  }
+
+  async setOutputStyle(input: SetSessionOutputStyleRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setOutputStyle({ sessionId: input.sessionId, style: input.style });
   }
 
   async listPluginCommands(input: SessionIdRpcInput): Promise<readonly PluginCommandDef[]> {
@@ -760,9 +855,9 @@ export abstract class SDKRpcClientBase {
     return rpc.listMcpServers({ sessionId: input.sessionId });
   }
 
-  async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {
+  async getSandboxStatus(input: SessionIdRpcInput): Promise<SandboxStatusData> {
     const rpc = await this.getRpc();
-    return rpc.getMcpStartupMetrics({ sessionId: input.sessionId });
+    return rpc.getSandboxStatus({ sessionId: input.sessionId, agentId: this.interactiveAgentId });
   }
 
   async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
@@ -780,9 +875,13 @@ export abstract class SDKRpcClientBase {
     return rpc.installPlugin({ source });
   }
 
-  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+  async setPluginEnabled(
+    id: string,
+    enabled: boolean,
+    options?: { readonly scope?: 'user' | 'project'; readonly workDir?: string },
+  ): Promise<void> {
     const rpc = await this.getRpc();
-    return rpc.setPluginEnabled({ id, enabled });
+    return rpc.setPluginEnabled({ id, enabled, scope: options?.scope, workDir: options?.workDir });
   }
 
   async setPluginMcpServerEnabled(
@@ -839,7 +938,19 @@ export abstract class SDKRpcClientBase {
 
   receiveEvent(event: Event): void {
     for (const listener of this.eventListeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch (error) {
+        // A broken event listener must not take down the transport or
+        // starve the remaining listeners (the same discipline the server's
+        // JsonRpcConnection applies to notification handlers). Demote the
+        // failure to a diagnostic log; the logger is a no-op until the host
+        // configures it, so library consumers see no unsolicited output.
+        log.warn('sdk event listener threw', {
+          eventType: event.type,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

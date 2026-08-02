@@ -286,7 +286,7 @@ export function createProxyDispatcher(
     // A malformed proxy URL makes agent construction throw synchronously. Don't
     // abort startup with a raw stack trace — report it and fall back to direct.
     const reason = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`kimi: ignoring invalid proxy configuration (${reason}); connecting directly\n`);
+    process.stderr.write(`cloud-code: ignoring invalid proxy configuration (${reason}); connecting directly\n`);
     return undefined;
   }
 }
@@ -303,7 +303,7 @@ const defaultInstallProxyDeps: InstallProxyDeps = {
 
 /**
  * Install the proxy dispatcher as the process-wide undici dispatcher so every
- * `fetch` — LLM SDKs, in-process MCP HTTP, telemetry, OAuth, web tools, update
+ * `fetch` — LLM SDKs, in-process MCP HTTP, OAuth, web tools, update
  * checks, downloads — honors the proxy. Call once at process startup, before
  * any network use. No-op (returns `false`) when no proxy variable is set.
  */

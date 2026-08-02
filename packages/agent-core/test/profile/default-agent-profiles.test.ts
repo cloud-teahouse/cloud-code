@@ -26,7 +26,7 @@ describe('default agent profiles', () => {
   it('loads the bundled default system prompt from embedded sources', () => {
     const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext);
 
-    expect(prompt).toContain('You are Kimi Code CLI');
+    expect(prompt).toContain('You are Cloud Code CLI');
     expect(prompt).toContain('Available skills');
     expect(prompt).toContain('/workspace');
   });
@@ -79,6 +79,35 @@ describe('default agent profiles', () => {
         'profile/default/agent.yaml': 'name: agent\nsystemPromptPath: ./missing.md\n',
       }),
     ).toThrow(/Embedded agent profile source missing: profile\/default\/missing\.md/);
+  });
+
+  it('renders the Memory section only for profiles with the SaveMemory tool', () => {
+    const memory = '## Project memory — `/workspace/.cloud-code/memory/MEMORY.md`\n\n- [proj](proj.md)';
+    // The root agent and coder can save memories, so the section and the
+    // injected index render in their prompts.
+    for (const name of ['agent', 'coder']) {
+      expect(DEFAULT_AGENT_PROFILES[name]?.tools).toContain('SaveMemory');
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt({ ...promptContext, memory }) ?? '';
+      expect(prompt).toContain('# Memory');
+      expect(prompt).toContain('- [proj](proj.md)');
+    }
+
+    // explore/plan lack the SaveMemory tool, so neither the section heading
+    // nor the memory index should appear in their prompts.
+    for (const name of ['explore', 'plan']) {
+      const tools = DEFAULT_AGENT_PROFILES[name]?.tools ?? [];
+      expect(tools).not.toContain('SaveMemory');
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt({ ...promptContext, memory }) ?? '';
+      expect(prompt).not.toContain('# Memory');
+      expect(prompt).not.toContain('- [proj](proj.md)');
+    }
+  });
+
+  it('elides the Memory section entirely when no memory exists', () => {
+    // promptContext carries no memory — the template gate must produce zero
+    // prompt delta for agents without memory dirs.
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+    expect(prompt).not.toContain('# Memory');
   });
 
   it('omits the Skills section only for profiles that lack the Skill tool', () => {
@@ -157,5 +186,119 @@ describe('default agent profiles', () => {
       expect(prompt).toContain('update the related tests'); // preamble phrasing example
       expect(prompt).toContain('premature abstraction'); // MINIMAL-changes counterexample
     }
+  });
+
+  it('renders the subagent delegation discipline for root and subagents alike', () => {
+    // Shared static section (delegation-restraint + writing-subagent-prompts port):
+    // spawn-restraint tests first, then briefing discipline. Phrased tool-agnostic —
+    // "subagents", never the Agent/AgentSwarm tool names — so it can render on
+    // profiles that have no subagent tools without dangling a tool reference.
+    for (const name of ['agent', 'coder', 'explore', 'plan']) {
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
+      expect(prompt).toContain('# Delegating to subagents');
+      // Restraint: small bounded work stays inline; delegated work is not redone.
+      expect(prompt).toContain('in a handful of tool calls');
+      expect(prompt).toContain('do not redo the subagent');
+      expect(prompt).toContain('Verification that fits in your own loop');
+      // Briefing: the colleague metaphor and the no-delegated-understanding bar.
+      expect(prompt).toContain('smart colleague who just walked into the room');
+      expect(prompt).toContain('Never delegate understanding');
+      expect(prompt).toContain('file paths, line numbers, and what specifically to change');
+      // The old one-liner moved into this section — it must not also linger in
+      // the Prompt and Tool Use section above it.
+      expect(prompt.indexOf('For simple, directed codebase searches')).toBeGreaterThan(
+        prompt.indexOf('# Delegating to subagents'),
+      );
+    }
+  });
+
+  it('stays brand-neutral across every bundled profile prompt', () => {
+    for (const name of ['agent', 'coder', 'explore', 'plan']) {
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
+      expect(prompt).not.toContain('Kimi Code');
+    }
+  });
+
+  it('renders the Git Status section only when a snapshot is provided', () => {
+    const gitStatus = [
+      'This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.',
+      'Current branch: feature-x',
+      'Main branch (you will usually use this for PRs): main',
+      'Status:\n(clean)',
+    ].join('\n\n');
+
+    const withGit =
+      DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({ ...promptContext, gitStatus }) ?? '';
+    expect(withGit).toContain('## Git Status');
+    expect(withGit).toContain('Current branch: feature-x');
+    expect(withGit).toContain('will not update during the conversation');
+    // The section sits with the working-environment context, before Project Information.
+    expect(withGit.indexOf('## Git Status')).toBeLessThan(withGit.indexOf('# Project Information'));
+
+    const withoutGit = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+    expect(withoutGit).not.toContain('## Git Status');
+  });
+
+  it('renders the MCP Server Instructions section only when instructions are provided', () => {
+    const mcpInstructions = '## github\nUse the GitHub tools for PRs.';
+
+    const withMcp =
+      DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({ ...promptContext, mcpInstructions }) ?? '';
+    expect(withMcp).toContain('# MCP Server Instructions');
+    expect(withMcp).toContain(
+      'The following MCP servers have provided instructions for how to use their tools and resources:',
+    );
+    expect(withMcp).toContain(mcpInstructions);
+
+    const withoutMcp = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+    expect(withoutMcp).not.toContain('# MCP Server Instructions');
+  });
+
+  it('tells coder and explore subagents that Bash cwd resets and to cite absolute paths', () => {
+    for (const name of ['coder', 'explore']) {
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
+      expect(prompt).toContain('working directory resets between Bash calls');
+      expect(prompt).toContain('absolute paths');
+    }
+  });
+
+  it('omits the injected AGENTS.md block for explore/plan but keeps it for agent/coder', () => {
+    // omitAgentsMd drops the merged AGENTS.md content (the parent agent holds
+    // the full context), but the generic "consult subdirectory AGENTS.md"
+    // guidance and the section heading stay.
+    for (const name of ['explore', 'plan']) {
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
+      expect(prompt).not.toContain('AGENTS_MD_BODY');
+      expect(prompt).not.toContain('The applicable `AGENTS.md` instructions are:');
+      expect(prompt).not.toContain('not a privileged instruction channel');
+      expect(prompt).toContain('# Project Information');
+      expect(prompt).toContain('check whether those directories contain their own `AGENTS.md`');
+    }
+    for (const name of ['agent', 'coder']) {
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
+      expect(prompt).toContain('AGENTS_MD_BODY');
+      expect(prompt).toContain('The applicable `AGENTS.md` instructions are:');
+    }
+  });
+
+  it('arms explore with an explicit read-only prohibition list', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['explore']?.systemPrompt(promptContext) ?? '';
+    expect(prompt).toContain('READ-ONLY MODE - NO FILE MODIFICATIONS');
+    expect(prompt).toContain('STRICTLY PROHIBITED');
+    expect(prompt).toContain('no mv or cp');
+    expect(prompt).toContain('Creating temporary files anywhere, including /tmp');
+    expect(prompt).toContain('redirect operators (>, >>, |) or heredocs');
+    expect(prompt).toContain('attempting to edit files will fail');
+  });
+
+  it('requires plan to end its final message with a Critical Files list', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['plan']?.systemPrompt(promptContext) ?? '';
+    expect(prompt).toContain('### Critical Files for Implementation');
+    expect(prompt).toContain('3-5 files most critical for implementing this plan');
+  });
+
+  it('bans a colon before tool calls', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+    expect(prompt).toContain('Do not use a colon before tool calls');
   });
 });

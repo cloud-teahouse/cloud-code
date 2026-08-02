@@ -15,10 +15,10 @@ import { join } from 'node:path';
 
 import type { DeviceHeaders } from './types';
 
-export const KIMI_CODE_PLATFORM = 'kimi_code_cli';
+export const CLOUD_CODE_PLATFORM = 'kimi_code_cli';
 
-export interface KimiHostIdentity {
-  readonly productName: string;
+export interface CloudCodeHostIdentity {
+  readonly userAgentProduct: string;
   readonly version: string;
   /**
    * `X-Msh-Platform` value reported to the OAuth host and managed endpoints
@@ -30,7 +30,7 @@ export interface KimiHostIdentity {
   readonly userAgentSuffix?: string | undefined;
 }
 
-export interface KimiIdentityOptions extends KimiHostIdentity {
+export interface CloudCodeIdentityOptions extends CloudCodeHostIdentity {
   readonly homeDir: string;
 }
 
@@ -68,13 +68,13 @@ export function createKimiDeviceId(
     try {
       options.onFirstLaunch(id);
     } catch {
-      // Telemetry callback must not affect device id creation.
+      // The callback must not affect device id creation.
     }
   }
   return id;
 }
 
-export function createKimiDeviceHeaders(options: {
+export function createCloudCodeDeviceHeaders(options: {
   readonly homeDir: string;
   readonly version: string;
   /** Required and validated like the version: non-empty ASCII, no fallback —
@@ -91,12 +91,12 @@ export function createKimiDeviceHeaders(options: {
   };
 }
 
-export function createKimiUserAgent(options: {
-  readonly productName: string;
+export function createCloudCodeUserAgent(options: {
+  readonly userAgentProduct: string;
   readonly version: string;
   readonly userAgentSuffix?: string | undefined;
 }): string {
-  const product = requiredAsciiHeader(options.productName, 'Kimi identity product');
+  const product = requiredAsciiHeader(options.userAgentProduct, 'Kimi identity product');
   const version = requiredAsciiHeader(options.version, 'Kimi identity version');
   const suffix =
     options.userAgentSuffix === undefined ? undefined : asciiHeader(options.userAgentSuffix, '');
@@ -105,10 +105,10 @@ export function createKimiUserAgent(options: {
     : `${product}/${version} (${suffix})`;
 }
 
-export function createKimiDefaultHeaders(options: KimiIdentityOptions): Record<string, string> {
+export function createKimiDefaultHeaders(options: CloudCodeIdentityOptions): Record<string, string> {
   return {
-    'User-Agent': createKimiUserAgent(options),
-    ...createKimiDeviceHeaders({
+    'User-Agent': createCloudCodeUserAgent(options),
+    ...createCloudCodeDeviceHeaders({
       homeDir: options.homeDir,
       version: options.version,
       platform: options.platform,
@@ -130,12 +130,12 @@ export function createKimiDefaultHeaders(options: KimiIdentityOptions): Record<s
  * environment-derived and stateless (re-read on every call) so callers can
  * apply it uniformly without plumbing the value through every host layer.
  */
-export const KIMI_CODE_CUSTOM_HEADERS_ENV = 'KIMI_CODE_CUSTOM_HEADERS';
+export const CLOUD_CODE_CUSTOM_HEADERS_ENV = 'CLOUD_CODE_CUSTOM_HEADERS';
 
 export function parseKimiCodeCustomHeaders(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
-  const raw = env[KIMI_CODE_CUSTOM_HEADERS_ENV]?.trim();
+  const raw = env[CLOUD_CODE_CUSTOM_HEADERS_ENV]?.trim();
   if (raw === undefined || raw.length === 0) return {};
   const headers: Record<string, string> = {};
   for (const line of raw.split('\n')) {
@@ -148,11 +148,11 @@ export function parseKimiCodeCustomHeaders(
   return headers;
 }
 
-export function assertKimiHostIdentity(identity: KimiHostIdentity | undefined): KimiHostIdentity {
+export function assertCloudCodeHostIdentity(identity: CloudCodeHostIdentity | undefined): CloudCodeHostIdentity {
   if (identity === undefined) {
     throw new Error('Kimi host identity is required. Pass the host product name and version.');
   }
-  requiredAsciiHeader(identity.productName, 'Kimi identity product');
+  requiredAsciiHeader(identity.userAgentProduct, 'Kimi identity product');
   requiredAsciiHeader(identity.version, 'Kimi identity version');
   return identity;
 }

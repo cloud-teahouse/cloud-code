@@ -12,8 +12,7 @@ export {
 export { Box } from "./components/box.ts";
 export { CancellableLoader } from "./components/cancellable-loader.ts";
 export { Editor, type EditorOptions, type EditorTheme } from "./components/editor.ts";
-export { Image, type ImageOptions, type ImageTheme } from "./components/image.ts";
-export { Input } from "./components/input.ts";
+export { Image, type ImageOptions, type ImageTheme } from "./components/image.ts";export { Input } from "./components/input.ts";
 export { Loader, type LoaderIndicatorOptions } from "./components/loader.ts";
 export { type DefaultTextStyle, Markdown, type MarkdownOptions, type MarkdownTheme } from "./components/markdown.ts";
 export {
@@ -31,6 +30,16 @@ export { TruncatedText } from "./components/truncated-text.ts";
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+// Hit zones (declarative mouse hit-testing)
+export {
+	hasHitZones,
+	type HitZone,
+	type HitZoneId,
+	type HitZoneSemantics,
+	hitZoneAt,
+	type ResolvedHitZone,
+	resolveHitZones,
+} from "./hit-zones.ts";
 // Keybindings
 export {
 	getKeybindings,
@@ -59,6 +68,22 @@ export {
 } from "./keys.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
+// Virtual scrollbar model (rightmost-column, hover-revealed)
+export {
+	drawScrollbar,
+	maxScrollOf,
+	MIN_TRACK_ROWS,
+	Scrollbar,
+	scrollbarThumb,
+	SCROLLBAR_THUMB_GLYPH,
+	SCROLLBAR_TRACK_GLYPH,
+	scrollTopForThumbOffset,
+	scrollTopForTrackRow,
+	type ScrollbarDragSession,
+	type ScrollbarMetrics,
+	type ScrollbarStyle,
+	type ScrollbarThumb,
+} from "./scrollbar.ts";
 // Terminal interface and implementations
 export { ProcessTerminal, type Terminal } from "./terminal.ts";
 // Terminal colors
@@ -90,6 +115,7 @@ export {
 	type ImageProtocol,
 	type ImageRenderOptions,
 	imageFallback,
+	isImageLine,
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
@@ -102,6 +128,7 @@ export {
 	CURSOR_MARKER,
 	type Focusable,
 	isFocusable,
+	type MouseEvent,
 	type OverlayAnchor,
 	type OverlayHandle,
 	type OverlayMargin,
@@ -111,4 +138,6 @@ export {
 	TUI,
 } from "./tui.ts";
 // Utilities
-export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+export { applyBackgroundToLine, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+// Vim mode (editor modal editing)
+export type { VimMode } from "./vim/types.ts";

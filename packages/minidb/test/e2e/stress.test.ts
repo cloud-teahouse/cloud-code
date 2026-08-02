@@ -605,7 +605,7 @@ test('stress: maxMemory reject leaves the db consistent and writable', { timeout
         ok++;
       } catch (err) {
         rej++;
-        expect(String((err as Error).message)).toMatch(/maxMemory/);
+        expect((err as Error).message).toMatch(/maxMemory/);
       }
     }
     expect(ok).toBeGreaterThan(0);

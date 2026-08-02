@@ -1,4 +1,4 @@
-# @moonshot-ai/pi-tui
+# @cloudcode/pi-tui
 
 ## 0.80.8
 

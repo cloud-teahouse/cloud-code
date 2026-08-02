@@ -2,7 +2,7 @@
 // detail for every record kind. Because `WIRE_RENDERERS` is typed as a mapped
 // type over the FULL `RecordType` union, TypeScript REQUIRES an entry for each
 // kind: adding a kind upstream in agent-core fails
-// `pnpm --filter @moonshot-ai/vis-web typecheck` here until a renderer is
+// `pnpm --filter @cloud-code/vis-web typecheck` here until a renderer is
 // added. This is the anti-rot guarantee that keeps vis from silently falling
 // behind the wire protocol.
 
@@ -81,6 +81,41 @@ export const WIRE_RENDERERS: RendererMap = {
         ),
       };
     },
+  },
+
+  'worktree.enter': {
+    tone: 'lifecycle',
+    label: 'worktree',
+    headline: (r) => ({
+      main: (
+        <span className="truncate text-fg-0">
+          enter {r.name} <Dim>{r.branch} · {r.path}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'worktree.exit': {
+    tone: 'lifecycle',
+    label: 'worktree',
+    headline: (r) => {
+      const extra: string[] = [];
+      if (r.discardedFiles !== undefined) extra.push(`${r.discardedFiles} files`);
+      if (r.discardedCommits !== undefined) extra.push(`${r.discardedCommits} commits`);
+      return {
+        main: (
+          <span className="truncate text-fg-0">
+            exit {r.action} <Dim>{r.branch ?? r.path}{extra.length > 0 ? ` · discarded ${extra.join(' + ')}` : ''}</Dim>
+          </span>
+        ),
+      };
+    },
+  },
+
+  'context.withdraw_tail_input': {
+    tone: 'lifecycle',
+    label: 'recall',
+    headline: () => ({ main: <Dim>interrupted input recalled</Dim> }),
   },
 
   'turn.prompt': {
@@ -493,6 +528,92 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
+  'graduated_compaction.apply': {
+    tone: 'compaction',
+    label: 'gcompact',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Pill tone="compaction" variant="soft">
+            {r.layer}
+          </Pill>
+          <Dim>cutoff {r.cutoff}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  // Shadow-git workspace snapshots: not part of the context timeline —
+  // they track/restore worktree state for /rewind.
+  'snapshot.track': {
+    tone: 'lifecycle',
+    label: 'snap',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Pill tone="lifecycle" variant="soft">
+            {r.kind}
+          </Pill>
+          <Mono>turn {r.turnId}</Mono>
+          <Dim>
+            {r.files.length} file{r.files.length === 1 ? '' : 's'}
+            {r.anchor === true ? ' · anchor' : ''}
+          </Dim>
+        </span>
+      ),
+      right: <Mono>#{r.tree.slice(0, 8)}</Mono>,
+    }),
+    detail: (r) => (
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="turnId">
+          <span className="text-[var(--color-sev-info)]">{r.turnId}</span>
+        </FieldRow>
+        {r.step !== undefined ? (
+          <FieldRow label="step">
+            <span className="text-[var(--color-sev-info)]">{r.step}</span>
+          </FieldRow>
+        ) : null}
+        <FieldRow label="tree" wide>
+          <Mono className="break-all">{r.tree}</Mono>
+        </FieldRow>
+        <FieldRow label="files" wide>
+          <JsonViewer value={r.files} defaultOpenDepth={1} />
+        </FieldRow>
+      </div>
+    ),
+  },
+
+  'snapshot.rewind': {
+    tone: 'warning',
+    label: 'rewind',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Pill tone="warning" variant="soft">
+            rewind
+          </Pill>
+          <Mono>turn {r.turnId}</Mono>
+          <Dim>
+            {r.files.length} file{r.files.length === 1 ? '' : 's'}
+          </Dim>
+        </span>
+      ),
+    }),
+    detail: (r) => (
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="turnId">
+          <span className="text-[var(--color-sev-info)]">{r.turnId}</span>
+        </FieldRow>
+        <FieldRow label="preRewindTree" wide>
+          <Mono className="break-all">{r.preRewindTree}</Mono>
+        </FieldRow>
+        <FieldRow label="files" wide>
+          <JsonViewer value={r.files} defaultOpenDepth={1} />
+        </FieldRow>
+      </div>
+    ),
+  },
+
   'plan_mode.enter': {
     tone: 'lifecycle',
     label: 'plan↻',
@@ -557,6 +678,144 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'subagent',
     label: 'swarm✓',
     headline: () => ({ main: <Dim>swarm mode exited</Dim> }),
+  },
+
+  'coordinator_mode.enter': {
+    tone: 'subagent',
+    label: 'coord▶',
+    headline: () => ({
+      main: (
+        <span className="flex items-center gap-2">
+          <Pill tone="subagent" variant="soft">
+            enter
+          </Pill>
+          <Dim>coordinator mode</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'coordinator_mode.exit': {
+    tone: 'subagent',
+    label: 'coord✓',
+    headline: () => ({ main: <Dim>coordinator mode exited</Dim> }),
+  },
+
+  'usage.rate_limit': {
+    tone: 'meta',
+    label: 'quota',
+    headline: () => ({ main: <Dim>rate-limit snapshot updated</Dim> }),
+    detail: (r) => (
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="snapshot">
+          <JsonViewer value={r.snapshot} />
+        </FieldRow>
+      </div>
+    ),
+  },
+
+  'guardian.assessment': {
+    tone: 'approval',
+    label: 'guardian',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Pill tone="approval" variant="soft">
+            {r.outcome}
+          </Pill>
+          <Mono>{r.toolName}</Mono>
+          <Dim>risk {r.riskLevel}</Dim>
+        </span>
+      ),
+      right: <Dim>{r.durationMs}ms</Dim>,
+    }),
+    detail: (r) => (
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="rationale">
+          <span className="text-fg-1">{r.rationale}</span>
+        </FieldRow>
+        <FieldRow label="model">
+          <Mono>{r.model}</Mono>
+        </FieldRow>
+        <FieldRow label="userAuthorization">
+          <Mono>{r.userAuthorization}</Mono>
+        </FieldRow>
+      </div>
+    ),
+  },
+
+  'guardian.review_failed': {
+    tone: 'approval',
+    label: 'guardian!',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Pill tone="approval" variant="soft">
+            {r.failureKind}
+          </Pill>
+          <Mono>{r.toolName}</Mono>
+          <Dim>fallback {r.fallback}</Dim>
+        </span>
+      ),
+      right: <Dim>{r.durationMs}ms</Dim>,
+    }),
+  },
+
+  'guardian.circuit_breaker_tripped': {
+    tone: 'approval',
+    label: 'guardian⛔',
+    headline: (r) => ({
+      main: (
+        <Dim>
+          circuit breaker tripped — {r.consecutiveDenials} consecutive / {r.windowDenials} window denials
+        </Dim>
+      ),
+    }),
+  },
+
+  'shell_session.start': {
+    tone: 'lifecycle',
+    label: 'pty+',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.sessionId}</Mono>
+          <span className="truncate text-fg-1">{r.command}</span>
+        </span>
+      ),
+      right: <Dim>pid {r.pid}</Dim>,
+    }),
+  },
+
+  'shell_session.exit': {
+    tone: 'lifecycle',
+    label: 'pty✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.sessionId}</Mono>
+          <Dim>
+            {r.exitCode === null ? 'reclaimed' : `exit ${r.exitCode}`}
+            {r.reason !== undefined ? ` · ${r.reason}` : ''}
+          </Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'session.meta': {
+    tone: 'meta',
+    label: 'smeta',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          {r.title !== undefined ? <Mono>{r.title}</Mono> : null}
+          {r.lastPrompt !== undefined ? (
+            <span className="truncate text-fg-3">{r.lastPrompt}</span>
+          ) : null}
+        </span>
+      ),
+    }),
   },
 
   'goal.create': {

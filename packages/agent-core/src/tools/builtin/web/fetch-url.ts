@@ -8,7 +8,7 @@
 
 import { z } from 'zod';
 
-import type { BuiltinTool } from '../../../agent/tool';
+import { TOOL_SNIP_HINT_READ_ONLY, type BuiltinTool } from '../../../agent/tool/types';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
@@ -66,6 +66,7 @@ export type FetchURLInput = z.Infer<typeof FetchURLInputSchema>;
 
 export class FetchURLTool implements BuiltinTool<FetchURLInput> {
   readonly name = 'FetchURL' as const;
+  readonly snipHint = TOOL_SNIP_HINT_READ_ONLY;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(FetchURLInputSchema);
   constructor(private readonly fetcher: UrlFetcher) {}

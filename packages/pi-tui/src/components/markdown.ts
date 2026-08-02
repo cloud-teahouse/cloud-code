@@ -52,6 +52,103 @@ markdownParser.setOptions({
 	tokenizer: new StrictStrikethroughTokenizer(),
 });
 
+// ── Incremental streaming state ─────────────────────────────────────────
+//
+// Assistant messages stream in token by token; re-lexing and re-wrapping the
+// whole growing buffer on every delta is O(n²). The renderer therefore splits
+// the normalized text into regions at "safe" blank-run boundaries: a region
+// whose tokens can no longer be affected by text arriving later is rendered
+// once and its final lines are cached (keyed by width); only the live tail
+// region is re-rendered per delta.
+//
+// A boundary at the start of a blank run is SAFE only when no markdown
+// construct can span it:
+// - fenced code blocks can cross blank lines -> fence state is tracked line
+//   by line and boundaries are only confirmed while outside a fence;
+// - loose lists and list-item continuations can cross blank lines -> a
+//   boundary is rejected when the first line after the blank run is indented,
+//   starts with a list marker, or starts a blockquote (blockquote lazily
+//   carrying an unclosed fence is the quote hazard);
+// - link reference definitions are document-scoped and raw HTML blocks can
+//   cross blank lines -> seeing either anywhere outside a fence switches the
+//   component to the plain full-render path permanently (both are rare in
+//   streamed assistant output).
+//
+// Blank runs themselves always live at the START of the following region, so
+// the single space token each run produces is rendered inside that region and
+// the concatenation of region outputs is token-for-token identical to a full
+// document render. `trimPartialClosingFences` runs only on the live tail (it
+// only ever affects the document's last token chain, which lives there).
+
+/** A blank line (tabs are expanded to spaces during normalization). */
+const BLANK_LINE_RE = /^ *$/;
+/** List item opener, conservative superset of CommonMark markers. */
+const LIST_MARKER_RE = /^ {0,3}(?:[*+-]|\d{1,9}[.)])(?:\s|$)/;
+/** Blockquote opener. */
+const QUOTE_RE = /^ {0,3}>/;
+/** Possible link reference definition, incl. quote/list-prefixed ones. */
+const REF_DEF_RE = /^ {0,3}(?:(?:> ?)*|(?:[-+*]|\d{1,9}[.)]) +)\[[^\]]*\]:/;
+/** Possible raw HTML block start, incl. quote/list-prefixed ones. */
+const HTML_BLOCK_RE = /^ {0,3}(?:(?:> ?)*|(?:[-+*]|\d{1,9}[.)]) +)<[A-Za-z!?/]/;
+/** Fence opener. Backtick fences may not have a backtick in the info string. */
+const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+function countLeadingSpaces(line: string): number {
+	let i = 0;
+	while (line[i] === " ") i++;
+	return i;
+}
+
+/**
+ * Whether `line` closes a fence opened with `len` markers of `char`: up to 3
+ * leading spaces, a run of at least `len` markers, nothing but whitespace
+ * after (a closing fence cannot carry an info string).
+ */
+function isFenceClose(line: string, char: string, len: number): boolean {
+	const start = countLeadingSpaces(line);
+	if (start > 3) return false;
+	let run = 0;
+	while (line[start + run] === char) run++;
+	if (run < len) return false;
+	return /^[ \t]*$/.test(line.slice(start + run));
+}
+
+interface IncrementalState {
+	/** Raw text the state was built from (append detection). */
+	raw: string;
+	/** Full normalized text (tabs expanded). */
+	normalized: string;
+	/** Width `stableLines` were rendered at; regions re-render on change. */
+	width: number;
+	/** Length of the normalized prefix rendered into `stableLines`. */
+	stableLen: number;
+	/** Confirmed safe boundary offsets (blank-run starts), ascending. */
+	boundaries: number[];
+	/** How many boundaries have been rendered into `stableLines`. */
+	stableBoundaryCount: number;
+	/** Final rendered lines of the stable prefix (paddingY excluded). */
+	stableLines: string[];
+	/** Scanner cursor: offset up to which complete lines were scanned. */
+	scanPos: number;
+	/** Open fence marker char (` or ~) at scanPos, "" when outside a fence. */
+	fenceChar: string;
+	/** Open fence marker length (close needs >= this many). */
+	fenceLen: number;
+	/** Blank-run start awaiting after-side confirmation, -1 when none. */
+	pendingBoundary: number;
+	/**
+	 * Whether a non-blank line was scanned since the last confirmed boundary.
+	 * A boundary is only worth confirming when its region contains content:
+	 * splitting a blank run across two regions would render the run's single
+	 * space token twice.
+	 */
+	hasContentSinceBoundary: boolean;
+	/** Content of the most recent non-blank complete line (EOF checks). */
+	lastContentLine: string;
+	/** True once a ref-def / raw HTML line is seen: permanent full render. */
+	fallback: boolean;
+}
+
 /**
  * Default text styling for markdown content.
  * Applied to all text unless overridden by markdown formatting.
@@ -121,6 +218,9 @@ export class Markdown implements Component {
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
+	// Incremental streaming state; undefined until the first render.
+	private inc?: IncrementalState;
+
 	constructor(
 		text: string,
 		paddingX: number,
@@ -139,13 +239,19 @@ export class Markdown implements Component {
 
 	setText(text: string): void {
 		this.text = text;
-		this.invalidate();
+		// Soft reset: keep the incremental state. render() detects append-only
+		// growth and reuses the stable regions; a non-append change rebuilds
+		// the state from scratch.
+		this.cachedText = undefined;
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
 	}
 
 	invalidate(): void {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.inc = undefined;
 	}
 
 	render(width: number): string[] {
@@ -153,9 +259,6 @@ export class Markdown implements Component {
 		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
 			return this.cachedLines;
 		}
-
-		// Calculate available width for content (subtract horizontal padding)
-		const contentWidth = Math.max(1, width - this.paddingX * 2);
 
 		// Don't render anything if there's no actual text
 		if (!this.text || this.text.trim() === "") {
@@ -167,16 +270,219 @@ export class Markdown implements Component {
 			return result;
 		}
 
-		// Replace tabs with 3 spaces for consistent rendering
-		const normalizedText = this.text.replace(/\t/g, "   ");
+		const contentLines = this.renderContentLines(width);
 
-		// Parse markdown to HTML-like tokens
-		const tokens = markdownParser.lexer(normalizedText);
-		trimPartialClosingFences(tokens);
+		// Add top/bottom padding (empty lines)
+		const bgFn = this.defaultTextStyle?.bgColor;
+		const emptyLine = " ".repeat(Math.max(0, width));
+		const emptyLines: string[] = [];
+		for (let i = 0; i < this.paddingY; i++) {
+			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
+			emptyLines.push(line);
+		}
+
+		// Combine top padding, content, and bottom padding
+		const result = emptyLines.concat(contentLines, emptyLines);
+
+		// Update cache
+		this.cachedText = this.text;
+		this.cachedWidth = width;
+		this.cachedLines = result;
+
+		return result.length > 0 ? result : [""];
+	}
+
+	/**
+	 * The content lines for the current text: stable cached regions plus a
+	 * freshly rendered live tail, or a plain full render when the incremental
+	 * path is disabled by a fallback trigger.
+	 */
+	private renderContentLines(width: number): string[] {
+		const inc = this.syncIncremental(width);
+		if (inc.fallback) {
+			return this.renderRegion(inc.normalized, width, true);
+		}
+
+		// Stabilize newly confirmed regions.
+		while (inc.stableBoundaryCount < inc.boundaries.length) {
+			const boundary = inc.boundaries[inc.stableBoundaryCount]!;
+			const region = inc.normalized.slice(inc.stableLen, boundary);
+			const lines = this.renderRegion(region, width, false);
+			for (const line of lines) inc.stableLines.push(line);
+			inc.stableLen = boundary;
+			inc.stableBoundaryCount += 1;
+		}
+
+		const tail = inc.normalized.slice(inc.stableLen);
+		const tailLines = this.renderRegion(tail, width, true);
+		return inc.stableLines.concat(tailLines);
+	}
+
+	/**
+	 * Brings the incremental state up to date with `this.text`: rebuilds on
+	 * non-append changes, extends the normalized text on append, re-renders
+	 * stable regions on width changes, and advances the boundary scanner.
+	 */
+	private syncIncremental(width: number): IncrementalState {
+		if (this.inc === undefined || !this.text.startsWith(this.inc.raw)) {
+			this.inc = {
+				raw: this.text,
+				normalized: this.text.replace(/\t/g, "   "),
+				width,
+				stableLen: 0,
+				boundaries: [],
+				stableBoundaryCount: 0,
+				stableLines: [],
+				scanPos: 0,
+				fenceChar: "",
+				fenceLen: 0,
+				pendingBoundary: -1,
+				hasContentSinceBoundary: false,
+				lastContentLine: "",
+				fallback: false,
+			};
+		} else if (this.text.length > this.inc.raw.length) {
+			// Tab expansion is context-free per character, so appending the
+			// normalized delta is exact.
+			this.inc.normalized += this.text.slice(this.inc.raw.length).replace(/\t/g, "   ");
+			this.inc.raw = this.text;
+		}
+
+		const inc = this.inc;
+		if (inc.width !== width) {
+			// Region boundaries and the scanner are width-independent; only the
+			// rendered lines must be rebuilt at the new width.
+			inc.width = width;
+			inc.stableLen = 0;
+			inc.stableLines = [];
+			inc.stableBoundaryCount = 0;
+		}
+
+		if (!inc.fallback) this.scanBoundaries(inc);
+		return inc;
+	}
+
+	/**
+	 * Advances the line scanner over newly completed lines, tracking fence
+	 * state, fallback triggers, and confirming safe region boundaries.
+	 */
+	private scanBoundaries(inc: IncrementalState): void {
+		const text = inc.normalized;
+		while (!inc.fallback) {
+			const nl = text.indexOf("\n", inc.scanPos);
+			if (nl === -1) break; // partial line: rescan next render
+			const lineStart = inc.scanPos;
+			inc.scanPos = nl + 1;
+			let content = text.slice(lineStart, nl);
+			if (content.endsWith("\r")) content = content.slice(0, -1);
+
+			const isBlank = BLANK_LINE_RE.test(content);
+
+			if (!isBlank && inc.pendingBoundary >= 0 && inc.fenceChar === "") {
+				// This line is the after-side of a pending blank run. Confirm
+				// the boundary unless the line could continue a construct from
+				// before the blank: list item (marker or indented
+				// continuation) or a blockquote (may lazily carry an unclosed
+				// fence across the blank).
+				if (
+					inc.hasContentSinceBoundary &&
+					!content.startsWith(" ") &&
+					!LIST_MARKER_RE.test(content) &&
+					!QUOTE_RE.test(content)
+				) {
+					inc.boundaries.push(inc.pendingBoundary);
+					inc.hasContentSinceBoundary = false;
+				}
+				inc.pendingBoundary = -1;
+			} else if (inc.pendingBoundary >= 0 && !isBlank) {
+				// Inside a fence: the blank run is fence content, no boundary.
+				inc.pendingBoundary = -1;
+			}
+
+			if (isBlank) {
+				if (inc.fenceChar === "" && inc.pendingBoundary === -1) {
+					inc.pendingBoundary = lineStart;
+				}
+				continue;
+			}
+
+			inc.lastContentLine = content;
+			inc.hasContentSinceBoundary = true;
+
+			if (inc.fenceChar !== "") {
+				// Inside a fence: only a matching closing fence matters.
+				if (isFenceClose(content, inc.fenceChar, inc.fenceLen)) {
+					inc.fenceChar = "";
+					inc.fenceLen = 0;
+				}
+				continue;
+			}
+
+			// Outside a fence: fallback triggers first (permanent, so the
+			// order vs. fence tracking does not matter once set).
+			if (REF_DEF_RE.test(content) || HTML_BLOCK_RE.test(content)) {
+				inc.fallback = true;
+				return;
+			}
+
+			const fenceMatch = FENCE_OPEN_RE.exec(content);
+			if (fenceMatch !== null) {
+				const marker = fenceMatch[1]!;
+				// CommonMark: a backtick fence's info string may not contain a
+				// backtick (such a line is a paragraph, not a fence).
+				if (marker[0] === "`" && content.slice(countLeadingSpaces(content) + marker.length).includes("`")) {
+					// Not a fence — fall through.
+				} else {
+					inc.fenceChar = marker[0]!;
+					inc.fenceLen = marker.length;
+				}
+			}
+		}
+
+		// The partial tail line gets the same fallback triggers: a link
+		// reference definition or HTML block affects rendering of the whole
+		// document as soon as its line starts arriving, before it completes.
+		if (!inc.fallback && inc.scanPos < text.length) {
+			let partial = text.slice(inc.scanPos);
+			if (partial.endsWith("\r")) partial = partial.slice(0, -1);
+			if (REF_DEF_RE.test(partial) || HTML_BLOCK_RE.test(partial)) {
+				inc.fallback = true;
+				return;
+			}
+		}
+
+		// EOF with a trailing blank run: confirm the boundary if the line
+		// before the run cannot be continued by later text (not a list item
+		// and not indented, so an arriving line cannot attach to it).
+		if (
+			!inc.fallback &&
+			inc.pendingBoundary >= 0 &&
+			inc.fenceChar === "" &&
+			inc.scanPos === text.length &&
+			inc.hasContentSinceBoundary &&
+			!inc.lastContentLine.startsWith(" ") &&
+			!LIST_MARKER_RE.test(inc.lastContentLine)
+		) {
+			inc.boundaries.push(inc.pendingBoundary);
+			inc.hasContentSinceBoundary = false;
+			inc.pendingBoundary = -1;
+		}
+	}
+
+	/**
+	 * Render one region of normalized text to final lines (wrap + margins +
+	 * padding applied, paddingY excluded). `trim` enables
+	 * trimPartialClosingFences and must be set only for the document's live
+	 * tail region (or a full render), never for stabilized regions.
+	 */
+	private renderRegion(regionText: string, width: number, trim: boolean): string[] {
+		const contentWidth = Math.max(1, width - this.paddingX * 2);
+
+		const tokens = markdownParser.lexer(regionText);
+		if (trim) trimPartialClosingFences(tokens);
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
-
 		for (let i = 0; i < tokens.length; i++) {
 			const token = tokens[i]!;
 			const nextToken = tokens[i + 1];
@@ -222,23 +528,7 @@ export class Markdown implements Component {
 			}
 		}
 
-		// Add top/bottom padding (empty lines)
-		const emptyLine = " ".repeat(Math.max(0, width));
-		const emptyLines: string[] = [];
-		for (let i = 0; i < this.paddingY; i++) {
-			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
-			emptyLines.push(line);
-		}
-
-		// Combine top padding, content, and bottom padding
-		const result = emptyLines.concat(contentLines, emptyLines);
-
-		// Update cache
-		this.cachedText = this.text;
-		this.cachedWidth = width;
-		this.cachedLines = result;
-
-		return result.length > 0 ? result : [""];
+		return contentLines;
 	}
 
 	/**

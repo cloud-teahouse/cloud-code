@@ -3,8 +3,8 @@
  */
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import type { KimiConfig } from '../../config';
-import type { AuthSummary } from '@moonshot-ai/protocol';
+import type { CloudCodeConfig } from '../../config';
+import type { AuthSummary } from '@cloud-code/protocol';
 import { createManagedAuthFacade, type ServicesAuthFacade } from '../auth/managedAuth';
 import { IEnvironmentService } from '../environment/environment';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
@@ -15,7 +15,7 @@ import {
   AuthModelNotResolvedError,
 } from './authSummary';
 
-/** Wire name of the OAuth-managed provider (`@moonshot-ai/kimi-code-oauth`'s `KIMI_CODE_PROVIDER_NAME`). */
+/** Wire name of the OAuth-managed provider (`@cloud-code/oauth`'s `CLOUD_CODE_PROVIDER_NAME`). */
 const MANAGED_PROVIDER_NAME = 'managed:kimi-code';
 
 export class AuthSummaryService
@@ -109,15 +109,15 @@ export class AuthSummaryService
 
   /* ----------------------------- internals ---------------------------- */
 
-  private async _readConfig(): Promise<KimiConfig> {
-    // `reload: true` forces KimiCore to re-read `config.toml` from disk
+  private async _readConfig(): Promise<CloudCodeConfig> {
+    // `reload: true` forces CloudCodeCore to re-read `config.toml` from disk
     // before returning. Critical for the auth probe path: writes from
     // `OAuthService` (toolkit's provisioning) and `IProviderService`
     // future RW endpoints land on disk via `writeConfigFile`, but
-    // KimiCore's `this.config` only refreshes when something explicitly
+    // CloudCodeCore's `this.config` only refreshes when something explicitly
     // asks for `reload`. Without this flag, `GET /v1/auth` would stay
     // `ready:false` for the entire daemon lifetime after first login.
-    return this.core.rpc.getKimiConfig({ reload: true });
+    return this.core.rpc.getCloudCodeConfig({ reload: true });
   }
 
   private async _hasCachedToken(providerName: string): Promise<boolean> {

@@ -59,8 +59,8 @@ describe('Event public types', () => {
     expectTypeOf<QuestionRequest['questions'][number]['question']>().toEqualTypeOf<string>();
   });
 
-  it('exposes optional session scope on approval responses', () => {
-    expectTypeOf<ApprovalResponse['scope']>().toEqualTypeOf<'session' | undefined>();
+  it('exposes optional session/always scope on approval responses', () => {
+    expectTypeOf<ApprovalResponse['scope']>().toEqualTypeOf<'session' | 'always' | undefined>();
   });
 
   it('covers every event in exhaustive switches', () => {
@@ -87,6 +87,8 @@ describe('Event public types', () => {
         case 'turn.step.completed':
         case 'turn.step.retrying':
         case 'turn.step.interrupted':
+        case 'turn.rate_limit_paused':
+        case 'turn.rate_limit_resuming':
         case 'assistant.delta':
         case 'hook.result':
         case 'thinking.delta':
@@ -104,6 +106,8 @@ describe('Event public types', () => {
         case 'subagent.suspended':
         case 'subagent.completed':
         case 'subagent.failed':
+        case 'team.updated':
+        case 'mailbox.activity':
         case 'compaction.started':
         case 'compaction.blocked':
         case 'compaction.cancelled':

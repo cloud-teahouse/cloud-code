@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Readable, type Writable } from 'node:stream';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@cloud-code/kaos';
 import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 

@@ -1,4 +1,5 @@
 import type { FinishReason } from './provider';
+import type { RateLimitSnapshot } from './rate-limit';
 
 /**
  * Base error for all chat provider errors.
@@ -50,6 +51,16 @@ export class APIStatusError extends ChatProviderError {
    * attribute the failure to its server-side request.
    */
   readonly traceId: string | null;
+  /**
+   * Account rate-limit snapshot parsed from the error response's
+   * `x-codex-*` headers (ChatGPT Codex backend only). A failed response —
+   * 429 above all — carries the same quota header family as a successful
+   * one, so the provider error converter attaches the parsed snapshot here.
+   * `undefined`/`null` when the error response sent none (non-Codex
+   * backends). Writable because the converter sets it only after
+   * `normalizeAPIStatusError` has picked the concrete subclass.
+   */
+  rateLimit?: RateLimitSnapshot | null;
 
   constructor(
     statusCode: number,
@@ -72,15 +83,34 @@ export class APIStatusError extends ChatProviderError {
  * context window.
  */
 export class APIContextOverflowError extends APIStatusError {
+  /**
+   * Prompt token count parsed from the provider's overflow message, when the
+   * wording carried one (see PROMPT_TOO_LONG_TOKEN_PATTERNS). `undefined`
+   * when the message had no recognizable numbers — purely informational, so a
+   * recovery path can size its drain precisely instead of falling back to a
+   * local estimate.
+   */
+  readonly promptTokens?: number;
+  /**
+   * Context-window limit parsed from the same message, `undefined` under the
+   * same conditions as `promptTokens`. The overflow gap is
+   * `promptTokens - limitTokens`.
+   */
+  readonly limitTokens?: number;
+
   constructor(
     statusCode: number,
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
     traceId?: string | null,
+    promptTokens?: number,
+    limitTokens?: number,
   ) {
     super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIContextOverflowError';
+    this.promptTokens = promptTokens;
+    this.limitTokens = limitTokens;
   }
 }
 
@@ -116,6 +146,54 @@ export class APIProviderRateLimitError extends APIStatusError {
   ) {
     super(429, message, requestId, retryAfterMs, traceId);
     this.name = 'APIProviderRateLimitError';
+  }
+}
+
+/**
+ * HTTP 429 that specifically means the account's plan quota is exhausted
+ * (the ChatGPT Codex backend's `error.type: "usage_limit_reached"`), as
+ * opposed to a transient rate limit. Retrying cannot succeed until the
+ * usage window resets, so this error is terminal: it stays 429-shaped
+ * (extends APIProviderRateLimitError, so structural rate-limit checks keep
+ * working) but is excluded from the retry budget in
+ * {@link isRetryableGenerateError}.
+ */
+export class APIQuotaExceededError extends APIProviderRateLimitError {
+  /**
+   * ChatGPT plan type from the error body's `plan_type` (e.g. `"pro"`), or
+   * the rate-limit snapshot's plan type as a fallback. `null` when neither
+   * carried one (e.g. the mid-stream SSE variant of this error).
+   */
+  readonly planType: string | null;
+  /**
+   * Epoch milliseconds at which the exhausted usage window resets — from
+   * the error body's `resets_at`, falling back to the exhausted window's
+   * `reset-at` header in the attached snapshot. `null` when unknown.
+   */
+  readonly resetsAtMs: number | null;
+  /**
+   * Label of the exhausted usage window (`'5h'`, `'daily'`, `'weekly'`, …)
+   * derived from the snapshot's window minutes, or `null` when no snapshot
+   * identified the window.
+   */
+  readonly quotaWindow: string | null;
+
+  constructor(
+    message: string,
+    options: {
+      readonly requestId?: string | null;
+      readonly retryAfterMs?: number | null;
+      readonly traceId?: string | null;
+      readonly planType?: string | null;
+      readonly resetsAtMs?: number | null;
+      readonly quotaWindow?: string | null;
+    } = {},
+  ) {
+    super(message, options.requestId, options.retryAfterMs, options.traceId);
+    this.name = 'APIQuotaExceededError';
+    this.planType = options.planType ?? null;
+    this.resetsAtMs = options.resetsAtMs ?? null;
+    this.quotaWindow = options.quotaWindow ?? null;
   }
 }
 
@@ -211,6 +289,13 @@ export function throwIfAbortError(error: unknown): void {
 }
 
 export function isRetryableGenerateError(error: unknown): boolean {
+  // Quota exhaustion is terminal: every retry hits the same exhausted usage
+  // window until it resets, so fail on first sight instead of burning the
+  // retry budget. Checked before the APIStatusError branch, which would
+  // otherwise treat its inherited 429 status as a transient rate limit.
+  if (error instanceof APIQuotaExceededError) {
+    return false;
+  }
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
   }
@@ -218,6 +303,13 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
+    // A bare 400 with no response body is almost always an edge/gateway blip
+    // (e.g. Cloudflare returning an empty 400); real request rejections from
+    // these backends carry a JSON error body, so a no-body 400 is transient
+    // and worth retrying. Real 4xx (with bodies) keep failing fast below.
+    if (error.statusCode === 400 && /\bno body\b/i.test(error.message)) {
+      return true;
+    }
     // Quota/balance exhaustion is a 429 but deterministic until the account
     // is recharged — retrying can never succeed, so it fails fast instead of
     // burning the whole retry budget (~2-3 minutes of backoff).
@@ -240,8 +332,12 @@ export function isRetryableGenerateError(error: unknown): boolean {
   // burning retries first. Image-format rejections are likewise excluded:
   // they are deterministic per history and recovered by the media-stripped
   // resend (see isImageFormatError), so retrying the identical request first
-  // would only burn the retry budget.
-  return error instanceof ChatProviderError && !isImageFormatError(error);
+  // would only burn the retry budget. Client-side video format rejections
+  // (see isVideoFormatError) are deterministic the same way and have no
+  // resend recovery at all — retrying them only re-logs the payload.
+  return (
+    error instanceof ChatProviderError && !isImageFormatError(error) && !isVideoFormatError(error)
+  );
 }
 
 // Client-side image rejections thrown before the request is sent (kosong's
@@ -249,6 +345,13 @@ export function isRetryableGenerateError(error: unknown): boolean {
 const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
   /unsupported media type for base64 image/,
   /invalid data url for image/,
+] as const;
+
+// Client-side video rejections thrown before the request is sent (kosong's
+// own media whitelist in the Anthropic adapter).
+const VIDEO_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
+  /unsupported media type for base64 video/,
+  /invalid data url for video/,
 ] as const;
 
 // Server-side image rejections that are safe to recover by stripping media:
@@ -318,6 +421,25 @@ export function isImageFormatError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Whether kosong itself rejected a VIDEO data URL before the request was
+ * sent (the Anthropic adapter's base64 media whitelist). Like an image
+ * format rejection this is deterministic for a given history — the same
+ * bytes fail on every retry — but unlike images there is deliberately no
+ * media-strip recovery for video (see the MEDIA_TYPE_FIELD_PATTERN note
+ * above), so the predicate only drives the retry exclusion in
+ * {@link isRetryableGenerateError}. Server-side status errors are excluded:
+ * they keep their own 4xx handling.
+ */
+export function isVideoFormatError(error: unknown): boolean {
+  if (error instanceof APIStatusError) return false;
+  if (error instanceof ChatProviderError) {
+    const lowerMessage = error.message.toLowerCase();
+    return VIDEO_FORMAT_PROVIDER_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+  }
+  return false;
+}
+
 // `terminated` is the undici signature for an SSE/HTTP body stream that is
 // dropped mid-flight (common with Node's native fetch on long reasoning
 // streams). It surfaces as a raw `TypeError: terminated`, so it must be
@@ -356,6 +478,53 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /request.*exceed(?:ed|s|ing)?.*model token limit/,
 ] as const;
 
+// Best-effort extraction of the actual token counts from a prompt-too-long
+// message. Each pattern uses named `promptTokens`/`limitTokens` groups so the
+// attribution is explicit in the regex itself — the provider wordings put the
+// numbers in OPPOSITE orders (Anthropic names the prompt count first, OpenAI
+// the limit first), which positional groups would be easy to silently swap.
+const PROMPT_TOO_LONG_TOKEN_PATTERNS = [
+  // Anthropic: "prompt is too long: 210,000 tokens > 200,000 maximum" — the
+  // prompt count is left of the ">", the limit right of it.
+  /prompt is too long:\s*(?<promptTokens>[\d,]+)\s*tokens?\s*>\s*(?<limitTokens>[\d,]+)\s*maximum/i,
+  // OpenAI and OpenAI-compatible backends: "This model's maximum context
+  // length is 4,096 tokens. However, you requested 5,000 tokens ..." (some
+  // backends phrase the second half as "your messages resulted in 5,000
+  // tokens") — the LIMIT comes first here, the requested prompt count second.
+  /maximum context length is\s*(?<limitTokens>[\d,]+)\s*tokens?[\s\S]*?(?:requested|resulted in)\s*(?<promptTokens>[\d,]+)/i,
+] as const;
+
+interface PromptTooLongTokenCounts {
+  readonly promptTokens: number;
+  readonly limitTokens: number;
+}
+
+// Thousands separators are common in these messages ("210,000 tokens").
+function parseTokenCount(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number.parseInt(raw.replaceAll(',', ''), 10);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * Best-effort parse of the prompt/limit token counts out of a prompt-too-long
+ * provider message. Returns `undefined` when no known wording matches —
+ * matching on provider message text is not a stable contract, so a novel
+ * phrasing simply yields no numbers and the caller leaves the gap fields
+ * unset (the pre-parse behavior).
+ */
+function parsePromptTooLongTokenCounts(message: string): PromptTooLongTokenCounts | undefined {
+  for (const pattern of PROMPT_TOO_LONG_TOKEN_PATTERNS) {
+    const groups = pattern.exec(message)?.groups;
+    const promptTokens = parseTokenCount(groups?.['promptTokens']);
+    const limitTokens = parseTokenCount(groups?.['limitTokens']);
+    if (promptTokens !== undefined && limitTokens !== undefined) {
+      return { promptTokens, limitTokens };
+    }
+  }
+  return undefined;
+}
+
 const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /(?:apistatuserror.*429|429.*apistatuserror)/,
   /429.*too many requests/,
@@ -390,7 +559,7 @@ const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
 ] as const;
 
 const THINKING_EFFORT_CONFIG_DOCS_URL =
-  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
+  'https://github.com/cloud-teahouse/cloud-code#readme';
 
 const THINKING_EFFORT_STATUS_MESSAGE_PATTERNS = [
   /reasoning[_ .-]?effort/,
@@ -429,7 +598,16 @@ export function normalizeAPIStatusError(
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
   // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, traceId);
+    const tokenCounts = parsePromptTooLongTokenCounts(message);
+    return new APIContextOverflowError(
+      statusCode,
+      message,
+      requestId,
+      retryAfterMs,
+      traceId,
+      tokenCounts?.promptTokens,
+      tokenCounts?.limitTokens,
+    );
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
     return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, traceId);
@@ -468,18 +646,43 @@ export function parseTraceId(headers: unknown): string | null {
 }
 
 /**
- * Parse a `retry-after` response header into milliseconds. Only integer
- * seconds is honored; an HTTP-date (or any non-integer / missing value)
- * returns null and the caller falls back to its computed backoff. Shared by
- * the provider error converters so every backend honors the same server
- * backoff directive.
+ * Parse the server-requested backoff from the response headers into
+ * milliseconds. Three directives are honored:
+ *
+ *  - `retry-after`: integer seconds (the standard form), or an HTTP-date —
+ *    honored only when it parses to a FUTURE timestamp, since a past date
+ *    asks for no wait at all.
+ *  - `retry-after-ms`: a non-standard millisecond count emitted by some
+ *    gateways. It takes precedence over `retry-after` when it asks for a
+ *    LONGER wait than the seconds value — the more conservative directive
+ *    wins — and applies on its own when `retry-after` is absent or
+ *    unparseable.
+ *
+ * A missing or unparseable value returns null and the caller falls back to
+ * its computed backoff. Shared by the provider error converters so every
+ * backend honors the same server backoff directive.
  */
 export function parseRetryAfterMs(headers: unknown): number | null {
-  const raw = readResponseHeader(headers, 'retry-after');
-  if (raw === null || raw === undefined) return null;
-  const seconds = Number.parseInt(raw, 10);
-  if (!Number.isFinite(seconds) || seconds < 0) return null;
-  return seconds * 1000;
+  const retryAfterMsRaw = readResponseHeader(headers, 'retry-after-ms');
+  const retryAfterMsValue = retryAfterMsRaw === null ? Number.NaN : Number.parseFloat(retryAfterMsRaw);
+  const hasRetryAfterMs = Number.isFinite(retryAfterMsValue) && retryAfterMsValue >= 0;
+
+  const retryAfterRaw = readResponseHeader(headers, 'retry-after');
+  if (retryAfterRaw !== null && retryAfterRaw !== undefined) {
+    const seconds = Number.parseInt(retryAfterRaw, 10);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      const secondsMs = seconds * 1000;
+      return hasRetryAfterMs && retryAfterMsValue > secondsMs ? retryAfterMsValue : secondsMs;
+    }
+    // HTTP-date form (RFC 9110): only a future date is a backoff directive.
+    if (!hasRetryAfterMs) {
+      const dateMs = Date.parse(retryAfterRaw);
+      if (Number.isFinite(dateMs) && dateMs > Date.now()) {
+        return dateMs - Date.now();
+      }
+    }
+  }
+  return hasRetryAfterMs ? retryAfterMsValue : null;
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {

@@ -1,4 +1,4 @@
-# @moonshot-ai/minidb
+# @cloudcode/minidb
 
 ## 0.2.0
 

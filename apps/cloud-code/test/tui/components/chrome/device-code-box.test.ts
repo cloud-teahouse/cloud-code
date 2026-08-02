@@ -1,0 +1,95 @@
+import { visibleWidth } from '@cloud-code/pi-tui';
+import { describe, expect, it } from 'vitest';
+
+import { DeviceCodeBoxComponent } from '#/tui/components/chrome/device-code-box';
+import { setLocalePreference } from '#/tui/i18n';
+import { darkColors } from '#/tui/theme/colors';
+
+function strip(text: string): string {
+  return text.replaceAll(/\[[0-9;]*m/g, '');
+}
+
+const url = 'https://www.kimi.com/code/authorize_device?user_code=N32D-W3YD';
+const code = 'N32D-W3YD';
+const title = 'Sign in to Cloud Code CLI';
+const hint = 'Press Ctrl-C to cancel';
+
+describe('DeviceCodeBoxComponent', () => {
+  it('renders a rounded border that frames the title, url and code', () => {
+    const component = new DeviceCodeBoxComponent({
+      title,
+      url,
+      code,
+      hint,
+    });
+
+    const lines = component.render(80).map(strip);
+    const joined = lines.join('\n');
+
+    expect(lines[1]?.startsWith('╭')).toBe(true);
+    expect(lines[1]?.endsWith('╮')).toBe(true);
+    expect(lines.at(-2)?.startsWith('╰')).toBe(true);
+    expect(lines.at(-2)?.endsWith('╯')).toBe(true);
+
+    expect(joined).toContain(title);
+    expect(joined).toContain(url);
+    expect(joined).toContain(code);
+    expect(joined).toContain(hint);
+    expect(joined).toContain('Verification code');
+  });
+
+  it('truncates long urls when the terminal is narrow', () => {
+    const component = new DeviceCodeBoxComponent({
+      title,
+      url,
+      code,
+    });
+
+    const lines = component.render(40).map(strip);
+    const urlLine = lines.find((line) => line.includes('https://'));
+    expect(urlLine).toBeDefined();
+    expect(urlLine).toContain('…');
+    expect(urlLine?.length).toBeLessThanOrEqual(40);
+  });
+
+  it('omits the hint row when no hint is provided', () => {
+    const component = new DeviceCodeBoxComponent({
+      title,
+      url,
+      code,
+    });
+
+    const joined = component.render(80).map(strip).join('\n');
+    expect(joined).not.toContain('Press Ctrl-C');
+  });
+
+  it('keeps every line within narrow widths', () => {
+    const component = new DeviceCodeBoxComponent({
+      title,
+      url,
+      code,
+      hint,
+    });
+
+    for (const width of [39, 20, 10, 4]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
+  it('renders the prompt and code label in zh-CN', () => {
+    setLocalePreference('zh-CN');
+    const component = new DeviceCodeBoxComponent({
+      title: '登录 Cloud Code CLI',
+      url,
+      code,
+    });
+
+    const joined = component.render(80).map(strip).join('\n');
+    expect(joined).toContain('请在浏览器中打开下面的 URL 完成授权：');
+    expect(joined).toContain('验证码：');
+    expect(joined).not.toContain('Verification code');
+    setLocalePreference('en');
+  });
+});

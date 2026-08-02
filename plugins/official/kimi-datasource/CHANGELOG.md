@@ -5,7 +5,7 @@
 - Add five data sources: `wind` (万得), `imf` (IMF macro datasets), `gildata` (恒生聚源 smart screening), `sec_edgar` (US SEC filings), and `sp_data` (S&P Capital IQ, paid scope).
 - Strengthen source routing: require one specialized source per simple lookup, stop after the first sufficient result, and route directly to a data source the user names.
 - Document objective capability boundaries for every source in SKILL.md and the tool schema (e.g. yahoo_finance FX history is limited to about 2 years; minute-level intraday series live on `wind`), so the model can pick the source itself.
-- Retry once with a credential refreshed by the Kimi Code host when the backend rejects the previous access token during rotation.
+- Retry once with a credential refreshed by the Cloud Code host when the backend rejects the previous access token during rotation.
 
 ## 3.2.0 - 2026-06-10
 
@@ -14,7 +14,7 @@
 
 ## 3.1.2 - 2026-06-09
 
-- Use OAuth credentials and datasource endpoints that match the active Kimi Code environment.
+- Use OAuth credentials and datasource endpoints that match the active Cloud Code environment.
 
 ## 3.1.1 - 2026-06-02
 

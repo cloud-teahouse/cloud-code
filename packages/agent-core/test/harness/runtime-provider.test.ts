@@ -1,8 +1,10 @@
-import { classifyKimiQuotaError } from '@moonshot-ai/kosong';
+import { classifyKimiQuotaError } from '@cloud-code/kosong';
 import { describe, expect, it } from 'vitest';
 
-import type { KimiConfig, ModelAlias } from '../../src/config';
-import { ErrorCodes, KimiError } from '../../src/errors';
+import { APIStatusError } from '@cloud-code/kosong';
+
+import type { CloudCodeConfig, ModelAlias } from '../../src/config';
+import { ErrorCodes, CloudCodeError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
 import { resolveThinkingEffort } from '../../src/agent/config/thinking';
 
@@ -10,7 +12,7 @@ import { resolveThinkingEffort } from '../../src/agent/config/thinking';
 // the current ProviderManager API. Kept local so the existing test bodies do
 // not need to change.
 function resolveRuntimeProvider(input: {
-  readonly config: KimiConfig;
+  readonly config: CloudCodeConfig;
   readonly model?: string;
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly promptCacheKey?: string;
@@ -22,7 +24,7 @@ function resolveRuntimeProvider(input: {
   });
   const model = input.model ?? input.config.defaultModel;
   if (model === undefined) {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.CONFIG_INVALID,
       'No model is selected. Set default_model in config.toml or pass a configured model alias.',
     );
@@ -30,7 +32,7 @@ function resolveRuntimeProvider(input: {
   return manager.resolveProviderConfig(model);
 }
 
-const BASE_CONFIG: KimiConfig = {
+const BASE_CONFIG: CloudCodeConfig = {
   defaultModel: 'kimi-code/kimi-for-coding',
   providers: {
     'managed:kimi-code': {
@@ -50,7 +52,7 @@ const BASE_CONFIG: KimiConfig = {
 };
 
 const TEST_KIMI_HEADERS = {
-  'User-Agent': 'kimi-code-cli/0.0.0-test',
+  'User-Agent': 'cloud-code-cli/0.0.0-test',
   'X-Msh-Platform': 'kimi_code_cli',
   'X-Msh-Version': '0.0.0-test',
 };
@@ -181,7 +183,7 @@ describe('resolveRuntimeProvider model metadata', () => {
         config: BASE_CONFIG,
         model: 'kimi-code',
       }),
-    ).toThrow(KimiError);
+    ).toThrow(CloudCodeError);
   });
 
   it('allows vertexai providers without an apiKey', () => {
@@ -216,7 +218,7 @@ describe('resolveRuntimeProvider model metadata', () => {
           capabilities: ['thinking'],
         },
       },
-    } as unknown as KimiConfig;
+    } as unknown as CloudCodeConfig;
 
     expect(() =>
       resolveRuntimeProvider({
@@ -308,7 +310,7 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
           offEffort: 'none',
         },
       },
-    } as KimiConfig;
+    } as CloudCodeConfig;
 
     expect(resolveRuntimeProvider({ config, model: 'gateway/grok' }).provider).toMatchObject({
       type: 'openai',
@@ -374,7 +376,7 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
           maxContextSize: 1000,
         },
       },
-    } as KimiConfig;
+    } as CloudCodeConfig;
 
     expect(resolveRuntimeProvider({ config, model: 'gateway/tenant-model' }).provider).toMatchObject(
       { type: 'openai', baseUrl: 'https://tenant.example.test/v1' },
@@ -418,7 +420,7 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
           baseUrl: 'https://tenant.example.test/v1',
         },
       },
-    } as KimiConfig;
+    } as CloudCodeConfig;
 
     expect(resolveRuntimeProvider({ config, model: 'kimi/tenant' }).provider).toMatchObject({
       type: 'kimi',
@@ -889,7 +891,7 @@ describe('resolveRuntimeProvider customHeaders propagation', () => {
   });
 
   it('keeps customHeaders isolated between resolved provider instances', () => {
-    const config: KimiConfig = {
+    const config: CloudCodeConfig = {
       defaultModel: 'gpt-alias',
       providers: {
         openai: {
@@ -970,7 +972,7 @@ describe('ProviderManager prompt cache key', () => {
   });
 
   it('reads the current config when constructed with a function', () => {
-    let sharedConfig: KimiConfig = { providers: {} };
+    let sharedConfig: CloudCodeConfig = { providers: {} };
     const manager = new ProviderManager({
       config: () => sharedConfig,
       promptCacheKey: 'session-test',
@@ -989,7 +991,7 @@ describe('ProviderManager prompt cache key', () => {
 });
 
 describe('ProviderManager OAuth auth', () => {
-  function oauthConfig(): KimiConfig {
+  function oauthConfig(): CloudCodeConfig {
     return {
       ...BASE_CONFIG,
       providers: {
@@ -1025,7 +1027,7 @@ describe('ProviderManager OAuth auth', () => {
       config: oauthConfig(),
       resolveOAuthTokenProvider: () => ({
         async getAccessToken() {
-          throw new KimiError(ErrorCodes.AUTH_LOGIN_REQUIRED, 'not logged in');
+          throw new CloudCodeError(ErrorCodes.AUTH_LOGIN_REQUIRED, 'not logged in');
         },
       }),
     });
@@ -1036,6 +1038,125 @@ describe('ProviderManager OAuth auth', () => {
     await expect(resolveAuth!(async () => 'ok')).rejects.toMatchObject({
       code: ErrorCodes.AUTH_LOGIN_REQUIRED,
     });
+  });
+
+  it('forwards token-provider auth headers (e.g. ChatGPT-Account-ID) into the request auth', async () => {
+    const manager = new ProviderManager({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          'managed:chatgpt-codex': {
+            type: 'openai_responses',
+            apiKey: '',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            oauth: { storage: 'file', key: 'oauth/chatgpt-codex' },
+          },
+        },
+        models: {
+          'chatgpt-codex/gpt-5.2-codex': {
+            provider: 'managed:chatgpt-codex',
+            model: 'gpt-5.2-codex',
+            maxContextSize: 400000,
+          },
+        },
+      },
+      resolveOAuthTokenProvider: () => ({
+        async getAccessToken() {
+          return 'access-token-1';
+        },
+        async getAuthHeaders() {
+          return { 'ChatGPT-Account-ID': 'acct-1' };
+        },
+      }),
+    });
+
+    const resolveAuth = manager.resolveAuth('chatgpt-codex/gpt-5.2-codex');
+    expect(resolveAuth).toBeDefined();
+
+    const seen: unknown[] = [];
+    const result = await resolveAuth!(async (auth) => {
+      seen.push(auth);
+      return 'ok';
+    });
+    expect(result).toBe('ok');
+    expect(seen[0]).toEqual({
+      apiKey: 'access-token-1',
+      headers: { 'ChatGPT-Account-ID': 'acct-1' },
+    });
+  });
+
+  it('omits headers when the token provider does not supply them', async () => {
+    const manager = new ProviderManager({
+      config: oauthConfig(),
+      resolveOAuthTokenProvider: () => ({
+        async getAccessToken() {
+          return 'access-token-1';
+        },
+      }),
+    });
+
+    const resolveAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    const seen: unknown[] = [];
+    await resolveAuth!(async (auth) => {
+      seen.push(auth);
+      return 'ok';
+    });
+    expect(seen[0]).toEqual({ apiKey: 'access-token-1' });
+  });
+
+  it('re-fetches auth headers together with the token on the 401 force-refresh retry', async () => {
+    const tokens = ['stale-token', 'fresh-token'];
+    const headerSets = [
+      { 'ChatGPT-Account-ID': 'acct-old' },
+      { 'ChatGPT-Account-ID': 'acct-new' },
+    ];
+    let tokenCalls = 0;
+    const manager = new ProviderManager({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          'managed:chatgpt-codex': {
+            type: 'openai_responses',
+            apiKey: '',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            oauth: { storage: 'file', key: 'oauth/chatgpt-codex' },
+          },
+        },
+        models: {
+          'chatgpt-codex/gpt-5.2-codex': {
+            provider: 'managed:chatgpt-codex',
+            model: 'gpt-5.2-codex',
+            maxContextSize: 400000,
+          },
+        },
+      },
+      resolveOAuthTokenProvider: () => ({
+        async getAccessToken() {
+          const token = tokens[Math.min(tokenCalls, tokens.length - 1)]!;
+          tokenCalls += 1;
+          return token;
+        },
+        async getAuthHeaders() {
+          return headerSets[Math.min(tokenCalls - 1, headerSets.length - 1)];
+        },
+      }),
+    });
+
+    const resolveAuth = manager.resolveAuth('chatgpt-codex/gpt-5.2-codex');
+    const seen: unknown[] = [];
+    const result = await resolveAuth!(async (auth) => {
+      seen.push(auth);
+      if (seen.length === 1) {
+        throw new APIStatusError(401, 'unauthorized');
+      }
+      return 'ok';
+    });
+    expect(result).toBe('ok');
+
+    // First attempt used the initial token + headers; the retry used the
+    // forced-refresh token and its freshly resolved headers.
+    expect(seen[0]).toEqual({ apiKey: 'stale-token', headers: { 'ChatGPT-Account-ID': 'acct-old' } });
+    expect(seen[1]).toEqual({ apiKey: 'fresh-token', headers: { 'ChatGPT-Account-ID': 'acct-new' } });
   });
 });
 

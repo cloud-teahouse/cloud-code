@@ -2,16 +2,15 @@
  * `CoreProcessService` — implementation of `ICoreProcessService`.
  */
 
-import { createRPC, KimiCore } from '../../rpc';
+import { createRPC, CloudCodeCore } from '../../rpc';
 import type { ImageLimits } from '../../tools/support/image-limits';
 import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
-import { noopTelemetryClient, type TelemetryClient } from '../../telemetry';
 import {
   createKimiDefaultHeaders,
-  type KimiHostIdentity,
-} from '@moonshot-ai/kimi-code-oauth';
+  type CloudCodeHostIdentity,
+} from '@cloud-code/oauth';
 
 import { createManagedAuthFacade } from '../auth/managedAuth';
 import { BridgeClientAPI } from './coreProcessClient';
@@ -36,18 +35,16 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
 
   public readonly kimiRequestHeaders: Record<string, string> | undefined;
 
-  public readonly telemetry: TelemetryClient;
-
   /** The core's owner-scoped [image] limits; see ICoreProcessService. */
   public get imageLimits(): ImageLimits {
     return this._core.imageLimits;
   }
 
   /**
-   * The in-process `KimiCore` instance. Kept private so daemon-side code can't
+   * The in-process `CloudCodeCore` instance. Kept private so daemon-side code can't
    * grab it and bypass the peer-service indirection.
    */
-  private readonly _core: KimiCore;
+  private readonly _core: CloudCodeCore;
 
   /**
    * Promise that resolves to the resolved RPC methods. The `rpc` proxy awaits
@@ -58,7 +55,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
 
   /**
    * Cached readiness signal. We treat "SDK-side RPC bound" as the readiness
-   * marker today; once `KimiCore.pluginsReady` is publicly exposed we can
+   * marker today; once `CloudCodeCore.pluginsReady` is publicly exposed we can
    * combine them here.
    */
   private readonly _ready: Promise<void>;
@@ -75,10 +72,10 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     super();
 
     // 1. Build the in-process RPC pair. Left/Right are typed; `coreRpc` is the
-    //    function KimiCore receives, `sdkRpc` is the one we satisfy.
+    //    function CloudCodeCore receives, `sdkRpc` is the one we satisfy.
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
 
-    // Default-wire the OAuth token resolver. Without this, KimiCore's
+    // Default-wire the OAuth token resolver. Without this, CloudCodeCore's
     // `ProviderManager.resolveAuth` sees `resolveOAuthTokenProvider ===
     // undefined` and synthesizes a closure that ALWAYS throws
     // `AUTH_LOGIN_REQUIRED` — even after a successful device-code login that
@@ -87,7 +84,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     // it stays green; the failure only surfaces inside the prompt turn, as
     // an `auth.login_required` error after `turn.step.started`. We bridge
     // the gap by default-constructing a managed auth facade against the same
-    // home + config paths KimiCore will use, and handing its
+    // home + config paths CloudCodeCore will use, and handing its
     // `resolveOAuthTokenProvider` into the core. Callers (e.g. node-sdk
     // tests) can still override via `options.resolveOAuthTokenProvider`.
     const resolveOAuthTokenProvider: OAuthTokenProviderResolver =
@@ -99,7 +96,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
       );
 
     // Default-wire the Kimi request headers (User-Agent + X-Msh-* device
-    // identity). Without this, KimiCore's outbound fetch carries the
+    // identity). Without this, CloudCodeCore's outbound fetch carries the
     // default Node fetch User-Agent and the managed Kimi-for-Coding
     // endpoint rejects with 40340 ("only available for Coding Agents
     // such as Kimi CLI, Claude Code, …"). Mirrors what `SDKRpcClient`
@@ -111,15 +108,13 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     this.kimiRequestHeaders =
       options.kimiRequestHeaders ??
       CoreProcessService._defaultKimiRequestHeaders(env.homeDir, options.identity);
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
-
     // `appVersion` flows into Session records (`app_version`) and tool
     // call ctx. Prefer explicit > identity.version so callers can pin
     // a different value if they need to.
     const appVersion: string | undefined =
       options.appVersion ?? options.identity?.version;
 
-    // Default-wire the workspace-id resolver. Without it, KimiCore's session
+    // Default-wire the workspace-id resolver. Without it, CloudCodeCore's session
     // store mints a bucket hash from the workDir string as-is, so a case/slash
     // variant of a registered Windows root splits sessions into a second
     // bucket that the registered workspace cannot page. The registry's
@@ -130,9 +125,9 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
       options.resolveWorkspaceId ??
       ((workDir: string) => workspaceRegistry.findWorkspaceIdByRoot(workDir));
 
-    // 2. Construct the core. KimiCore's ctor wires itself into `coreRpc` and
+    // 2. Construct the core. CloudCodeCore's ctor wires itself into `coreRpc` and
     //    exposes `this.sdk: Promise<SDKRPC>` for the reverse direction.
-    this._core = new KimiCore(coreRpc, {
+    this._core = new CloudCodeCore(coreRpc, {
       ...options,
       homeDir: env.homeDir,
       configPath: env.configPath,
@@ -154,7 +149,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     this._coreRpcPromise = sdkRpc(clientApi);
 
     // 4. Readiness is "the RPC pair is bound on both sides". Plugin load
-    //    happens inside KimiCore's ctor and self-heals (the worker captures
+    //    happens inside CloudCodeCore's ctor and self-heals (the worker captures
     //    the error rather than surfacing it; see core-impl.ts:170-172).
     this._ready = this._coreRpcPromise.then(() => undefined);
 
@@ -169,10 +164,10 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
 
   override dispose(): void {
     if (this._store.isDisposed) return;
-    // KimiCore does not currently expose a dispose() — when it does, we'll
+    // CloudCodeCore does not currently expose a dispose() — when it does, we'll
     // await/call it here BEFORE super.dispose(). For now, disposing the
     // service flips _disposed, which makes future rpc.* invocations reject
-    // before they reach KimiCore.
+    // before they reach CloudCodeCore.
     super.dispose();
   }
 
@@ -211,10 +206,10 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
 
   /**
    * Build the default `resolveOAuthTokenProvider` from the same home + config
-   * paths KimiCore resolves internally. Mirrors `SDKRpcClient`'s default in
+   * paths CloudCodeCore resolves internally. Mirrors `SDKRpcClient`'s default in
    * `packages/node-sdk/src/sdk-rpc-client.ts` so the daemon and the SDK
    * runtimes share OAuth credentials when both run against the same
-   * `~/.kimi-code`.
+   * `~/.cloud-code`.
    *
    * `identity` is forwarded to the managed auth facade so token refreshes
    * carry the same `X-Msh-*` device headers as `_defaultKimiRequestHeaders`.
@@ -225,7 +220,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
   static _defaultOAuthTokenResolver(
     homeDir: string,
     configPath: string,
-    identity?: KimiHostIdentity,
+    identity?: CloudCodeHostIdentity,
   ): OAuthTokenProviderResolver {
     const facade = createManagedAuthFacade({ homeDir, configPath }, identity);
     return facade.resolveOAuthTokenProvider;
@@ -234,7 +229,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
   /**
    * Build the default `kimiRequestHeaders` from `options.identity` so the
    * outbound `User-Agent` + device-identity headers identify this process
-   * as a real Coding Agent host (e.g. `kimi-code-cli/<ver>`). Without
+   * as a real Coding Agent host (e.g. `cloud-code-cli/<ver>`). Without
    * these, the managed Kimi-for-Coding endpoint rejects with 40340.
    *
    * Returns `undefined` when no identity is provided — preserves the
@@ -242,16 +237,16 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
    * `options.kimiRequestHeaders` (or for legacy callers / tests that
    * don't talk to the managed endpoint at all).
    *
-   * `homeDir` resolution matches KimiCore's so the per-device id (minted
+   * `homeDir` resolution matches CloudCodeCore's so the per-device id (minted
    * + cached at `<homeDir>/device_id` on first call) lives in the same
-   * root as everything else KimiCore touches.
+   * root as everything else CloudCodeCore touches.
    *
    * Exposed as `static` so tests can assert the wiring without booting
    * the service.
    */
   static _defaultKimiRequestHeaders(
     homeDir: string,
-    identity?: KimiHostIdentity,
+    identity?: CloudCodeHostIdentity,
   ): Record<string, string> | undefined {
     if (identity === undefined) return undefined;
     return createKimiDefaultHeaders({

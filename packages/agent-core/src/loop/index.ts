@@ -24,6 +24,7 @@ export type {
   LoopMessageBuilder,
   ExecutableTool,
   ToolExecution,
+  ToolRuleMatch,
   ToolCall,
   ExecutableToolContext,
   ToolExecutionHookContext,
@@ -66,11 +67,16 @@ export type {
   LLM,
   LLMChatParams,
   LLMChatResponse,
+  LLMRequestKind,
   LLMRequestLogFields,
   LLMRequestTrace,
   LLMStreamTiming,
   ToolCallDelta,
 } from './llm';
+export { isForegroundRequestKind } from './llm';
+
+export { isRateLimitPauseError, RateLimitPauseError } from './errors';
+export type { ForegroundRetryGate } from './retry';
 
 export { runTurn } from './run-turn';
 export type { RunTurnInput } from './run-turn';

@@ -1,24 +1,30 @@
 import type { Logger } from '#/logging/types';
-import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
+import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@cloud-code/kosong';
 import {
   APIStatusError,
   classifyKimiQuotaError,
   getModelCapability,
   UNKNOWN_CAPABILITY,
-} from '@moonshot-ai/kosong';
-import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+} from '@cloud-code/kosong';
+import { parseKimiCodeCustomHeaders } from '@cloud-code/oauth';
 import {
   effectiveModelAlias,
-  type KimiConfig,
+  type CloudCodeConfig,
   type ModelAlias,
   type OAuthRef,
   type ProviderConfig,
   type ProviderType,
 } from '../config';
-import { ErrorCodes, isKimiError, KimiError } from '../errors';
+import { ErrorCodes, isCloudCodeError, CloudCodeError } from '../errors';
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean }): Promise<string>;
+  /**
+   * Optional per-request headers to send alongside the bearer token (e.g.
+   * `ChatGPT-Account-ID` for the ChatGPT Codex backend). Resolved together
+   * with the access token immediately before each request.
+   */
+  getAuthHeaders?(): Promise<Record<string, string> | undefined>;
 }
 
 export type OAuthTokenProviderResolver = (
@@ -34,6 +40,10 @@ export interface ResolvedRuntimeProvider {
   readonly alwaysThinking?: boolean;
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
+  /** Catalog-declared service tier ids ('priority' = fast tier); drives the model-level /fast gate. */
+  readonly serviceTiers?: readonly string[];
+  /** The provider config's own service_tier declaration (explicit third-party opt-in). */
+  readonly providerServiceTiers?: readonly string[];
   readonly maxOutputSize?: number;
   /** Configured provider wire type (`provider.type`), before any model-level protocol override. */
   readonly type: ProviderType;
@@ -42,7 +52,7 @@ export interface ResolvedRuntimeProvider {
 }
 
 interface ProviderManagerOptions {
-  readonly config: KimiConfig | (() => KimiConfig);
+  readonly config: CloudCodeConfig | (() => CloudCodeConfig);
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly promptCacheKey?: string;
@@ -70,7 +80,7 @@ export class SingleModelProvider implements ModelProvider {
 
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {
     if (model !== this.providerConfig.model) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" is not supported by SingleModelProvider.`,
       );
@@ -88,7 +98,7 @@ export class SingleModelProvider implements ModelProvider {
 export class ProviderManager implements ModelProvider {
   constructor(private readonly options: ProviderManagerOptions) {}
 
-  private get config(): KimiConfig {
+  private get config(): CloudCodeConfig {
     const { config } = this.options;
     return typeof config === 'function' ? config() : config;
   }
@@ -96,7 +106,7 @@ export class ProviderManager implements ModelProvider {
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {
     const alias = this.config.models?.[model];
     if (alias === undefined) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" is not configured in config.toml. Add a [models."${model}"] entry with max_context_size.`,
         { details: { model } },
@@ -105,7 +115,7 @@ export class ProviderManager implements ModelProvider {
 
     const providerName = alias.provider ?? this.config.defaultProvider;
     if (providerName === undefined) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" must define a provider in config.toml.`,
       );
@@ -113,7 +123,7 @@ export class ProviderManager implements ModelProvider {
 
     const providerConfig = this.config.providers[providerName];
     if (providerConfig === undefined) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Provider "${providerName}" for model "${model}" is not configured.`,
       );
@@ -122,7 +132,7 @@ export class ProviderManager implements ModelProvider {
     const effectiveAlias = effectiveModelAlias(alias, providerConfig.type);
 
     if (!Number.isInteger(effectiveAlias.maxContextSize) || effectiveAlias.maxContextSize <= 0) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" must define a positive max_context_size in config.toml.`,
       );
@@ -136,6 +146,7 @@ export class ProviderManager implements ModelProvider {
       this.options.kimiRequestHeaders,
       effectiveAlias.maxOutputSize,
       effectiveAlias.reasoningKey,
+      effectiveAlias.reasoningRoundTrip,
       this.options.promptCacheKey,
       effectiveAlias.supportEfforts,
       effectiveAlias.offEffort,
@@ -152,6 +163,8 @@ export class ProviderManager implements ModelProvider {
       ),
       supportEfforts: effectiveAlias.supportEfforts,
       defaultEffort: effectiveAlias.defaultEffort,
+      serviceTiers: effectiveAlias.serviceTiers ?? providerConfig.serviceTiers,
+      providerServiceTiers: providerConfig.serviceTiers,
       maxOutputSize: effectiveAlias.maxOutputSize,
       type: providerConfig.type,
       protocol: alias.protocol,
@@ -170,14 +183,14 @@ export class ProviderManager implements ModelProvider {
       // oauth + apiKey on the same provider makes request auth ambiguous:
       // provider construction would prefer apiKey while runtime auth resolves
       // OAuth. Reject it so misconfiguration surfaces at model resolution.
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.CONFIG_INVALID,
         `Provider "${providerName}" has both apiKey and oauth set in config.toml — they are mutually exclusive. Remove one.`,
       );
     }
 
-    const loginRequired = (cause?: unknown): KimiError =>
-      new KimiError(
+    const loginRequired = (cause?: unknown): CloudCodeError =>
+      new CloudCodeError(
         ErrorCodes.AUTH_LOGIN_REQUIRED,
         `OAuth provider "${providerName}" requires login before it can be used.`,
         cause === undefined ? undefined : { cause },
@@ -199,12 +212,20 @@ export class ProviderManager implements ModelProvider {
         // login-required is an expected state (the user must /login); don't
         // warn. Other failures (connection errors, etc.) are logged once for
         // diagnosis and then propagated — chatWithRetry does not retry them.
-        if (!isKimiError(error) || error.code !== ErrorCodes.AUTH_LOGIN_REQUIRED) {
+        if (!isCloudCodeError(error) || error.code !== ErrorCodes.AUTH_LOGIN_REQUIRED) {
           log?.warn('oauth token fetch failed', { providerName, error });
         }
         throw error;
       }
       if (apiKey.trim().length === 0) throw loginRequired();
+      // Providers like ChatGPT Codex require extra per-request headers
+      // alongside the bearer token (`ChatGPT-Account-ID`). kosong's
+      // ProviderRequestAuth already carries `headers` through to the SDK
+      // client, so no provider-adapter change is needed.
+      const headers = await tokenProvider.getAuthHeaders?.();
+      if (headers !== undefined && Object.keys(headers).length > 0) {
+        return { apiKey, headers };
+      }
       return { apiKey };
     };
 
@@ -217,7 +238,7 @@ export class ProviderManager implements ModelProvider {
           if (!(error instanceof APIStatusError) || error.statusCode !== 401) throw error;
           if (refreshed) {
             const reason = error.message.replaceAll('\r', '');
-            throw new KimiError(
+            throw new CloudCodeError(
               ErrorCodes.PROVIDER_AUTH_ERROR,
               reason.length > 0 ? reason : 'OAuth provider credentials were rejected.',
               {
@@ -265,6 +286,7 @@ function toKosongProviderConfig(
   kimiRequestHeaders: Record<string, string> | undefined,
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
+  reasoningRoundTrip: 'always' | 'tool-calls-only' | 'never' | undefined,
   promptCacheKey: string | undefined,
   supportEfforts: readonly string[] | undefined,
   offEffort: string | undefined,
@@ -324,6 +346,7 @@ function toKosongProviderConfig(
           modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
+        ...(reasoningRoundTrip !== undefined ? { reasoningRoundTrip } : {}),
         offEffort,
         // Session affinity: route every request of this session through the
         // same provider-side prompt cache (the OpenAI analog of Anthropic
@@ -369,6 +392,7 @@ function toKosongProviderConfig(
         baseUrl:
           modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        ...(provider.omitMaxOutputTokens === true ? { omitMaxOutputTokens: true } : {}),
         offEffort,
         // Session affinity: same `prompt_cache_key` intent as the `openai`
         // branch; the Responses API accepts it as a top-level request field.
@@ -405,7 +429,7 @@ function toKosongProviderConfig(
     }
     default: {
       const exhaustive: never = effectiveType;
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.MODEL_CONFIG_INVALID,
         `Unsupported provider type: ${String(exhaustive)}`,
       );
@@ -425,7 +449,7 @@ function defaultHeadersField(
 
 // Extract just the `User-Agent` from the Kimi identity headers so non-Kimi
 // providers (OpenAI, Anthropic, Google, Vertex) also identify as
-// `kimi-code-cli/<version>` without leaking the `X-Msh-*` device identity
+// `cloud-code-cli/<version>` without leaking the `X-Msh-*` device identity
 // headers to third-party endpoints. The full `kimiRequestHeaders` set stays
 // reserved for the Kimi transport (and the Kimi-routed Anthropic transport),
 // where upstream is the managed Kimi endpoint.
@@ -455,7 +479,7 @@ function providerApiKey(provider: ProviderConfig): string | undefined {
       );
     default: {
       const exhaustive: never = provider.type;
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.MODEL_CONFIG_INVALID,
         `Unsupported provider type: ${String(exhaustive)}`,
       );

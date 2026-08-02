@@ -1,10 +1,13 @@
 import { Readable } from 'node:stream';
 
-import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
-import { describe, expect, it, vi } from 'vitest';
+import type { Kaos, KaosProcess } from '@cloud-code/kaos';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _clearGitStatusSnapshotCacheForTests,
   collectGitContext,
+  collectGitStatusSnapshot,
+  getGitStatusSnapshot,
   parseProjectName,
   sanitizeRemoteUrl,
 } from '../../src/session/git-context';
@@ -272,5 +275,217 @@ describe('parseProjectName', () => {
 
   it('keeps the full namespace for nested GitLab groups (SSH)', () => {
     expect(parseProjectName('git@gitlab.com:group/subgroup/repo.git')).toBe('group/subgroup/repo');
+  });
+});
+
+describe('collectGitStatusSnapshot', () => {
+  it('returns an empty string when the directory is not a git repository', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': {
+        stdout: '',
+        exitCode: 128,
+        stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+      },
+    });
+    expect(await collectGitStatusSnapshot(kaos, '/project')).toBe('');
+  });
+
+  it('builds a snapshot with branch, main branch, status, and recent commits', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': { stdout: 'feature/login' },
+      'symbolic-ref --short refs/remotes/origin/HEAD': { stdout: 'origin/develop' },
+      '--no-optional-locks status --short': { stdout: ' M src/a.ts\n?? src/b.ts' },
+      '--no-optional-locks log --oneline -n 5': {
+        stdout: 'abc123 first commit\ndef456 second commit',
+      },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).toContain('This is the git status at the start of the conversation.');
+    expect(snapshot).toContain('will not update during the conversation');
+    expect(snapshot).toContain('Current branch: feature/login');
+    expect(snapshot).toContain('Main branch (you will usually use this for PRs): develop');
+    // `runGit` trims stdout, so the porcelain marker on the first status line
+    // loses its leading space (same behavior as Claude Code's snapshot).
+    expect(snapshot).toContain('Status:\nM src/a.ts\n?? src/b.ts');
+    expect(snapshot).toContain('Recent commits:\nabc123 first commit\ndef456 second commit');
+  });
+
+  it('reports a clean status as (clean)', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      'symbolic-ref --short refs/remotes/origin/HEAD': { stdout: 'origin/main' },
+      '--no-optional-locks status --short': { stdout: '' },
+      '--no-optional-locks log --oneline -n 5': { stdout: 'abc123 first commit' },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).toContain('Status:\n(clean)');
+  });
+
+  it('falls back to a local main branch when origin/HEAD is absent', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      'rev-parse --verify refs/heads/main': { stdout: 'abc123' },
+      '--no-optional-locks status --short': { stdout: '' },
+      '--no-optional-locks log --oneline -n 5': { stdout: '' },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).toContain('Main branch (you will usually use this for PRs): main');
+  });
+
+  it('falls back to a local master branch when neither origin/HEAD nor main exists', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': { stdout: 'master' },
+      'rev-parse --verify refs/heads/master': { stdout: 'abc123' },
+      '--no-optional-locks status --short': { stdout: '' },
+      '--no-optional-locks log --oneline -n 5': { stdout: '' },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).toContain('Main branch (you will usually use this for PRs): master');
+  });
+
+  it("defaults the main branch to 'main' when no candidate resolves", async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': { stdout: 'feature/x' },
+      '--no-optional-locks status --short': { stdout: '' },
+      '--no-optional-locks log --oneline -n 5': { stdout: '' },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).toContain('Main branch (you will usually use this for PRs): main');
+  });
+
+  it('truncates a status summary beyond 2k characters', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      'symbolic-ref --short refs/remotes/origin/HEAD': { stdout: 'origin/main' },
+      '--no-optional-locks status --short': { stdout: ` M ${'x'.repeat(3_000)}` },
+      '--no-optional-locks log --oneline -n 5': { stdout: '' },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).toContain('truncated because it exceeds 2k characters');
+    expect(snapshot.length).toBeLessThan(3_000);
+  });
+
+  it('omits Recent commits when the repository has no commits yet', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      'symbolic-ref --short refs/remotes/origin/HEAD': { stdout: 'origin/main' },
+      '--no-optional-locks status --short': { stdout: '' },
+      '--no-optional-locks log --oneline -n 5': {
+        stdout: '',
+        exitCode: 128,
+        stderr: "fatal: your current branch 'main' does not have any commits yet",
+      },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).toContain('Current branch: main');
+    expect(snapshot).not.toContain('Recent commits:');
+  });
+
+  it('omits the Current branch line in detached HEAD state', async () => {
+    const kaos = gitKaos({
+      'rev-parse --is-inside-work-tree': { stdout: 'true' },
+      'symbolic-ref --short HEAD': {
+        stdout: '',
+        exitCode: 128,
+        stderr: 'fatal: ref HEAD is not a symbolic ref',
+      },
+      'symbolic-ref --short refs/remotes/origin/HEAD': { stdout: 'origin/main' },
+      '--no-optional-locks status --short': { stdout: '' },
+      '--no-optional-locks log --oneline -n 5': { stdout: 'abc123 first commit' },
+    });
+
+    const snapshot = await collectGitStatusSnapshot(kaos, '/project');
+
+    expect(snapshot).not.toContain('Current branch:');
+    expect(snapshot).toContain('Recent commits:');
+  });
+});
+
+describe('getGitStatusSnapshot (session memoization)', () => {
+  afterEach(() => {
+    _clearGitStatusSnapshotCacheForTests();
+  });
+
+  function countingGitKaos(script: GitScript): { kaos: Kaos; callCount: () => number } {
+    let count = 0;
+    const kaos = createFakeKaos({
+      exec: async (...args: string[]): Promise<KaosProcess> => {
+        count += 1;
+        const subcommand = args[3] ?? '';
+        const full = args.slice(3).join(' ');
+        const scripted = script[full] ?? script[subcommand];
+        if (scripted === undefined) return fakeProcess('', 1);
+        return fakeProcess(scripted.stdout, scripted.exitCode ?? 0, scripted.stderr ?? '');
+      },
+    });
+    return { kaos, callCount: () => count };
+  }
+
+  const repoScript: GitScript = {
+    'rev-parse --is-inside-work-tree': { stdout: 'true' },
+    'symbolic-ref --short HEAD': { stdout: 'main' },
+    'symbolic-ref --short refs/remotes/origin/HEAD': { stdout: 'origin/main' },
+    '--no-optional-locks status --short': { stdout: ' M src/a.ts' },
+    '--no-optional-locks log --oneline -n 5': { stdout: 'abc123 first commit' },
+  };
+
+  it('computes the snapshot only once per cwd and reuses it on later renders', async () => {
+    const { kaos, callCount } = countingGitKaos(repoScript);
+
+    const first = await getGitStatusSnapshot(kaos, '/project');
+    const execsAfterFirst = callCount();
+    expect(execsAfterFirst).toBeGreaterThan(0);
+
+    // Same-process re-renders (post-compaction refresh, post-resume refresh)
+    // must reuse the memoized snapshot byte-for-byte instead of re-running
+    // git — the system prompt is a stable prefix for prompt caching.
+    const second = await getGitStatusSnapshot(kaos, '/project');
+    expect(second).toBe(first);
+    expect(callCount()).toBe(execsAfterFirst);
+  });
+
+  it('memoizes per cwd', async () => {
+    const { kaos, callCount } = countingGitKaos(repoScript);
+
+    await getGitStatusSnapshot(kaos, '/project');
+    const afterFirst = callCount();
+    await getGitStatusSnapshot(kaos, '/other-project');
+    expect(callCount()).toBeGreaterThan(afterFirst);
+  });
+
+  it('memoizes the empty (non-git) result as well', async () => {
+    const { kaos, callCount } = countingGitKaos({
+      'rev-parse --is-inside-work-tree': {
+        stdout: '',
+        exitCode: 128,
+        stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+      },
+    });
+
+    expect(await getGitStatusSnapshot(kaos, '/nowhere')).toBe('');
+    const afterFirst = callCount();
+    expect(await getGitStatusSnapshot(kaos, '/nowhere')).toBe('');
+    expect(callCount()).toBe(afterFirst);
   });
 });

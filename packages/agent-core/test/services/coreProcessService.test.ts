@@ -227,7 +227,7 @@ describe('CoreProcessService direct construction', () => {
     }
   });
 
-  it('rpc round-trip through createRPC reaches KimiCore (getCoreInfo smoke)', async () => {
+  it('rpc round-trip through createRPC reaches CloudCodeCore (getCoreInfo smoke)', async () => {
     const { eventService, approvalService, questionService, logService, workspaceRegistry } = makePeers();
     const core = new CoreProcessService(
       {},
@@ -306,7 +306,7 @@ describe('CoreProcessService direct construction', () => {
     const resolver = CoreProcessService._defaultOAuthTokenResolver(
       tmpHome,
       join(tmpHome, 'config.toml'),
-      { productName: 'test', version: '0.0.0-test', platform: 'test_platform' },
+      { userAgentProduct: 'test', version: '0.0.0-test', platform: 'test_platform' },
     );
     const tokenProvider = resolver('managed:kimi-code');
     await expect(tokenProvider?.getAccessToken()).resolves.toBe('rotated-access');
@@ -317,10 +317,10 @@ describe('CoreProcessService direct construction', () => {
   it('default-wires kimiRequestHeaders from identity when caller omits headers', () => {
     const headers = CoreProcessService._defaultKimiRequestHeaders(
       tmpHome,
-      { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
+      { userAgentProduct: 'cloud-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
     );
     expect(headers).toBeDefined();
-    expect(headers!['User-Agent']).toMatch(/^kimi-code-cli\/9\.9\.9/);
+    expect(headers!['User-Agent']).toMatch(/^cloud-code-cli\/9\.9\.9/);
     expect(headers!['X-Msh-Platform']).toBe('kimi_code_cli');
     expect(headers!['X-Msh-Version']).toBe('9.9.9');
     expect(headers!['X-Msh-Device-Id']).toMatch(
@@ -338,7 +338,7 @@ describe('CoreProcessService direct construction', () => {
     const picked =
       explicit ?? CoreProcessService._defaultKimiRequestHeaders(
         tmpHome,
-        { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
+        { userAgentProduct: 'cloud-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
       );
     expect(picked).toBe(explicit);
   });

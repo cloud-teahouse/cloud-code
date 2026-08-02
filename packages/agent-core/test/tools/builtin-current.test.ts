@@ -7,7 +7,7 @@
 
 import { Readable, type Writable } from 'node:stream';
 
-import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@cloud-code/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
@@ -34,6 +34,7 @@ import { GlobInputSchema, GlobTool } from '../../src/tools/builtin/file/glob';
 import { GrepInputSchema, GrepTool } from '../../src/tools/builtin/file/grep';
 import { ReadInputSchema, ReadTool } from '../../src/tools/builtin/file/read';
 import { WriteInputSchema, WriteTool } from '../../src/tools/builtin/file/write';
+import { SaveMemoryInputSchema, SaveMemoryTool } from '../../src/tools/builtin/memory/save-memory';
 import { BashInputSchema, BashTool } from '../../src/tools/builtin/shell/bash';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
 import { createFakeKaos } from './fixtures/fake-kaos';
@@ -249,6 +250,36 @@ describe('current builtin file and shell tools', () => {
     const result = await executeTool(tool, context({ command: 'printf ok', timeout: 1000 }));
     expect(result).toMatchObject({ output: 'ok\n' });
   });
+
+  it('SaveMemory exposes parameters and writes the memory file plus index through kaos', async () => {
+    const writes = new Map<string, string>();
+    const kaos = createFakeKaos({
+      stat: vi
+        .fn<Kaos['stat']>()
+        .mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' })),
+      readText: vi
+        .fn<Kaos['readText']>()
+        .mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' })),
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      writeText: vi.fn().mockImplementation(async (path: string, content: string) => {
+        writes.set(path, content);
+      }),
+    });
+    const tool = new SaveMemoryTool(kaos, '/brand');
+
+    expect(
+      SaveMemoryInputSchema.safeParse({ path: 'a.md', description: 'd', content: 'c' }).success,
+    ).toBe(true);
+    expect(tool.parameters).toMatchObject({
+      type: 'object',
+      properties: { path: { type: 'string' } },
+    });
+
+    const result = await executeTool(tool, context({ path: 'a.md', description: 'd', content: 'c' }));
+    expect(result.isError).toBeFalsy();
+    expect(writes.get('/workspace/.cloud-code/memory/a.md')).toBe('c');
+    expect(writes.get('/workspace/.cloud-code/memory/MEMORY.md')).toBe('- [d](a.md)\n');
+  });
 });
 
 describe('current builtin collaboration tools', () => {
@@ -259,8 +290,6 @@ describe('current builtin collaboration tools', () => {
       rpc: {
         requestQuestion: vi.fn(async () => ({ 'Which path?': 'A' })),
       },
-      telemetry: { track: vi.fn() },
-      turn: { traceIdForTurn: () => undefined },
     } as unknown as Agent);
 
     const input = {
@@ -434,6 +463,17 @@ describe('current builtin collaboration tools', () => {
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
+    // The structured envelope mirrors the XML chrome (member texts stay in
+    // the XML only).
+    expect(result.structured).toEqual({
+      completed: 2,
+      failed: 0,
+      aborted: 0,
+      members: [
+        { outcome: 'completed', agentId: 'agent-explore-1', item: 'src/a.ts' },
+        { outcome: 'completed', agentId: 'agent-explore-2', item: 'src/b.ts' },
+      ],
+    });
   });
 
   it('AgentSwarm does not expose permission rule argument matching', () => {
@@ -475,10 +515,10 @@ describe('current builtin collaboration tools', () => {
       true,
     );
     const properties = (
-      tool.parameters as { properties: Record<string, { enum?: string[] }> }
+      tool.parameters as { properties: Record<string, { description?: string }> }
     ).properties;
 
-    expect(properties['model']?.enum).toEqual(['primary', 'secondary']);
+    expect(properties['model']?.description).toContain('secondary');
   });
 
   it('AgentSwarm rejects more than 128 subagents at execution time', async () => {
@@ -537,6 +577,79 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe(output);
     expect(result.isError).toBe(true);
     expect(host.runQueued).not.toHaveBeenCalled();
+  });
+
+  it('AgentSwarm forwards the model selection to every queued subagent', async () => {
+    const runQueued = vi.fn(
+      async <T>(
+        tasks: readonly QueuedSubagentTask<T>[],
+      ): Promise<Array<QueuedSubagentRunResult<T>>> => {
+        return tasks.map((task, index) => ({
+          task,
+          agentId: `agent-new-${String(index + 1)}`,
+          status: 'completed' as const,
+          result: `result ${String(index + 1)}`,
+        }));
+      },
+    );
+    const host = mockSubagentHost({
+      runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
+    });
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+    const input = {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+      model: 'secondary',
+    };
+
+    expect(AgentSwarmToolInputSchema.safeParse(input).success).toBe(true);
+    const result = await executeTool(tool, context(input));
+
+    expect(result.isError).toBeUndefined();
+    expect(runQueued).toHaveBeenCalledTimes(1);
+    const tasks = runQueued.mock.calls[0]?.[0] ?? [];
+    expect(tasks).toHaveLength(2);
+    for (const task of tasks) {
+      expect(task.model).toBe('secondary');
+    }
+  });
+
+  it('AgentSwarm omits the task model selection when the parameter is not passed', async () => {
+    const runQueued = vi.fn(
+      async <T>(
+        tasks: readonly QueuedSubagentTask<T>[],
+      ): Promise<Array<QueuedSubagentRunResult<T>>> => {
+        return tasks.map((task, index) => ({
+          task,
+          agentId: `agent-new-${String(index + 1)}`,
+          status: 'completed' as const,
+          result: `result ${String(index + 1)}`,
+        }));
+      },
+    );
+    const host = mockSubagentHost({
+      runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
+    });
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      }),
+    );
+
+    expect(result.isError).toBeUndefined();
+    const tasks = runQueued.mock.calls[0]?.[0] ?? [];
+    expect(tasks).toHaveLength(2);
+    for (const task of tasks) {
+      expect(task.model).toBeUndefined();
+    }
   });
 
   it('AgentSwarm resumes mapped agents before spawning item subagents', async () => {
@@ -921,6 +1034,16 @@ describe('current builtin collaboration tools', () => {
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
+    expect(result.structured).toEqual({
+      completed: 1,
+      failed: 0,
+      aborted: 2,
+      members: [
+        { outcome: 'completed', agentId: 'agent-coder-1', item: 'src/a.ts' },
+        { outcome: 'aborted', agentId: 'agent-coder-2', item: 'src/b.ts', state: 'started' },
+        { outcome: 'aborted', item: 'src/c.ts', state: 'not_started' },
+      ],
+    });
   });
 
   it('Skill exposes parameters and reports unknown skills as tool errors', async () => {

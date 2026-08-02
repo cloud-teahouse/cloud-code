@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { _util, createDecorator } from '#/di/instantiation';
 
 /**
- * P0.3 updates `createDecorator`:
+ * `createDecorator`:
  *  - Singleton per name (calling with the same name returns the same ref).
- *  - Decorator body now stashes `{ id, index }` on the target ctor under
- *    `$di$dependencies` instead of being a no-op.
+ *  - Decorator body stashes `{ id, index }` on the target ctor under
+ *    `$di$dependencies`.
  *  - Throws `@IServiceName-decorator can only be used to decorate a parameter`
  *    on `arguments.length !== 3`.
  */

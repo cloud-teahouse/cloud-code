@@ -1,3 +1,4 @@
+export * from './auth-cache';
 export * from './connection-manager';
 export * from './global-config';
 export * from './oauth';

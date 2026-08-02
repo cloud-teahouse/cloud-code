@@ -8,12 +8,15 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { HookDefSchema } from '../../src/config/schema';
+import { HookEngine } from '../../src/session/hooks';
 import {
   TODO_LIST_TOOL_NAME,
   TODO_STORE_KEY,
   TodoListInputSchema,
   TodoListTool,
   type TodoItem,
+  type TodoTaskHookEmitter,
 } from '../../src/tools/builtin/state/todo-list';
 import type { ToolStore } from '../../src/tools/store';
 import { executeTool } from './fixtures/execute-tool';
@@ -38,12 +41,36 @@ function makeStore(initial: readonly TodoItem[] = []): {
   };
 }
 
-function makeTool(initial: readonly TodoItem[] = []): {
+function makeTool(
+  initial: readonly TodoItem[] = [],
+  hooks?: TodoTaskHookEmitter,
+): {
   tool: TodoListTool;
   getTodos(): readonly TodoItem[];
 } {
   const { store, getTodos } = makeStore(initial);
-  return { tool: new TodoListTool(store), getTodos };
+  return { tool: new TodoListTool(store, hooks), getTodos };
+}
+
+interface RecordedHookCall {
+  readonly event: string;
+  readonly matcherValue?: string;
+  readonly inputData?: Record<string, unknown>;
+}
+
+function makeHookRecorder(): {
+  emitter: TodoTaskHookEmitter;
+  calls: RecordedHookCall[];
+} {
+  const calls: RecordedHookCall[] = [];
+  return {
+    calls,
+    emitter: {
+      fireAndForgetTrigger(event, args) {
+        calls.push({ event, matcherValue: args.matcherValue, inputData: args.inputData });
+      },
+    },
+  };
 }
 
 describe('TodoListTool', () => {
@@ -83,6 +110,23 @@ describe('TodoListTool', () => {
     expect(description).toMatch(/query mode/i);
     // (3) when stuck, tell the user instead of repeatedly re-ordering todos.
     expect(description).toMatch(/tell the user/i);
+  });
+
+  it('description teaches the use vs not-use boundary with paired examples and reasoning', () => {
+    const { description } = makeTool().tool;
+
+    // Behavioral tool descriptions carry the example-plus-reasoning structure
+    // (TodoWrite port): paired positive/negative <example> blocks, each with a
+    // <reasoning> explaining the discrimination — not bare category lists.
+    expect(description).toContain('**Examples of when to use the todo list:**');
+    expect(description).toContain('**Examples of when NOT to use the todo list:**');
+    expect(description).toContain('<example>');
+    expect(description).toContain('<reasoning>');
+    // Discipline clauses: single in_progress, no batched completions, done means done.
+    expect(description).toContain('keep exactly one task `in_progress`');
+    expect(description).toContain('do not batch completions');
+    expect(description).toContain('Never mark a task `done` if tests are failing');
+    expect(description).not.toContain('Kimi Code');
   });
 
   it('description encourages proactive progress updates without allowing churn', () => {
@@ -215,5 +259,265 @@ describe('TodoListTool', () => {
     expect(readExecution.description).toBe('Reading todo list');
     expect(clearExecution.description).toBe('Clearing todo list');
     expect(updateExecution.description).toBe('Updating todo list');
+  });
+});
+
+
+describe('structured fields', () => {
+  it('round-trips id/activeForm/owner/blockedBy/blocks/metadata through the store', async () => {
+    const { tool, getTodos } = makeTool();
+    const todos: TodoItem[] = [
+      {
+        id: 'a',
+        title: 'Change the schema',
+        status: 'in_progress',
+        activeForm: 'Changing the schema',
+        owner: 'coder',
+        metadata: { pr: 12, links: ['x'] },
+      },
+      { id: 'b', title: 'Update tests', status: 'pending', blockedBy: ['a'] },
+      { id: 'c', title: 'Write docs', status: 'pending', blocks: ['b'] },
+    ];
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: { todos },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(getTodos()).toEqual(todos);
+    expect(TodoListInputSchema.safeParse({ todos }).success).toBe(true);
+  });
+
+  it('stores legacy items without adding empty optional keys', async () => {
+    const { tool, getTodos } = makeTool();
+
+    await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: { todos: [{ title: 'x', status: 'pending' }] },
+      signal,
+    });
+
+    const first = getTodos()[0];
+    if (first === undefined) throw new TypeError('expected one stored todo');
+    expect(Object.keys(first)).toEqual(['title', 'status']);
+  });
+});
+
+describe('dependency gate', () => {
+  it('rejects setting a blocked todo to in_progress and leaves the store unchanged', async () => {
+    const { tool, getTodos } = makeTool([{ id: 'a', title: 'A', status: 'pending' }]);
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: {
+        todos: [
+          { id: 'a', title: 'A', status: 'pending' },
+          { id: 'b', title: 'B', status: 'in_progress', blockedBy: ['a'] },
+        ],
+      },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('"b"');
+    expect(result.output).toContain('blocked by "a"');
+    expect(getTodos()).toEqual([{ id: 'a', title: 'A', status: 'pending' }]);
+  });
+
+  it('allows starting once every blocker is done', async () => {
+    const { tool, getTodos } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: {
+        todos: [
+          { id: 'a', title: 'A', status: 'done' },
+          { id: 'b', title: 'B', status: 'in_progress', blockedBy: ['a'] },
+        ],
+      },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(getTodos()[1]).toMatchObject({ id: 'b', status: 'in_progress' });
+  });
+
+  it('ignores blockers that are not in the list', async () => {
+    const { tool } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: { todos: [{ id: 'b', title: 'B', status: 'in_progress', blockedBy: ['ghost'] }] },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+  });
+
+  it('treats blocks as advisory: only blockedBy gates starting', async () => {
+    const { tool } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: {
+        todos: [
+          { id: 'a', title: 'A', status: 'pending', blocks: ['b'] },
+          { id: 'b', title: 'B', status: 'in_progress' },
+        ],
+      },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+  });
+
+  it('resolves title references for todos without an id', async () => {
+    const { tool } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: {
+        todos: [
+          { title: 'Setup', status: 'pending' },
+          { title: 'Build', status: 'in_progress', blockedBy: ['Setup'] },
+        ],
+      },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('blocked by "Setup"');
+  });
+});
+
+describe('task lifecycle hooks', () => {
+  it('fires TaskCreated for every new item, keyed by id or title', async () => {
+    const { emitter, calls } = makeHookRecorder();
+    const { tool } = makeTool([], emitter);
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: {
+        todos: [
+          { id: 'a', title: 'A', status: 'pending' },
+          { title: 'legacy', status: 'pending' },
+        ],
+      },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(calls).toEqual([
+      {
+        event: 'TaskCreated',
+        matcherValue: 'a',
+        inputData: { taskId: 'a', taskTitle: 'A', taskStatus: 'pending' },
+      },
+      {
+        event: 'TaskCreated',
+        matcherValue: 'legacy',
+        inputData: { taskId: 'legacy', taskTitle: 'legacy', taskStatus: 'pending' },
+      },
+    ]);
+  });
+
+  it('fires TaskCompleted only for items that newly reach done', async () => {
+    const { emitter, calls } = makeHookRecorder();
+    const { tool } = makeTool(
+      [
+        { id: 'a', title: 'A', status: 'in_progress' },
+        { id: 'b', title: 'B', status: 'done' },
+      ],
+      emitter,
+    );
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: {
+        todos: [
+          { id: 'a', title: 'A', status: 'done' },
+          { id: 'b', title: 'B', status: 'done' },
+          { id: 'c', title: 'C', status: 'done' },
+        ],
+      },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(calls).toEqual([
+      {
+        event: 'TaskCompleted',
+        matcherValue: 'a',
+        inputData: { taskId: 'a', taskTitle: 'A', taskStatus: 'done' },
+      },
+      // 'b' was already done — no event. 'c' is new — TaskCreated, not TaskCompleted.
+      {
+        event: 'TaskCreated',
+        matcherValue: 'c',
+        inputData: { taskId: 'c', taskTitle: 'C', taskStatus: 'done' },
+      },
+    ]);
+  });
+
+  it('includes the owner in the hook payload when present', async () => {
+    const { emitter, calls } = makeHookRecorder();
+    const { tool } = makeTool([], emitter);
+
+    await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: { todos: [{ id: 'a', title: 'A', status: 'pending', owner: 'coder' }] },
+      signal,
+    });
+
+    expect(calls[0]?.inputData).toMatchObject({ taskOwner: 'coder' });
+  });
+
+  it('does not fire hooks in query mode or after a rejected write', async () => {
+    const { emitter, calls } = makeHookRecorder();
+    const { tool } = makeTool([{ id: 'a', title: 'A', status: 'pending' }], emitter);
+
+    const query = await executeTool(tool, { turnId: 't1', toolCallId: 'call_1', args: {}, signal });
+    expect(query).toMatchObject({ isError: false });
+
+    const rejected = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_2',
+      args: {
+        todos: [
+          { id: 'a', title: 'A', status: 'pending' },
+          { id: 'b', title: 'B', status: 'in_progress', blockedBy: ['a'] },
+        ],
+      },
+      signal,
+    });
+    expect(rejected).toMatchObject({ isError: true });
+
+    expect(calls).toEqual([]);
+  });
+
+  it('wires into HookEngine structurally and the config schema accepts the new events', () => {
+    // Compile-time wiring check: the session HookEngine must satisfy the
+    // emitter interface the tool consumes.
+    const engine: TodoTaskHookEmitter = new HookEngine([]);
+    expect(engine).toBeDefined();
+
+    expect(HookDefSchema.safeParse({ event: 'TaskCreated', command: 'echo hi' }).success).toBe(
+      true,
+    );
+    expect(HookDefSchema.safeParse({ event: 'TaskCompleted', command: 'echo hi' }).success).toBe(
+      true,
+    );
   });
 });

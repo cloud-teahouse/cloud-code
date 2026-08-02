@@ -26,6 +26,20 @@ export function normalizeToolCallIdsForProvider(
   if (rawIds.length === 0) return messages;
 
   const mappedIds = buildToolCallIdMap(rawIds, policy);
+
+  // Pre-scan: when every collected id already equals its mapping, the remap
+  // below cannot change any message (the map pass looks up exactly these
+  // ids), so return the input array by reference — the same outcome as the
+  // `changed === false` path — without building the mapped array.
+  let anyRemapped = false;
+  for (const rawId of rawIds) {
+    if (mappedIds.get(rawId) !== rawId) {
+      anyRemapped = true;
+      break;
+    }
+  }
+  if (!anyRemapped) return messages;
+
   let changed = false;
   const normalizedMessages = messages.map((message) => {
     let messageChanged = false;

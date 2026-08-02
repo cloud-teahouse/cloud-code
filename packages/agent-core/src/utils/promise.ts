@@ -1,5 +1,12 @@
 const NEVER = new Promise<never>(() => {});
 
+/** Plain setTimeout-backed delay. */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 /**
  * Largest delay `setTimeout` accepts: beyond this Node clamps the delay to 1ms,
  * which would fire immediately. Clamp instead so huge ("effectively unbounded")

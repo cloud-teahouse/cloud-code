@@ -1,4 +1,4 @@
-import { isProviderRateLimitError, type TokenUsage } from '@moonshot-ai/kosong';
+import { isProviderRateLimitError, type TokenUsage } from '@cloud-code/kosong';
 import * as retry from 'retry';
 
 import type {
@@ -6,14 +6,13 @@ import type {
   SpawnSubagentOptions,
   SubagentHandle,
 } from './subagent-host';
-import type { SubagentModelChoice } from './subagent-binding';
 import { isUserCancellation } from '../utils/abort';
 
 /*
 Subagent batch scheduling contract:
 Normal phase:
 - Return results in input order; empty input returns an empty list.
-- Start up to 5 tasks immediately, then 1 more every 700 ms while queued work remains. By default active tasks do not cap this ramp; when KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY is set to a positive integer, the ramp additionally stops while active tasks reach that cap, and resumes as tasks complete.
+- Start up to 5 tasks immediately, then 1 more every 700 ms while queued work remains. By default active tasks do not cap this ramp; when CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY is set to a positive integer, the ramp additionally stops while active tasks reach that cap, and resumes as tasks complete.
 - Launch priority: previous agent id saved after a rate limit, explicit resume, then new spawn.
 - Readiness can be reported while the attempt is active. Ready normal launches seed the first rate-limit capacity.
 - The first provider rate limit stops the ramp and enters rate-limit phase.
@@ -38,7 +37,7 @@ const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2000;
 const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 3 * 60 * 1000;
 const RATE_LIMIT_SUSPENDED_REASON = 'Provider rate limit; subagent requeued for retry.';
 
-const AGENT_SWARM_MAX_CONCURRENCY_ENV = 'KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY';
+const AGENT_SWARM_MAX_CONCURRENCY_ENV = 'CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY';
 
 type BaseQueuedSubagentTask<T> = {
   readonly data: T;
@@ -50,9 +49,10 @@ type BaseQueuedSubagentTask<T> = {
   readonly swarmIndex?: number;
   readonly swarmItem?: string;
   readonly runInBackground: boolean;
+  /** Spawn-level model selection forwarded to the launcher (see RunSubagentOptions). */
+  readonly model?: string;
   readonly timeout?: number;
   readonly signal?: AbortSignal;
-  readonly modelChoice?: SubagentModelChoice;
 };
 
 export type SpawnQueuedSubagentTask<T = unknown> = BaseQueuedSubagentTask<T> & {
@@ -308,6 +308,7 @@ export class SubagentBatch<T> {
       description: task.description,
       swarmIndex: task.swarmIndex,
       runInBackground: task.runInBackground,
+      model: task.model,
       signal: attempt.controller.signal,
       onReady: () => {
         this.markAttemptReady(attempt);
@@ -326,7 +327,6 @@ export class SubagentBatch<T> {
         const spawnOptions: SpawnSubagentOptions = {
           profileName: task.profileName,
           swarmItem: task.swarmItem,
-          modelChoice: task.modelChoice,
           ...runOptions,
         };
         handle = await this.launcher.spawn(spawnOptions);

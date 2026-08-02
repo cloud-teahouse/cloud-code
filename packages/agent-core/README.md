@@ -1,8 +1,8 @@
-# @moonshot-ai/agent-core
+# @cloud-code/agent-core
 
-The unified agent engine for Kimi Code.
+The unified agent engine for Cloud Code CLI.
 
-Part of the [Kimi Code](https://github.com/MoonshotAI/kimi-code) monorepo.
+Part of the Cloud Code CLI monorepo.
 
 See the main repository for documentation, issues, and contribution guidelines.
 

@@ -16,7 +16,7 @@ import { z } from 'zod';
 import type { Agent } from '../../../agent';
 import { QuestionBackgroundTask } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
-import { ErrorCodes, KimiError } from '../../../errors';
+import { ErrorCodes, CloudCodeError } from '../../../errors';
 import { errorMessage, isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type {
@@ -25,7 +25,6 @@ import type {
   QuestionResponse,
   QuestionResult,
 } from '../../../rpc';
-import type { TelemetryPropertyValue } from '../../../telemetry';
 import { toInputJsonSchema } from '../../support/input-schema';
 import DESCRIPTION from './ask-user.md?raw';
 
@@ -156,7 +155,6 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     {
       toolCallId,
       signal,
-      traceId,
       turnId,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
@@ -168,10 +166,10 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     }
 
     if (args.background === true) {
-      return this.executeInBackground(args, { toolCallId, turnId, signal, traceId });
+      return this.executeInBackground(args, { toolCallId, turnId, signal });
     }
 
-    return this.executeQuestion(args, { toolCallId, turnId, signal, traceId });
+    return this.executeQuestion(args, { toolCallId, turnId, signal });
   }
 
   private inputSchema(): z.ZodType<AskUserQuestionInput> {
@@ -183,9 +181,8 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     {
       toolCallId,
       signal,
-      traceId,
       turnId,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'traceId' | 'turnId'>,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
   ): Promise<ExecutableToolResult> {
     try {
       const result = await this.agent.rpc!.requestQuestion!(
@@ -207,18 +204,9 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
-        this.agent.telemetry.track('question_dismissed', {
-          trace_id: traceId,
-        });
         return dismissedQuestionResult();
       }
 
-      const properties: Record<string, TelemetryPropertyValue> = {
-        answered: Object.keys(normalized.answers).length,
-        trace_id: traceId,
-      };
-      if (normalized.method !== undefined) properties['method'] = normalized.method;
-      this.agent.telemetry.track('question_answered', properties);
       return {
         isError: false,
         output: JSON.stringify({ answers: normalized.answers }),
@@ -226,7 +214,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
 
-      if (error instanceof KimiError && error.code === ErrorCodes.NOT_IMPLEMENTED) {
+      if (error instanceof CloudCodeError && error.code === ErrorCodes.NOT_IMPLEMENTED) {
         return {
           isError: true,
           output: QUESTION_UNSUPPORTED_FAILURE_MESSAGE,
@@ -242,9 +230,8 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     {
       toolCallId,
       signal,
-      traceId,
       turnId,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'traceId' | 'turnId'>,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
   ): ExecutableToolResult {
     if (signal.aborted) {
       signal.throwIfAborted();
@@ -257,7 +244,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       taskId = backgroundManager.registerTask(
         new QuestionBackgroundTask(
           (taskSignal) =>
-            this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal, traceId }),
+            this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal }),
           description,
           {
             questionCount: args.questions.length,

@@ -6,10 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createKimiDefaultHeaders,
-  createKimiDeviceHeaders,
+  createCloudCodeDeviceHeaders,
   createKimiDeviceId,
-  createKimiUserAgent,
-  KIMI_CODE_PLATFORM,
+  createCloudCodeUserAgent,
+  CLOUD_CODE_PLATFORM,
   readKimiDeviceId,
 } from '../src/identity';
 
@@ -62,13 +62,13 @@ describe('Kimi identity factories', () => {
   });
 
   it('creates complete X-Msh device headers from host version and platform', () => {
-    const headers = createKimiDeviceHeaders({
+    const headers = createCloudCodeDeviceHeaders({
       homeDir: tempHome(),
       version: '1.2.3-test',
-      platform: KIMI_CODE_PLATFORM,
+      platform: CLOUD_CODE_PLATFORM,
     });
 
-    expect(headers['X-Msh-Platform']).toBe(KIMI_CODE_PLATFORM);
+    expect(headers['X-Msh-Platform']).toBe(CLOUD_CODE_PLATFORM);
     expect(headers['X-Msh-Version']).toBe('1.2.3-test');
     expect(headers['X-Msh-Device-Name']).toBeTruthy();
     expect(headers['X-Msh-Device-Model']).toBeTruthy();
@@ -76,24 +76,24 @@ describe('Kimi identity factories', () => {
     expect(headers['X-Msh-Device-Id']).toMatch(/^[0-9a-f-]+$/);
   });
 
-  it('creates kimi-code-cli User-Agent and appends suffix only to UA', () => {
+  it('creates cloud-code-cli User-Agent and appends suffix only to UA', () => {
     expect(
-      createKimiUserAgent({
-        productName: 'kimi-code-cli',
+      createCloudCodeUserAgent({
+        userAgentProduct: 'cloud-code-cli',
         version: '1.2.3',
       }),
-    ).toBe('kimi-code-cli/1.2.3');
+    ).toBe('cloud-code-cli/1.2.3');
     expect(
-      createKimiUserAgent({
-        productName: 'kimi-code-cli',
+      createCloudCodeUserAgent({
+        userAgentProduct: 'cloud-code-cli',
         version: '1.2.3',
         userAgentSuffix: 'wire 4.5.6',
       }),
-    ).toBe('kimi-code-cli/1.2.3 (wire 4.5.6)');
+    ).toBe('cloud-code-cli/1.2.3 (wire 4.5.6)');
   });
 
   it('honors an explicit X-Msh-Platform value', () => {
-    const headers = createKimiDeviceHeaders({
+    const headers = createCloudCodeDeviceHeaders({
       homeDir: tempHome(),
       version: '1.2.3-test',
       platform: 'kimi_code_desktop',
@@ -105,14 +105,14 @@ describe('Kimi identity factories', () => {
   it('rejects an empty, whitespace, or all-non-ASCII platform instead of emitting a bad header', () => {
     for (const platform of ['', '   ', '桌面']) {
       expect(
-        () => createKimiDeviceHeaders({ homeDir: tempHome(), version: '1.2.3', platform }),
+        () => createCloudCodeDeviceHeaders({ homeDir: tempHome(), version: '1.2.3', platform }),
         JSON.stringify(platform),
       ).toThrow('Kimi identity platform');
     }
   });
 
   it('sanitizes header-unsafe characters out of the platform value', () => {
-    const headers = createKimiDeviceHeaders({
+    const headers = createCloudCodeDeviceHeaders({
       homeDir: tempHome(),
       version: '1.2.3',
       platform: 'kimi_code_桌面\n',
@@ -123,12 +123,12 @@ describe('Kimi identity factories', () => {
   it('merges User-Agent and device headers into default headers', () => {
     const headers = createKimiDefaultHeaders({
       homeDir: tempHome(),
-      productName: 'kimi-code-cli',
+      userAgentProduct: 'cloud-code-cli',
       version: '1.2.3',
       platform: 'kimi_code_cli',
     });
 
-    expect(headers['User-Agent']).toBe('kimi-code-cli/1.2.3');
+    expect(headers['User-Agent']).toBe('cloud-code-cli/1.2.3');
     expect(headers['X-Msh-Platform']).toBe('kimi_code_cli');
     expect(headers['X-Msh-Version']).toBe('1.2.3');
     expect(headers['X-Msh-Device-Id']).toMatch(/^[0-9a-f-]+$/);
@@ -137,7 +137,7 @@ describe('Kimi identity factories', () => {
   it('threads the identity platform into default headers', () => {
     const headers = createKimiDefaultHeaders({
       homeDir: tempHome(),
-      productName: 'kimi-code-desktop',
+      userAgentProduct: 'kimi-code-desktop',
       version: '0.0.13',
       platform: 'kimi_code_desktop',
     });
@@ -151,13 +151,13 @@ describe('Kimi identity factories', () => {
 // The public factories surface the sanitizer used for User-Agent and X-Msh-*.
 describe('ascii header value sanitization', () => {
   it('strips a trailing newline from a header value', () => {
-    const ua = createKimiUserAgent({ productName: 'kimi-code-cli', version: '6.8.0-101\n' });
-    expect(ua).toBe('kimi-code-cli/6.8.0-101');
+    const ua = createCloudCodeUserAgent({ userAgentProduct: 'cloud-code-cli', version: '6.8.0-101\n' });
+    expect(ua).toBe('cloud-code-cli/6.8.0-101');
   });
 
   it('drops non-ASCII codepoints while keeping the ASCII remainder', () => {
-    const ua = createKimiUserAgent({ productName: 'kimi-code-cli', version: 'héllo' });
-    expect(ua).toBe('kimi-code-cli/hllo');
+    const ua = createCloudCodeUserAgent({ userAgentProduct: 'cloud-code-cli', version: 'héllo' });
+    expect(ua).toBe('cloud-code-cli/hllo');
   });
 
   it('uses the unknown fallback when every hostname codepoint is non-ASCII', async () => {
@@ -174,7 +174,7 @@ describe('ascii header value sanitization', () => {
     });
 
     try {
-      const { createKimiDeviceHeaders: createHeaders } = await import('../src/identity');
+      const { createCloudCodeDeviceHeaders: createHeaders } = await import('../src/identity');
       const headers = createHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
       expect(headers['X-Msh-Device-Name']).toBe('unknown');
     } finally {
@@ -197,7 +197,7 @@ describe('ascii header value sanitization', () => {
     });
 
     try {
-      const { createKimiDeviceHeaders: createHeaders } = await import('../src/identity');
+      const { createCloudCodeDeviceHeaders: createHeaders } = await import('../src/identity');
       const headers = createHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
       for (const [key, value] of Object.entries(headers)) {
         expect(value, `header ${key} has untrimmed whitespace: ${JSON.stringify(value)}`).toBe(
@@ -229,8 +229,8 @@ describe('ascii header value sanitization', () => {
     }));
 
     try {
-      const { createKimiDeviceHeaders } = await import('../src/identity');
-      const headers = createKimiDeviceHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
+      const { createCloudCodeDeviceHeaders } = await import('../src/identity');
+      const headers = createCloudCodeDeviceHeaders({ homeDir: tempHome(), version: '1.0.0', platform: 'test' });
       expect(headers['X-Msh-Device-Model']).toBe('macOS 25.5.0 arm64');
     } finally {
       vi.doUnmock('node:os');

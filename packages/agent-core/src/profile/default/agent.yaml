@@ -1,5 +1,5 @@
 name: agent
-description: Default Kimi Code agent
+description: Default Cloud Code agent
 
 systemPromptPath: ./system.md
 promptVars:
@@ -20,14 +20,22 @@ tools:
   - CronDelete
   - ReadMediaFile
   - TodoList
+  - SaveMemory
   - Skill
   - WebSearch
   - Agent
   - AgentSwarm
+  - TeamTaskCreate
+  - TeamTaskList
+  - TeamTaskUpdate
+  - TeamTaskClaim
+  - SendMessage
   - FetchURL
   - AskUserQuestion
   - EnterPlanMode
   - ExitPlanMode
+  - EnterWorktree
+  - ExitWorktree
   - CreateGoal
   - GetGoal
   - SetGoalBudget
@@ -38,6 +46,6 @@ subagents:
   coder:
     description: General software engineering agent — the only subagent type with file-editing tools; use it for any delegated task that must modify code.
   explore:
-    description: Fast codebase exploration with prompt-enforced read-only behavior.
+    description: Fast codebase exploration with prompt-enforced read-only behavior. For simple, directed searches (a specific file, class, or function) use Grep/Glob directly instead of delegating; reserve this agent for broader exploration that will clearly require more than 3 search queries.
   plan:
     description: Read-only implementation planning and architecture design.

@@ -1,18 +1,18 @@
 {
-  "name": "@moonshot-ai/kaos",
-  "version": "0.1.6",
+  "name": "@cloud-code/kaos",
+  "version": "0.2.1",
   "private": true,
   "description": "Execution environment abstraction for AI agent applications",
   "license": "MIT",
   "author": "Moonshot AI",
-  "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/kaos#readme",
+  "homepage": "https://github.com/yspbwx2010/cloud-code/tree/dev/packages/kaos#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
     "directory": "packages/kaos"
   },
   "bugs": {
-    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+    "url": "https://github.com/yspbwx2010/cloud-code/issues"
   },
   "keywords": [
     "kimi",
@@ -45,6 +45,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "node-pty": "^1.1.0",
     "pathe": "^2.0.3",
     "ssh2": "^1.17.0"
   },

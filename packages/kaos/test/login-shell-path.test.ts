@@ -1,7 +1,7 @@
 /**
  * Login-shell PATH enrichment.
  *
- * Reproduces the "Bash tool can't find local `gh`" report: when kimi-code
+ * Reproduces the "Bash tool can't find local `gh`" report: when Cloud Code
  * is launched from a context that skipped the user's shell profile (GUI
  * launcher, non-login parent shell), `process.env.PATH` misses entries
  * like `/opt/homebrew/bin`, so every command spawned by the Bash tool
@@ -208,7 +208,7 @@ describe.skipIf(process.platform === 'win32')('LocalKaos login-shell PATH enrich
     const stubShell = join(tempDir, 'stub-shell.sh');
     // Stands in for the user's login shell: whatever flags it is invoked
     // with, it reports an environment whose PATH carries an entry the
-    // kimi-code process does not have.
+    // Cloud Code process does not have.
     await writeFile(stubShell, `#!/bin/sh\necho "HOME=$HOME"\necho "PATH=${extraDir}:/usr/bin:/bin"\n`);
     await chmod(stubShell, 0o755);
     process.env['SHELL'] = stubShell;

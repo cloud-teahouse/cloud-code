@@ -47,6 +47,24 @@ export async function loadPluginCommand(input: {
   }
 }
 
+/** Build a def for a command whose markdown body is declared inline in the manifest. */
+export function inlinePluginCommand(input: {
+  readonly pluginId: string;
+  readonly name: string;
+  readonly content: string;
+  readonly description?: string;
+  readonly path: string;
+}): PluginCommandDef {
+  const body = input.content.trim();
+  return {
+    pluginId: input.pluginId,
+    name: input.name,
+    description: input.description ?? descriptionFromBody(body),
+    body,
+    path: input.path,
+  };
+}
+
 /**
  * Expand `$ARGUMENTS` placeholders in a plugin command body with the typed args.
  * If the body has no placeholder but args are present, append them so nothing

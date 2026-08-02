@@ -59,8 +59,8 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
     registerSingleton(IFoo, Foo);
     registerSingleton(IBar, Bar, InstantiationType.Delayed);
 
-    // After the VS Code alignment the registry no longer stores
-    // `InstantiationType` separately — the flag lives on the descriptor.
+    // The registry does not store `InstantiationType` separately — the flag
+    // lives on the descriptor (VS Code parity).
     const map = new Map<string, boolean>(
       getSingletonServiceDescriptors().map(([id, descriptor]) => [
         String(id),

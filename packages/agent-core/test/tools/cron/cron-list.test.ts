@@ -103,11 +103,26 @@ describe('CronListTool', () => {
 
   it('renders the empty case with a zero header and no separator', async () => {
     const { tool } = makeHarness();
-    const out = assertSuccess(await runTool(tool, {}));
+    const result = await runTool(tool, {});
+    const out = assertSuccess(result);
     expect(out).toMatchInlineSnapshot(`
       "cron_jobs: 0
       No cron jobs scheduled."
     `);
+    expect(result.display).toEqual({ key: 'toolResult.cron.listEmpty' });
+  });
+
+  it('marks only the empty list with a display ref', async () => {
+    const { manager, tool } = makeHarness();
+    manager.store.add(
+      { cron: '*/5 * * * *', prompt: 'hi', recurring: true },
+      manager.clocks.wallNow(),
+    );
+
+    // Non-empty: the record dump is model-facing data and renders raw.
+    const result = await runTool(tool, {});
+    assertSuccess(result);
+    expect(result.display).toBeUndefined();
   });
 
   it('renders a single recurring task with all expected columns', async () => {
@@ -128,6 +143,7 @@ describe('CronListTool', () => {
       cron: */5 * * * *
       humanSchedule: every 5 minutes
       prompt: "hi"
+      source: session
       nextFireAt: <iso>
       recurring: true
       ageDays: 0.00
@@ -171,6 +187,7 @@ describe('CronListTool', () => {
       cron: */5 * * * *
       humanSchedule: every 5 minutes
       prompt: "first"
+      source: session
       nextFireAt: <iso>
       recurring: true
       ageDays: 0.00
@@ -180,6 +197,7 @@ describe('CronListTool', () => {
       cron: 0 12 * * *
       humanSchedule: at 12:00 every day
       prompt: "second"
+      source: session
       nextFireAt: <iso>
       recurring: false
       ageDays: 0.00
@@ -205,6 +223,7 @@ describe('CronListTool', () => {
       cron: */5 * * * *
       humanSchedule: every 5 minutes
       prompt: "old"
+      source: session
       nextFireAt: <iso>
       recurring: true
       ageDays: 8.00
@@ -247,6 +266,7 @@ describe('CronListTool', () => {
       cron: 0 12 * * *
       humanSchedule: at 12:00 every day
       prompt: "noon"
+      source: session
       nextFireAt: <iso>
       recurring: false
       ageDays: 0.00
@@ -271,6 +291,7 @@ describe('CronListTool', () => {
       cron: garbage
       humanSchedule: garbage
       prompt: "x"
+      source: session
       nextFireAt: null
       recurring: true
       ageDays: 0.00

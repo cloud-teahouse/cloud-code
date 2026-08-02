@@ -1,12 +1,11 @@
 import {
   ErrorCodes,
-  KimiError,
-  isKimiError,
-  toKimiErrorPayload,
+  CloudCodeError,
+  isCloudCodeError,
+  toCloudCodeErrorPayload,
 } from '#/errors';
 import {
   APIEmptyResponseError,
-  inputTotal,
   isRetryableGenerateError,
   type ContentPart,
   type GenerateResult,
@@ -17,7 +16,7 @@ import {
   APIStatusError,
   createUserMessage,
   isImageFormatError,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 
 import type { Agent } from '..';
 import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
@@ -25,11 +24,9 @@ import type { ContextMessage } from '../context/types';
 import { stripDynamicToolContext } from '../context/dynamic-tools';
 import { isAbortError } from '../../loop/errors';
 import {
-  findAPIStatusError,
   retryBackoffDelays,
   sleepForRetry,
 } from '../../loop/retry';
-import { LLMRequestTraceState } from '../../loop/llm';
 import {
   renderTodoList,
   TODO_STORE_KEY,
@@ -52,7 +49,7 @@ import {
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
-import { buildCompactionSummaryText, isRealUserInput } from './handoff';
+import { buildCompactionSummaryText, formatCompactionSummary, isRealUserInput, pinnedDigestPrefixLength } from './handoff';
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
@@ -91,8 +88,6 @@ export class FullCompaction {
   // Trace id (`x-trace-id`, Kimi/KFC only) of the latest summarizer request,
   // updated on every attempt — success or failure — so a compaction cancelled
   // mid-request can still be attributed to its server-side request.
-  private lastSummarizerTraceId: string | undefined;
-  private activeSummarizerTrace: LLMRequestTraceState | undefined;
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -105,6 +100,12 @@ export class FullCompaction {
         () => this.getEffectiveMaxContextTokens(),
         {
           ...DEFAULT_COMPACTION_CONFIG,
+          triggerRatio:
+            agent.kimiConfig?.loopControl?.compactionTriggerRatio ??
+            DEFAULT_COMPACTION_CONFIG.triggerRatio,
+          blockRatio:
+            agent.kimiConfig?.loopControl?.compactionTriggerRatio ??
+            DEFAULT_COMPACTION_CONFIG.blockRatio,
           reservedContextSize:
             agent.kimiConfig?.loopControl?.reservedContextSize ??
             DEFAULT_COMPACTION_CONFIG.reservedContextSize,
@@ -114,13 +115,6 @@ export class FullCompaction {
 
   get isCompacting(): boolean {
     return this.compacting !== null;
-  }
-
-  /** Trace id (`x-trace-id`, Kimi/KFC only) of the latest summarizer request. */
-  get lastTraceId(): string | undefined {
-    return this.activeSummarizerTrace !== undefined
-      ? this.activeSummarizerTrace.traceId
-      : this.lastSummarizerTraceId;
   }
 
   getEffectiveMaxContextTokens(): number {
@@ -136,6 +130,17 @@ export class FullCompaction {
 
   estimateCurrentRequestTokens(): number {
     return this.estimateRequestTokens(this.agent.context.messages);
+  }
+
+  /**
+   * Strategy check exposed for the graduated chain (see
+   * `GraduatedCompaction.beforeStep`): should auto-compaction fire at this
+   * token count? The chain passes the EFFECTIVE count (raw minus what its
+   * cheaper layers already save), so full compaction only escalates when the
+   * projection the model would actually receive still exceeds the trigger.
+   */
+  shouldAutoCompact(usedSize: number): boolean {
+    return this.strategy.shouldCompact(usedSize);
   }
 
   shouldRecoverFromContextOverflow(
@@ -179,7 +184,7 @@ export class FullCompaction {
       return;
     }
     if (this.agent.context.history.length === 0) {
-      throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
+      throw new CloudCodeError(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
     // Manual (SDK/REST) compaction must not start while a turn is running: the
     // turn keeps mutating the context (streaming content, appending messages)
@@ -189,7 +194,7 @@ export class FullCompaction {
     // for the duration. Refuse manual compaction here so it only runs at a clean
     // boundary; the caller can retry once the turn finishes.
     if (data.source === 'manual' && this.agent.turn.hasActiveTurn) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
       );
@@ -202,6 +207,9 @@ export class FullCompaction {
       type: 'compaction.started',
       trigger: data.source,
       instruction: data.instruction,
+      // Lets clients render a bounded progress estimate during the
+      // (inherently indeterminate) summarization wait.
+      tokensBefore: this.tokenCountWithPending,
     });
     const abortController = new AbortController();
     this.compacting = {
@@ -235,12 +243,19 @@ export class FullCompaction {
     return this.agent.context.tokenCountWithPending;
   }
 
-  private estimateRequestTokens(messages: readonly Message[]): number {
+  private estimateRequestTokens(
+    messages: readonly Message[],
+    options?: { readonly includeTools?: boolean },
+  ): number {
     return (
       estimateTokens(this.agent.config.systemPrompt) +
       // Deferred tools never reach the outbound top-level tools[] (kosong
-      // generate() strips them); keep the estimate aligned with the wire.
-      estimateTokensForTools(this.agent.tools.loopTools.filter((t) => t.deferred !== true)) +
+      // generate() strips them); keep the estimate aligned with the wire. The
+      // compaction request sends no tools at all (see compactionRound), so its
+      // estimate opts out entirely.
+      (options?.includeTools === false
+        ? 0
+        : estimateTokensForTools(this.agent.tools.loopTools.filter((t) => t.deferred !== true))) +
       estimateTokensForMessages(messages)
     );
   }
@@ -251,19 +266,33 @@ export class FullCompaction {
     this.consecutiveOverflowCompactions = 0;
   }
 
-  async handleOverflowError(signal: AbortSignal, error: unknown) {
+  async handleOverflowError(
+    signal: AbortSignal,
+    error: unknown,
+    context?: { readonly drainLevelsExhausted?: number },
+  ) {
     this.consecutiveOverflowCompactions += 1;
     const maxAttempts = this.strategy.maxOverflowCompactionAttempts;
     if (this.consecutiveOverflowCompactions > maxAttempts) {
-      throw new KimiError(
+      // L3: give up with the numbers that matter for the user's next move —
+      // the observed window, the last request estimate, and how far the PTL
+      // drain chain got before handing over to full compaction.
+      const effectiveMax = this.getEffectiveMaxContextTokens();
+      const estimated = this.estimateCurrentRequestTokens();
+      const drainNote =
+        context?.drainLevelsExhausted !== undefined && context.drainLevelsExhausted > 0
+          ? `, drain levels L0-L${String(context.drainLevelsExhausted - 1)} exhausted`
+          : '';
+      throw new CloudCodeError(
         ErrorCodes.CONTEXT_OVERFLOW,
-        `Compaction failed to bring the context under the model window after ${String(maxAttempts)} attempts.`,
+        `Compaction failed to bring the context under the model window after ${String(maxAttempts)} attempts` +
+          ` (observed window ~${String(effectiveMax)} tokens, last request ~${String(estimated)} tokens${drainNote}).` +
+          ` Try /compact to compact manually, start a new session, or switch to a model alias with a larger context window.`,
         { cause: error instanceof Error ? error : undefined },
       );
     }
     const didStartCompaction = this.beginAutoCompaction();
     if (!didStartCompaction && !this.compacting) throw error;
-    // Always block on overflow errors
     await this.block(signal);
   }
 
@@ -302,7 +331,7 @@ export class FullCompaction {
     const maxCompactions = this.strategy.maxCompactionPerTurn;
     if (this.compactionCountInTurn >= maxCompactions) {
       if (throwOnLimit) {
-        throw new KimiError(ErrorCodes.CONTEXT_OVERFLOW, `Compaction limit exceeded (${String(maxCompactions)})`, {
+        throw new CloudCodeError(ErrorCodes.CONTEXT_OVERFLOW, `Compaction limit exceeded (${String(maxCompactions)})`, {
           details: { maxCompactions },
         });
       }
@@ -370,11 +399,11 @@ export class FullCompaction {
       }
       this.agent.emitEvent({
         type: 'error',
-        ...toKimiErrorPayload(error),
+        ...toCloudCodeErrorPayload(error),
       });
     } finally {
       // Replay prompts/steers deferred while compaction held the context — on the
-      // success path (after reinjection above), on an A1 prefix/tail cancel
+      // success path (after reinjection above), on a prefix/tail cancel
       // (`!result`), and on failure/abort. `compacting` is null by now in every
       // path, so the replay's launch actually starts a turn instead of re-buffering.
       this.agent.turn.onCompactionFinished();
@@ -401,14 +430,9 @@ export class FullCompaction {
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
   ): Promise<CompactionResult | undefined> {
-    const startedAt = Date.now();
     const originalHistory = [...this.agent.context.history];
     const tokensBefore = estimateTokensForMessages(originalHistory);
     let retryCount = 0;
-    // Reset per round: a failure before any response headers arrive (network
-    // error / local abort) must report no trace id, not a previous round's.
-    this.lastSummarizerTraceId = undefined;
-    this.activeSummarizerTrace = undefined;
     try {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
@@ -450,7 +474,16 @@ export class FullCompaction {
       // demand. Must happen before project() (which strips the origin
       // anchor). `originalHistory` itself stays untouched for the
       // prefix-race check and `compactedCount`.
-      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
+      //
+      // KeepPolicy pinned digests: when the history already holds a
+      // compaction summary, everything up to and including the most recent
+      // one is excluded from the summarizer input — earlier summaries are
+      // carried over verbatim by the rebuild (never re-summarized), so only
+      // the NEW range past them feeds this request.
+      const pinnedPrefixLength = pinnedDigestPrefixLength(originalHistory);
+      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(
+        originalHistory.slice(pinnedPrefixLength),
+      );
       let droppedCount = 0;
       let mediaStripAttempted = false;
       let overflowShrinkCount = 0;
@@ -467,28 +500,27 @@ export class FullCompaction {
           }),
           createUserMessage(instruction),
         ];
-        const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
+        const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages, {
+          includeTools: false,
+        });
         try {
-          const trace = new LLMRequestTraceState();
-          this.activeSummarizerTrace = trace;
           const generateOptions: GenerateOptionsWithRequestLogFields = {
             signal,
             requestLogFields: { kind: 'compaction', droppedCount },
-            onTraceId: (traceId) => {
-              trace.capture(traceId);
-            },
           };
           const response = await this.agent.generate(
             provider,
             this.agent.config.systemPrompt,
-            [...this.agent.tools.loopTools],
+            // The summarizer gets no tool table (codex's compact request does
+            // the same via its Prompt default): the instruction already
+            // forbids tool calls, and omitting the table makes that structural
+            // instead of advisory while keeping the tool schemas' tokens out
+            // of every compaction request.
+            [],
             messages,
             undefined,
             generateOptions,
           );
-          // Multi-round compaction keeps the latest round's request trace id.
-          this.lastSummarizerTraceId = response.traceId ?? undefined;
-          this.activeSummarizerTrace = undefined;
           if (response.finishReason === 'truncated') {
             throw new CompactionTruncatedError();
           }
@@ -496,12 +528,6 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          // A failed request usually still returns response headers, so its
-          // trace id rides along on the converted status error.
-          const statusError = findAPIStatusError(error);
-          if (statusError?.traceId !== null && statusError?.traceId !== undefined) {
-            this.activeSummarizerTrace?.capture(statusError.traceId);
-          }
           // A request-body-size rejection (HTTP 413) or an image-format
           // rejection is first retried with media parts replaced by text
           // markers: accumulated base64 payloads are the usual 413 culprit,
@@ -603,7 +629,7 @@ export class FullCompaction {
       }
 
       const rawSummary = this.postProcessSummary(summary ?? '');
-      const contextSummary = buildCompactionSummaryText(rawSummary);
+      const contextSummary = buildCompactionSummaryText(rawSummary, this.agent.transcriptPath);
       const result = this.agent.context.applyCompaction({
         summary: rawSummary,
         contextSummary,
@@ -620,25 +646,6 @@ export class FullCompaction {
       // of the executable table, and a from-memory call is rejected by
       // preflight with select guidance.
 
-      // Telemetry keys are snake_case, but the `context.apply_compaction`
-      // record written below keeps its persisted camelCase field names
-      // (consumed by external projectors). The two channels intentionally
-      // diverge — don't rename the record side to match.
-      this.agent.telemetry.track('compaction_finished', {
-        source: data.source,
-        tokens_before: result.tokensBefore,
-        tokens_after: result.tokensAfter,
-        duration_ms: Date.now() - startedAt,
-        compacted_count: result.compactedCount,
-        dropped_count: result.droppedCount,
-        retry_count: retryCount,
-        round: 1,
-        thinking_effort: this.agent.config.thinkingEffort,
-        trace_id: this.lastTraceId,
-        ...(usage === null
-          ? {}
-          : { input_tokens: inputTotal(usage), output_tokens: usage.output }),
-      });
       // Baseline the "nothing new since compaction" guard on the live counter
       // (== result.tokensAfter here, since nothing has been appended since
       // applyCompaction). compactionWorker raises it once more after
@@ -648,23 +655,13 @@ export class FullCompaction {
       return result;
     } catch (error) {
       if (isAbortError(error)) return undefined;
-      this.agent.telemetry.track('compaction_failed', {
-        source: data.source,
-        tokens_before: tokensBefore,
-        duration_ms: Date.now() - startedAt,
-        round: 1,
-        retry_count: retryCount,
-        thinking_effort: this.agent.config.thinkingEffort,
-        error_type: error instanceof Error ? error.name : 'Unknown',
-        trace_id: this.lastTraceId,
-      });
       if (
-        isKimiError(error) &&
+        isCloudCodeError(error) &&
         (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
           error.code === ErrorCodes.PROVIDER_AUTH_ERROR)
       )
         throw error;
-      throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
+      throw new CloudCodeError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
     }
   }
 
@@ -780,12 +777,17 @@ function dropLeadingToolResults<T extends { readonly role: string }>(messages: r
 }
 
 function extractCompactionSummary(response: GenerateResult): string {
-  const summary =
+  const text =
     typeof response.message.content === 'string'
       ? response.message.content
       : response.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 
-  if (summary.trim().length === 0) {
+  // Strip the <analysis> drafting scratchpad and unwrap <summary> tags before
+  // the summary lands in context (see formatCompactionSummary). A response
+  // that is all analysis and no summary strips down to empty and is treated
+  // like any other empty response: shrink the input and retry.
+  const summary = formatCompactionSummary(text);
+  if (summary.length === 0) {
     throw new APIEmptyResponseError(
       'The compaction response did not contain a non-empty summary.',
     );

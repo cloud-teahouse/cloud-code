@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { z } from 'zod';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, CloudCodeError } from '#/errors';
 import type { SessionIndexEntry } from '#/session/store/session-index';
 import {
   appendSessionIndexDeletion,
@@ -13,11 +13,14 @@ import {
   readSessionIndex,
 } from '#/session/store/session-index';
 import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
+import { titleFromPromptMetadataText } from '#/session/prompt-metadata';
 import {
-  promptMetadataTextFromPayload,
-  promptMetadataTextFromPluginCommand,
-  promptMetadataTextFromSkill,
-} from '#/session/prompt-metadata';
+  isUserVisibleTurnInputRecord,
+  isUserVisibleTurnRecord,
+  promptMetadataFromTurnRecord,
+  readWireLiteSummary,
+  recordTime,
+} from '#/session/store/wire-lite';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
 import {
   FileSystemAgentRecordPersistence,
@@ -120,12 +123,12 @@ export class SessionStore {
     const workDir = normalizeWorkDir(input.workDir);
     const indexed = await this.findSessionEntry(input.id);
     if (indexed !== undefined && (await isDirectory(indexed.sessionDir))) {
-      throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
+      throw new CloudCodeError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
     }
 
     const dir = await this.resolvedSessionDirFor({ id: input.id, workDir });
     if (await isDirectory(dir)) {
-      throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
+      throw new CloudCodeError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
     }
 
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -143,12 +146,12 @@ export class SessionStore {
     assertSafeSessionId(input.targetId);
     const indexed = await this.findSessionEntry(input.targetId);
     if (indexed !== undefined) {
-      throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
+      throw new CloudCodeError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
     }
 
     const targetDir = await this.resolvedSessionDirFor({ id: input.targetId, workDir: source.workDir });
     if (await isDirectory(targetDir)) {
-      throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
+      throw new CloudCodeError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
     }
 
     await mkdir(dirname(targetDir), { recursive: true, mode: 0o700 });
@@ -195,7 +198,7 @@ export class SessionStore {
   async rename(id: string, title: string): Promise<void> {
     const normalized = title.trim();
     if (normalized.length === 0) {
-      throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
+      throw new CloudCodeError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
     }
     const entry = await this.findExistingSessionEntry(id);
     const statePath = join(entry.sessionDir, 'state.json');
@@ -203,12 +206,12 @@ export class SessionStore {
     try {
       parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
     } catch (error) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
+      throw new CloudCodeError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
         cause: error,
       });
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
+      throw new CloudCodeError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
     }
     const next: Record<string, unknown> = {
       ...(parsed as Record<string, unknown>),
@@ -225,12 +228,12 @@ export class SessionStore {
     try {
       parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
     } catch (error) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
+      throw new CloudCodeError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
         cause: error,
       });
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
+      throw new CloudCodeError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
     }
     const now = new Date().toISOString();
     const next: Record<string, unknown> = {
@@ -420,7 +423,7 @@ export class SessionStore {
       if (!includeArchive && summary.archived === true) return [];
       return [summary];
     } catch (error) {
-      if (error instanceof KimiError && error.code === ErrorCodes.SESSION_NOT_FOUND) {
+      if (error instanceof CloudCodeError && error.code === ErrorCodes.SESSION_NOT_FOUND) {
         return [];
       }
       throw error;
@@ -466,7 +469,7 @@ export class SessionStore {
   private async findExistingSessionEntry(id: string): Promise<SessionIndexEntry> {
     const entry = await this.findSessionEntry(id);
     if (entry !== undefined && (await isDirectory(entry.sessionDir))) return entry;
-    throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${id}" was not found`, {
+    throw new CloudCodeError(ErrorCodes.SESSION_NOT_FOUND, `Session "${id}" was not found`, {
       details: { sessionId: id },
     });
   }
@@ -482,7 +485,7 @@ export class SessionStore {
     try {
       parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
     } catch (error) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.SESSION_STATE_NOT_FOUND,
         `Session "${input.sourceId}" state.json was not found`,
         {
@@ -491,7 +494,7 @@ export class SessionStore {
       );
     }
     if (!isRecord(parsed)) {
-      throw new KimiError(
+      throw new CloudCodeError(
         ErrorCodes.SESSION_STATE_INVALID,
         `Session "${input.sourceId}" state.json is invalid`,
       );
@@ -526,6 +529,23 @@ export class SessionStore {
       statIfExists(join(sessionDir, 'wire.jsonl')),
       latestAgentWireMtime(sessionDir),
     ]);
+    let title = titleFromState(state);
+    let lastPrompt = state?.lastPrompt;
+    if (title === undefined || lastPrompt === undefined) {
+      // state.json is missing or lacks the listing fields (foreign migration,
+      // manual deletion, pre-metadata sessions): fall back to the wire lite
+      // reader, which recovers them from the head/tail windows of the main
+      // agent's wire log without parsing the whole transcript. When state.json
+      // carries a field it stays authoritative — the lite value never
+      // overrides it.
+      const lite = await readWireLiteSummary(join(sessionDir, 'agents', 'main', 'wire.jsonl'));
+      title ??=
+        lite.title ??
+        (lite.firstPrompt === undefined
+          ? undefined
+          : titleFromPromptMetadataText(lite.firstPrompt));
+      lastPrompt ??= lite.lastPrompt;
+    }
     return {
       id,
       workDir: state?.workDir ?? workDir,
@@ -538,8 +558,8 @@ export class SessionStore {
         agentsWireMtime ?? 0,
       ),
       archived: state?.archived === true,
-      title: titleFromState(state),
-      lastPrompt: state?.lastPrompt,
+      title,
+      lastPrompt,
       metadata: metadataFromState(state),
     };
   }
@@ -577,7 +597,7 @@ async function truncateForkedSessionAtTurn(
 ): Promise<Record<string, unknown>> {
   const agents = state['agents'];
   if (!isRecord(agents) || !isRecord(agents['main'])) {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.SESSION_STATE_INVALID,
       `Session "${sourceSessionId}" has no main agent metadata`,
     );
@@ -654,7 +674,7 @@ function sliceMainRecordsAtTurn(
   }
   const start = turnStarts[turnIndex];
   if (start === undefined) {
-    throw new KimiError(
+    throw new CloudCodeError(
       ErrorCodes.REQUEST_INVALID,
       `Turn ${String(turnIndex)} was not found in session "${sourceSessionId}"`,
       { details: { turnIndex, availableTurns: turnStarts.length } },
@@ -721,65 +741,6 @@ function dropAgentsWithMissingParents(agents: Record<string, unknown>): void {
   }
 }
 
-function recordTime(record: AgentRecord): number | undefined {
-  if (typeof record.time === 'number' && Number.isFinite(record.time)) return record.time;
-  if (
-    record.type === 'metadata' &&
-    typeof record.created_at === 'number' &&
-    Number.isFinite(record.created_at)
-  ) {
-    return record.created_at;
-  }
-  return undefined;
-}
-
-function isUserVisibleTurnRecord(record: AgentRecord): boolean {
-  if (record.type !== 'context.append_message') return false;
-  const { message } = record;
-  if (message.role !== 'user') return false;
-  switch (message.origin?.kind) {
-    case undefined:
-    case 'user':
-      return true;
-    case 'skill_activation':
-    case 'plugin_command':
-      return message.origin.trigger === 'user-slash';
-    case 'shell_command':
-      return message.origin.phase === 'input';
-    case 'background_task':
-    case 'compaction_summary':
-    case 'cron_job':
-    case 'cron_missed':
-    case 'hook_result':
-    case 'injection':
-    case 'retry':
-    case 'system_trigger':
-      return false;
-  }
-}
-
-function isUserVisibleTurnInputRecord(record: AgentRecord): boolean {
-  if (record.type !== 'turn.prompt' && record.type !== 'turn.steer') return false;
-  switch (record.origin.kind) {
-    case 'user':
-      return true;
-    case 'skill_activation':
-    case 'plugin_command':
-      return record.origin.trigger === 'user-slash';
-    case 'shell_command':
-      return record.origin.phase === 'input';
-    case 'background_task':
-    case 'compaction_summary':
-    case 'cron_job':
-    case 'cron_missed':
-    case 'hook_result':
-    case 'injection':
-    case 'retry':
-    case 'system_trigger':
-      return false;
-  }
-}
-
 function turnInputIndicesThrough(
   records: readonly AgentRecord[],
   turnIndex: number,
@@ -842,31 +803,10 @@ function sameTurnOrigin(inputKind: string, messageKind: string | undefined): boo
   return inputKind === messageKind;
 }
 
-function promptMetadataFromTurnRecord(record: AgentRecord): string | undefined {
-  if (record.type !== 'context.append_message' || record.message.role !== 'user') {
-    return undefined;
-  }
-  const { message } = record;
-  if (message.origin?.kind === 'skill_activation') {
-    return promptMetadataTextFromSkill({
-      name: message.origin.skillName,
-      args: message.origin.skillArgs,
-    });
-  }
-  if (message.origin?.kind === 'plugin_command') {
-    return promptMetadataTextFromPluginCommand({
-      pluginId: message.origin.pluginId,
-      commandName: message.origin.commandName,
-      args: message.origin.commandArgs,
-    });
-  }
-  return promptMetadataTextFromPayload({ input: message.content });
-}
-
 function assertForkTurnIndex(turnIndex: number | undefined): void {
   if (turnIndex === undefined) return;
   if (Number.isSafeInteger(turnIndex) && turnIndex >= 0) return;
-  throw new KimiError(
+  throw new CloudCodeError(
     ErrorCodes.REQUEST_INVALID,
     'forkSession turnIndex must be a non-negative safe integer',
     { details: { turnIndex } },
@@ -943,7 +883,7 @@ async function readOptionalState(sessionDir: string): Promise<SessionSummaryStat
 
 function normalizeRequiredWorkDir(workDir: string): string {
   if (workDir.trim() === '') {
-    throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, 'listSessions requires workDir');
+    throw new CloudCodeError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, 'listSessions requires workDir');
   }
   return normalizeWorkDir(workDir);
 }
@@ -956,7 +896,7 @@ function normalizeForkTitle(title: string | undefined, fallback: unknown): strin
   if (title !== undefined) {
     const normalized = title.trim();
     if (normalized.length === 0) {
-      throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
+      throw new CloudCodeError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
     }
     return normalized;
   }
@@ -1026,7 +966,7 @@ function timestampOrFallback(value: number, fallback: number): number {
 
 function assertSafeSessionId(id: string): void {
   if (isSafeSessionId(id)) return;
-  throw new KimiError(ErrorCodes.SESSION_ID_INVALID, 'Session id contains unsupported path characters');
+  throw new CloudCodeError(ErrorCodes.SESSION_ID_INVALID, 'Session id contains unsupported path characters');
 }
 
 function isSafeSessionId(id: string): boolean {

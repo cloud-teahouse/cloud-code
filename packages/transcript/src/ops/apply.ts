@@ -215,9 +215,10 @@ function turnEquals(turn: TranscriptTurn, header: TurnHeader): boolean {
 }
 
 function applyStepUpsert(state: AgentState, turnId: TurnId, header: StepHeader): ApplyResult {
-  const turn = getTurn(state, turnId) ?? skeletonTurn(turnId);
+  const existingTurn = getTurn(state, turnId);
+  const turn = existingTurn ?? skeletonTurn(turnId);
   const stepIndex = turn.steps.findIndex((step) => step.stepId === header.stepId);
-  let steps: readonly TranscriptStep[];
+  let steps: TranscriptStep[];
   let changed = true;
   if (stepIndex >= 0) {
     const current = turn.steps[stepIndex];
@@ -235,8 +236,10 @@ function applyStepUpsert(state: AgentState, turnId: TurnId, header: StepHeader):
     );
   }
   if (!changed) return { state, changed: false };
-  const nextTurn: TranscriptTurn = { ...turn, steps: [...steps] };
-  const items = getTurn(state, turnId)
+  // Every path reaching here produced a fresh `steps` (the aliasing branch
+  // above returned early), so the new turn can hold it without a copy.
+  const nextTurn: TranscriptTurn = { ...turn, steps };
+  const items = existingTurn
     ? replaceTurn(state.items, turnId, () => nextTurn)
     : insertTurn(state.items, nextTurn);
   return { state: { ...state, items }, changed: true };
@@ -261,10 +264,12 @@ function applyFrameUpsert(
   state: AgentState,
   op: Extract<TranscriptOperation, { op: 'frame.upsert' }>,
 ): ApplyResult {
-  const turn = getTurn(state, op.turnId) ?? skeletonTurn(op.turnId);
-  const step = turn.steps.find((entry) => entry.stepId === op.stepId) ?? skeletonStep(op.stepId, op.turnId);
+  const existingTurn = getTurn(state, op.turnId);
+  const turn = existingTurn ?? skeletonTurn(op.turnId);
+  const existingStep = turn.steps.find((entry) => entry.stepId === op.stepId);
+  const step = existingStep ?? skeletonStep(op.stepId, op.turnId);
   const existing = step.frames.findIndex((frame) => frame.frameId === op.frame.frameId);
-  let frames: readonly TranscriptFrame[];
+  let frames: TranscriptFrame[];
   if (existing >= 0) {
     const current = step.frames[existing];
     if (current !== undefined && frameEquals(current, op.frame)) {
@@ -274,12 +279,14 @@ function applyFrameUpsert(
   } else {
     frames = [...step.frames, op.frame];
   }
-  const nextStep: TranscriptStep = { ...step, frames: [...frames] };
-  const steps = turn.steps.some((entry) => entry.stepId === op.stepId)
+  // Every path reaching here produced a fresh `frames` (the equal-frame path
+  // returned early), so the new step can hold it without a copy.
+  const nextStep: TranscriptStep = { ...step, frames };
+  const steps = existingStep !== undefined
     ? turn.steps.map((entry) => (entry.stepId === op.stepId ? nextStep : entry))
     : [...turn.steps, nextStep].toSorted((a, b) => a.ordinal - b.ordinal);
   const nextTurn: TranscriptTurn = { ...turn, steps };
-  const items = getTurn(state, op.turnId)
+  const items = existingTurn
     ? replaceTurn(state.items, op.turnId, () => nextTurn)
     : insertTurn(state.items, nextTurn);
   return {
@@ -382,7 +389,7 @@ export function appendAtOffset(
   chunk: string,
 ): { text: string; changed: boolean; gap?: { expected: number; got: number } } {
   if (offset > local.length) return { text: local, changed: false, gap: { expected: local.length, got: offset } };
-  if (local.slice(offset, offset + chunk.length) === chunk) {
+  if (local.startsWith(chunk, offset)) {
     return { text: local, changed: false };
   }
   const overlap = local.length - offset;
@@ -395,7 +402,10 @@ export function appendAtOffset(
   }
   const novel = overlap > 0 ? chunk.slice(overlap) : chunk;
   if (novel.length === 0) return { text: local, changed: false };
-  return { text: local.slice(0, offset) + chunk, changed: true };
+  // `offset === local.length` is the steady-state streaming case: the whole
+  // local text is the prefix, so skip the slice.
+  const head = offset === local.length ? local : local.slice(0, offset);
+  return { text: head + chunk, changed: true };
 }
 
 // ---------------------------------------------------------------- standalone items

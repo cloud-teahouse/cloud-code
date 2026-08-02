@@ -1,5 +1,5 @@
 /**
- * `TaskService` (Chain 8 / P1.8, W9.2) unit tests.
+ * `TaskService` unit tests.
  *
  * Hermetic: mocks `ICoreProcessService` with an in-memory `rpc` proxy. Coverage:
  *   - kind mapping (process/agent/question → bash/subagent/tool)

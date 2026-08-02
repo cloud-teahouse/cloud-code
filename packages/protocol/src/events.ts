@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { ToolInputDisplaySchema, type ToolInputDisplay } from './display';
+import {
+  ToolInputDisplaySchema,
+  toolResultDisplayRefSchema,
+  toolResultStructuredSchema,
+  type ToolInputDisplay,
+  type ToolResultDisplayRef,
+  type ToolResultStructured,
+} from './display';
 import { messageContentSchema, type MessageContent } from './message';
 import {
   sessionPendingInteractionSchema,
@@ -37,6 +44,43 @@ export interface UsageStatus {
   readonly byModel?: Record<string, TokenUsage>;
   readonly currentTurn?: TokenUsage;
   readonly total?: TokenUsage;
+  /**
+   * Latest account rate-limit snapshot captured from the provider's response
+   * headers (ChatGPT Codex `x-codex-*` family). Undefined when no snapshot
+   * has been captured this session.
+   */
+  readonly rateLimit?: RateLimitSnapshot | undefined;
+}
+
+/**
+ * Wire mirror of kosong's `RateLimitSnapshot` (same structural contract as
+ * the `TokenUsage` duplicate above): the ChatGPT Codex backend reports plan
+ * and quota state via `x-codex-*` response headers on every `/responses`
+ * reply, and this shape carries the parsed result to hosts.
+ */
+export interface RateLimitWindowSnapshot {
+  /** Percent of the window already consumed (0-100). */
+  readonly usedPercent: number;
+  /** Window length in minutes (300 = 5h, 1440 = daily, 10080 = weekly). */
+  readonly windowMinutes: number | null;
+  /** Unix seconds at which the window resets. */
+  readonly resetsAt: number | null;
+}
+
+export interface RateLimitCreditsSnapshot {
+  readonly hasCredits: boolean;
+  readonly unlimited: boolean;
+  readonly balance: string | null;
+}
+
+export interface RateLimitSnapshot {
+  readonly planType: string | null;
+  readonly activeLimit: string | null;
+  readonly primary: RateLimitWindowSnapshot | null;
+  readonly secondary: RateLimitWindowSnapshot | null;
+  readonly credits: RateLimitCreditsSnapshot | null;
+  /** Epoch milliseconds when the headers were captured. */
+  readonly capturedAt: number;
 }
 
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
@@ -142,6 +186,13 @@ export interface RetryOrigin {
   readonly trigger?: string;
 }
 
+export interface MailboxOrigin {
+  readonly kind: 'mailbox';
+  readonly teamName: string;
+  readonly from: string;
+  readonly messageId: string;
+}
+
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
@@ -155,6 +206,7 @@ export type PromptOrigin =
   | CronJobOrigin
   | CronMissedOrigin
   | HookResultOrigin
+  | MailboxOrigin
   | RetryOrigin;
 
 export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
@@ -189,6 +241,14 @@ export interface GoalSnapshot {
   readonly wallClockMs: number;
   readonly budget: GoalBudgetReport;
   readonly terminalReason?: string;
+  /**
+   * Machine form of `terminalReason` for runtime-authored stops (see
+   * {@link GoalReasonCode}). UI-only — stripped from the model-facing goal
+   * JSON (`goalForModel`).
+   */
+  readonly terminalReasonCode?: GoalReasonCode;
+  /** Opaque detail embedded in `terminalReason` (e.g. the provider error). */
+  readonly terminalReasonDetail?: string;
 }
 
 export interface GoalToolResult {
@@ -203,15 +263,44 @@ export interface GoalChangeStats {
 
 export type GoalChangeKind = 'lifecycle' | 'completion';
 
+/**
+ * Machine classification of a goal stop reason. Free-text `reason` stays
+ * the human-readable form (model- or runtime-authored); `reasonCode` lets
+ * clients localize runtime-authored reasons and recognize specific pauses
+ * (e.g. the resume-normalization pause) without matching English text.
+ */
+export type GoalReasonCode =
+  | 'interruption'
+  | 'agent_resume'
+  | 'session_resume'
+  | 'rate_limit'
+  | 'provider_connection'
+  | 'provider_auth'
+  | 'provider_api'
+  | 'model_config'
+  | 'runtime'
+  | 'provider_filtered';
+
 export interface GoalChange {
   readonly kind: GoalChangeKind;
   readonly status?: GoalStatus;
   readonly reason?: string;
+  /**
+   * Machine form of `reason` for runtime-authored stops; see
+   * {@link GoalReasonCode}. Absent for model/user-authored reasons.
+   */
+  readonly reasonCode?: GoalReasonCode;
+  /**
+   * Opaque detail (e.g. the provider error message) that `reason` embeds
+   * after the pause prefix — carried separately so localized renderings can
+   * append it to the translated reason.
+   */
+  readonly reasonDetail?: string;
   readonly stats?: GoalChangeStats;
   readonly actor?: GoalActor;
 }
 
-export type KimiErrorCode =
+export type CloudCodeErrorCode =
   | 'config.invalid'
   | 'session.not_found'
   | 'session.already_exists'
@@ -235,6 +324,7 @@ export type KimiErrorCode =
   | 'session.approval_handler_error'
   | 'session.question_handler_error'
   | 'session.init_failed'
+  | 'session.output_style_not_found'
   | 'agent.not_found'
   | 'turn.agent_busy'
   | 'goal.already_exists'
@@ -262,6 +352,7 @@ export type KimiErrorCode =
   | 'provider.api_error'
   | 'provider.filtered'
   | 'provider.rate_limit'
+  | 'provider.quota_exhausted'
   | 'provider.auth_error'
   | 'provider.connection_error'
   | 'provider.overloaded'
@@ -324,13 +415,13 @@ export type KimiErrorCode =
   | 'not_implemented'
   | 'internal';
 
-export interface KimiErrorPayload {
-  readonly code: KimiErrorCode;
+export interface CloudCodeErrorPayload {
+  readonly code: CloudCodeErrorCode;
   readonly message: string;
   readonly name?: string;
   readonly details?: Record<string, unknown>;
   readonly retryable: boolean;
-  readonly cause?: KimiErrorPayload;
+  readonly cause?: CloudCodeErrorPayload;
 }
 
 export interface TaskInfoBase {
@@ -356,6 +447,80 @@ export interface AgentTaskInfo extends TaskInfoBase {
   readonly kind: 'agent';
   readonly agentId?: string;
   readonly subagentType?: string;
+  /**
+   * Present when this task is an in-process teammate: the stable teammate
+   * identity (name, and team when spawned into one). Lets clients tell
+   * teammates apart from plain background subagents.
+   */
+  readonly teammate?: AgentTaskTeammate;
+}
+
+export interface AgentTaskTeammate {
+  readonly name: string;
+  readonly teamName?: string;
+}
+
+// ── Team / mailbox wire shapes (swarm read-only views) ────────────────
+//
+// Additive protocol surface for team viewers (TUI /teams, SDK clients): a
+// full team snapshot on every change (teams are small — one roster + one
+// shared task list per session), and one activity event per mailbox send.
+// Both are emitted by the session (agentId 'main'); member task liveness is
+// already available from AgentTaskInfo.teammate on the task events.
+
+export type TeamTaskWireStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface TeamTaskWire {
+  readonly id: number;
+  readonly subject: string;
+  readonly description?: string;
+  readonly status: TeamTaskWireStatus;
+  readonly owner?: string;
+  readonly createdBy: string;
+  readonly createdAt: number;
+}
+
+export interface TeamMemberWire {
+  readonly name: string;
+  readonly agentId: string;
+}
+
+export interface TeamWire {
+  readonly name: string;
+  readonly createdBy: string;
+  readonly members: readonly TeamMemberWire[];
+  readonly tasks: readonly TeamTaskWire[];
+}
+
+/** Mailbox envelope kinds, mirrored from the agent-core mailbox store. */
+export type MailboxMessageKind =
+  | 'message'
+  | 'task_assignment'
+  | 'shutdown_request'
+  | 'shutdown_approved'
+  | 'shutdown_rejected'
+  | 'permission_request'
+  | 'permission_response';
+
+export interface MailboxActivityMessage {
+  readonly id: string;
+  readonly teamName: string;
+  readonly from: string;
+  readonly to: string;
+  readonly kind: MailboxMessageKind;
+  /** Short single-line, UI-ready preview of the body (may be empty). */
+  readonly preview: string;
+  readonly createdAt: string;
+}
+
+export interface TeamUpdatedEvent {
+  readonly type: 'team.updated';
+  readonly team: TeamWire;
+}
+
+export interface MailboxActivityEvent {
+  readonly type: 'mailbox.activity';
+  readonly message: MailboxActivityMessage;
 }
 
 export interface QuestionTaskInfo extends TaskInfoBase {
@@ -364,10 +529,25 @@ export interface QuestionTaskInfo extends TaskInfoBase {
   readonly toolCallId?: string;
 }
 
+/**
+ * Persistent PTY shell session (ExecSession/WriteStdin, RFC
+ * `docs/rfc/unified-exec-pty.md`). Shape mirrors `ProcessTaskInfo` — the
+ * session runs a command and reports an exit code — but is a distinct kind
+ * so clients can tell "interactive session exited" apart from "background
+ * command completed".
+ */
+export interface PtySessionTaskInfo extends TaskInfoBase {
+  readonly kind: 'pty-session';
+  readonly command: string;
+  readonly pid: number;
+  readonly exitCode: number | null;
+}
+
 export type TaskInfo =
   | ProcessTaskInfo
   | AgentTaskInfo
-  | QuestionTaskInfo;
+  | QuestionTaskInfo
+  | PtySessionTaskInfo;
 
 export interface CompactionResult {
   readonly summary: string;
@@ -489,6 +669,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly coordinatorMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
@@ -589,7 +770,7 @@ export interface PluginCommandActivatedEvent {
   readonly trigger: 'user-slash';
 }
 
-export interface ErrorEvent extends KimiErrorPayload {
+export interface ErrorEvent extends CloudCodeErrorPayload {
   readonly type: 'error';
 }
 
@@ -610,7 +791,7 @@ export interface TurnEndedEvent {
   readonly type: 'turn.ended';
   readonly turnId: number;
   readonly reason: TurnEndReason;
-  readonly error?: KimiErrorPayload;
+  readonly error?: CloudCodeErrorPayload;
   readonly durationMs?: number;
 }
 
@@ -669,6 +850,27 @@ export interface TurnStepInterruptedEvent {
   readonly stepId?: string;
   readonly reason: string;
   readonly message?: string;
+}
+
+/**
+ * Foreground retry split (C1 P2): a rate-limit wait exceeded the foreground
+ * budget, so the turn ended as "failed" (provider.rate_limit, with
+ * `details.resumeAfterMs` / `details.autoResume`) and the session parked a
+ * timer to retry automatically at `resumeAtMs`. `attempt` is the consecutive
+ * pause count (1-based) used by clients to label the pause.
+ */
+export interface TurnRateLimitPausedEvent {
+  readonly type: 'turn.rate_limit_paused';
+  readonly turnId: number;
+  readonly resumeAtMs: number;
+  readonly attempt: number;
+}
+
+/** The parked auto-resume timer fired and the session is retrying the turn. */
+export interface TurnRateLimitResumingEvent {
+  readonly type: 'turn.rate_limit_resuming';
+  readonly turnId: number;
+  readonly attempt: number;
 }
 
 export interface AssistantDeltaEvent {
@@ -758,6 +960,17 @@ export interface ToolResultEvent {
   readonly output: unknown;
   readonly isError?: boolean;
   readonly synthetic?: boolean;
+  /**
+   * Localization pointer for the user-facing rendering of this result; see
+   * `ToolResultDisplayRef`. Absent for tools that only emit raw text.
+   */
+  readonly display?: ToolResultDisplayRef;
+  /**
+   * Structured outcome facts for clients that would otherwise parse
+   * `output`; see `ToolResultStructured`. Purely additive — consumers fall
+   * back to the raw output when it is absent.
+   */
+  readonly structured?: ToolResultStructured;
 }
 
 export interface SubagentSpawnedEvent {
@@ -796,12 +1009,21 @@ export interface SubagentFailedEvent {
   readonly type: 'subagent.failed';
   readonly subagentId: string;
   readonly error: string;
+  /**
+   * Machine classification of the failure. `user_cancelled` marks a
+   * deliberate user interruption, which clients previously detected by
+   * matching the English `error` text. Additive — older clients keep
+   * string-matching.
+   */
+  readonly errorKind?: 'user_cancelled';
 }
 
 export interface CompactionStartedEvent {
   readonly type: 'compaction.started';
   readonly trigger: 'manual' | 'auto';
   readonly instruction?: string;
+  /** Context size when compaction started, for client progress estimates. */
+  readonly tokensBefore?: number;
 }
 
 export interface CompactionBlockedEvent {
@@ -923,6 +1145,8 @@ export type AgentEvent =
   | TurnStepCompletedEvent
   | TurnStepRetryingEvent
   | TurnStepInterruptedEvent
+  | TurnRateLimitPausedEvent
+  | TurnRateLimitResumingEvent
   | AssistantDeltaEvent
   | HookResultEvent
   | ThinkingDeltaEvent
@@ -940,6 +1164,8 @@ export type AgentEvent =
   | SubagentSuspendedEvent
   | SubagentCompletedEvent
   | SubagentFailedEvent
+  | TeamUpdatedEvent
+  | MailboxActivityEvent
   | CompactionStartedEvent
   | CompactionBlockedEvent
   | CompactionCancelledEvent
@@ -972,10 +1198,32 @@ export const finishReasonSchema = z.enum([
   'other',
 ]) satisfies z.ZodType<FinishReason>;
 
+export const rateLimitWindowSnapshotSchema = z.object({
+  usedPercent: z.number(),
+  windowMinutes: z.number().nullable(),
+  resetsAt: z.number().nullable(),
+}) satisfies z.ZodType<RateLimitWindowSnapshot>;
+
+export const rateLimitCreditsSnapshotSchema = z.object({
+  hasCredits: z.boolean(),
+  unlimited: z.boolean(),
+  balance: z.string().nullable(),
+}) satisfies z.ZodType<RateLimitCreditsSnapshot>;
+
+export const rateLimitSnapshotSchema = z.object({
+  planType: z.string().nullable(),
+  activeLimit: z.string().nullable(),
+  primary: rateLimitWindowSnapshotSchema.nullable(),
+  secondary: rateLimitWindowSnapshotSchema.nullable(),
+  credits: rateLimitCreditsSnapshotSchema.nullable(),
+  capturedAt: z.number(),
+}) satisfies z.ZodType<RateLimitSnapshot>;
+
 export const usageStatusSchema = z.object({
   byModel: z.record(z.string(), tokenUsageSchema).optional(),
   currentTurn: tokenUsageSchema.optional(),
   total: tokenUsageSchema.optional(),
+  rateLimit: rateLimitSnapshotSchema.optional(),
 }) satisfies z.ZodType<UsageStatus>;
 
 export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']) satisfies z.ZodType<PermissionMode>;
@@ -1074,6 +1322,13 @@ export const retryOriginSchema = z.object({
   trigger: z.string().optional(),
 }) satisfies z.ZodType<RetryOrigin>;
 
+export const mailboxOriginSchema = z.object({
+  kind: z.literal('mailbox'),
+  teamName: z.string(),
+  from: z.string(),
+  messageId: z.string(),
+}) satisfies z.ZodType<MailboxOrigin>;
+
 export const promptOriginSchema = z.discriminatedUnion('kind', [
   userPromptOriginSchema,
   skillActivationOriginSchema,
@@ -1087,12 +1342,26 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   cronJobOriginSchema,
   cronMissedOriginSchema,
   hookResultOriginSchema,
+  mailboxOriginSchema,
   retryOriginSchema,
 ]) satisfies z.ZodType<PromptOrigin>;
 
 export const goalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']) satisfies z.ZodType<GoalStatus>;
 
 export const goalActorSchema = z.enum(['user', 'model', 'runtime', 'system']) satisfies z.ZodType<GoalActor>;
+
+export const goalReasonCodeSchema = z.enum([
+  'interruption',
+  'agent_resume',
+  'session_resume',
+  'rate_limit',
+  'provider_connection',
+  'provider_auth',
+  'provider_api',
+  'model_config',
+  'runtime',
+  'provider_filtered',
+]) satisfies z.ZodType<GoalReasonCode>;
 
 export const goalBudgetLimitsSchema = z.object({
   tokenBudget: z.number().optional(),
@@ -1123,6 +1392,8 @@ export const goalSnapshotSchema = z.object({
   wallClockMs: z.number(),
   budget: goalBudgetReportSchema,
   terminalReason: z.string().optional(),
+  terminalReasonCode: goalReasonCodeSchema.optional(),
+  terminalReasonDetail: z.string().optional(),
 }) satisfies z.ZodType<GoalSnapshot>;
 
 export const goalToolResultSchema = z.object({
@@ -1141,6 +1412,8 @@ export const goalChangeSchema = z.object({
   kind: goalChangeKindSchema,
   status: goalStatusSchema.optional(),
   reason: z.string().optional(),
+  reasonCode: goalReasonCodeSchema.optional(),
+  reasonDetail: z.string().optional(),
   stats: goalChangeStatsSchema.optional(),
   actor: goalActorSchema.optional(),
 }) satisfies z.ZodType<GoalChange>;
@@ -1169,6 +1442,7 @@ export const kimiErrorCodeSchema = z.enum([
   'session.approval_handler_error',
   'session.question_handler_error',
   'session.init_failed',
+  'session.output_style_not_found',
   'agent.not_found',
   'turn.agent_busy',
   'goal.already_exists',
@@ -1196,6 +1470,7 @@ export const kimiErrorCodeSchema = z.enum([
   'provider.api_error',
   'provider.filtered',
   'provider.rate_limit',
+  'provider.quota_exhausted',
   'provider.auth_error',
   'provider.connection_error',
   'provider.overloaded',
@@ -1239,9 +1514,9 @@ export const kimiErrorCodeSchema = z.enum([
   'validation.failed',
   'not_implemented',
   'internal',
-]) satisfies z.ZodType<KimiErrorCode>;
+]) satisfies z.ZodType<CloudCodeErrorCode>;
 
-export const kimiErrorPayloadSchema: z.ZodType<KimiErrorPayload> = z.lazy(
+export const kimiErrorPayloadSchema: z.ZodType<CloudCodeErrorPayload> = z.lazy(
   () => kimiErrorPayloadObjectSchema,
 );
 
@@ -1252,7 +1527,7 @@ const kimiErrorPayloadObjectSchema = z.object({
   details: z.record(z.string(), z.unknown()).optional(),
   retryable: z.boolean(),
   cause: kimiErrorPayloadSchema.optional(),
-}) satisfies z.ZodType<KimiErrorPayload>;
+}) satisfies z.ZodType<CloudCodeErrorPayload>;
 
 export const taskInfoBaseSchema = z.object({
   taskId: z.string(),
@@ -1273,10 +1548,16 @@ export const processTaskInfoSchema = taskInfoBaseSchema.extend({
   exitCode: z.number().nullable(),
 }) satisfies z.ZodType<ProcessTaskInfo>;
 
+export const agentTaskTeammateSchema = z.object({
+  name: z.string(),
+  teamName: z.string().optional(),
+}) satisfies z.ZodType<AgentTaskTeammate>;
+
 export const agentTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('agent'),
   agentId: z.string().optional(),
   subagentType: z.string().optional(),
+  teammate: agentTaskTeammateSchema.optional(),
 }) satisfies z.ZodType<AgentTaskInfo>;
 
 export const questionTaskInfoSchema = taskInfoBaseSchema.extend({
@@ -1285,10 +1566,18 @@ export const questionTaskInfoSchema = taskInfoBaseSchema.extend({
   toolCallId: z.string().optional(),
 }) satisfies z.ZodType<QuestionTaskInfo>;
 
+export const ptySessionTaskInfoSchema = taskInfoBaseSchema.extend({
+  kind: z.literal('pty-session'),
+  command: z.string(),
+  pid: z.number(),
+  exitCode: z.number().nullable(),
+}) satisfies z.ZodType<PtySessionTaskInfo>;
+
 export const taskInfoSchema = z.discriminatedUnion('kind', [
   processTaskInfoSchema,
   agentTaskInfoSchema,
   questionTaskInfoSchema,
+  ptySessionTaskInfoSchema,
 ]) satisfies z.ZodType<TaskInfo>;
 
 export const compactionResultSchema = z.object({
@@ -1389,6 +1678,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   contextUsage: z.number().optional(),
   planMode: z.boolean().optional(),
   swarmMode: z.boolean().optional(),
+  coordinatorMode: z.boolean().optional(),
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
   phase: agentPhaseSchema.optional(),
@@ -1547,6 +1837,19 @@ export const turnStepInterruptedEventSchema = z.object({
   message: z.string().optional(),
 }) satisfies z.ZodType<TurnStepInterruptedEvent>;
 
+export const turnRateLimitPausedEventSchema = z.object({
+  type: z.literal('turn.rate_limit_paused'),
+  turnId: z.number(),
+  resumeAtMs: z.number(),
+  attempt: z.number(),
+}) satisfies z.ZodType<TurnRateLimitPausedEvent>;
+
+export const turnRateLimitResumingEventSchema = z.object({
+  type: z.literal('turn.rate_limit_resuming'),
+  turnId: z.number(),
+  attempt: z.number(),
+}) satisfies z.ZodType<TurnRateLimitResumingEvent>;
+
 export const assistantDeltaEventSchema = z.object({
   type: z.literal('assistant.delta'),
   turnId: z.number(),
@@ -1619,6 +1922,8 @@ export const toolResultEventSchema = z.object({
   output: z.unknown(),
   isError: z.boolean().optional(),
   synthetic: z.boolean().optional(),
+  display: toolResultDisplayRefSchema.optional(),
+  structured: toolResultStructuredSchema.optional(),
 }) satisfies z.ZodType<ToolResultEvent>;
 
 export const subagentSpawnedEventSchema = z.object({
@@ -1657,6 +1962,7 @@ export const subagentFailedEventSchema = z.object({
   type: z.literal('subagent.failed'),
   subagentId: z.string(),
   error: z.string(),
+  errorKind: z.literal('user_cancelled').optional(),
 }) satisfies z.ZodType<SubagentFailedEvent>;
 
 export const compactionStartedEventSchema = z.object({
@@ -1749,7 +2055,7 @@ export const toolListUpdatedEventSchema = z.object({
 
 export const mcpServerStatusPayloadSchema = z.object({
   name: z.string(),
-  transport: z.enum(['stdio', 'http']),
+  transport: z.enum(['stdio', 'http', 'sse']),
   status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth']),
   toolCount: z.number(),
   error: z.string().optional(),
@@ -1759,6 +2065,58 @@ export const mcpServerStatusEventSchema = z.object({
   type: z.literal('mcp.server.status'),
   server: mcpServerStatusPayloadSchema,
 }) satisfies z.ZodType<McpServerStatusEvent>;
+
+export const teamTaskWireSchema = z.object({
+  id: z.number(),
+  subject: z.string(),
+  description: z.string().optional(),
+  status: z.enum(['pending', 'in_progress', 'completed']),
+  owner: z.string().optional(),
+  createdBy: z.string(),
+  createdAt: z.number(),
+}) satisfies z.ZodType<TeamTaskWire>;
+
+export const teamMemberWireSchema = z.object({
+  name: z.string(),
+  agentId: z.string(),
+}) satisfies z.ZodType<TeamMemberWire>;
+
+export const teamWireSchema = z.object({
+  name: z.string(),
+  createdBy: z.string(),
+  members: z.array(teamMemberWireSchema),
+  tasks: z.array(teamTaskWireSchema),
+}) satisfies z.ZodType<TeamWire>;
+
+export const teamUpdatedEventSchema = z.object({
+  type: z.literal('team.updated'),
+  team: teamWireSchema,
+}) satisfies z.ZodType<TeamUpdatedEvent>;
+
+export const mailboxMessageKindSchema = z.enum([
+  'message',
+  'task_assignment',
+  'shutdown_request',
+  'shutdown_approved',
+  'shutdown_rejected',
+  'permission_request',
+  'permission_response',
+]) satisfies z.ZodType<MailboxMessageKind>;
+
+export const mailboxActivityMessageSchema = z.object({
+  id: z.string(),
+  teamName: z.string(),
+  from: z.string(),
+  to: z.string(),
+  kind: mailboxMessageKindSchema,
+  preview: z.string(),
+  createdAt: z.string(),
+}) satisfies z.ZodType<MailboxActivityMessage>;
+
+export const mailboxActivityEventSchema = z.object({
+  type: z.literal('mailbox.activity'),
+  message: mailboxActivityMessageSchema,
+}) satisfies z.ZodType<MailboxActivityEvent>;
 
 export const agentEventSchema = z.discriminatedUnion('type', [
   errorEventSchema,
@@ -1781,6 +2139,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   turnStepCompletedEventSchema,
   turnStepRetryingEventSchema,
   turnStepInterruptedEventSchema,
+  turnRateLimitPausedEventSchema,
+  turnRateLimitResumingEventSchema,
   assistantDeltaEventSchema,
   hookResultEventSchema,
   thinkingDeltaEventSchema,
@@ -1798,6 +2158,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   subagentSuspendedEventSchema,
   subagentCompletedEventSchema,
   subagentFailedEventSchema,
+  teamUpdatedEventSchema,
+  mailboxActivityEventSchema,
   compactionStartedEventSchema,
   compactionBlockedEventSchema,
   compactionCancelledEventSchema,
@@ -1832,11 +2194,9 @@ export const eventSchema = agentEventSchema.and(
  *
  * Everything not listed here is durable: journaled, seq-bearing, replayable.
  *
- * @deprecated Use the server-side `isVolatileSignal`
- * (`packages/kap-server/src/transport/ws/v1/sessionEventBroadcaster.ts`) instead,
- * which owns volatile-vs-durable classification for the `wire` emission path.
- * The legacy `IAgentRecordService` (`record.on`) transport path still consumes
- * this until Phase 4 removes it; do not add new consumers.
+ * Consumed by the Phase 4 JSON-RPC server (`@cloud-code/server`) for
+ * backpressure classification: adjacent same-turn volatile deltas may be
+ * merged on the write queue (see §6.2 of docs/phase4/f9-protocol-design.md).
  */
 export const VOLATILE_EVENT_TYPES = [
   'assistant.delta',
@@ -1854,11 +2214,9 @@ export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
 const volatileEventTypeSet: ReadonlySet<string> = new Set(VOLATILE_EVENT_TYPES);
 
 /**
- * @deprecated Use the server-side `isVolatileSignal`
- * (`packages/kap-server/src/transport/ws/v1/sessionEventBroadcaster.ts`) instead,
- * which owns volatile-vs-durable classification for the `wire` emission path.
- * Retained only for the legacy `IAgentRecordService` (`record.on`) transport
- * path until Phase 4 removes it; do not add new consumers.
+ * Returns true for volatile event types (see {@link VOLATILE_EVENT_TYPES}).
+ * Used by the Phase 4 JSON-RPC server to decide which events may be merged
+ * under write backpressure.
  */
 export function isVolatileEventType(type: string): type is VolatileEventType {
   return volatileEventTypeSet.has(type);

@@ -2,7 +2,7 @@
  * Scenario: public config parsing, validation, TOML round-trips, and runtime overrides.
  *
  * Exercises the real config API with temporary files as the persistence
- * boundary. Run with `pnpm --filter @moonshot-ai/agent-core exec vitest run
+ * boundary. Run with `pnpm --filter @cloud-code/agent-core exec vitest run
  * test/config/configs.test.ts`.
  */
 
@@ -13,9 +13,9 @@ import { join } from 'pathe';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ErrorCodes, KimiError } from '../../src/errors';
+import { ErrorCodes, CloudCodeError } from '../../src/errors';
 import {
-  KimiConfigSchema,
+  CloudCodeConfigSchema,
   McpServerConfigSchema,
   applyPrintModeConfigDefaults,
   configToTomlData,
@@ -30,7 +30,7 @@ import {
   readConfigFileForUpdate,
   resolveConfigPath,
   resolveConfigValue,
-  resolveKimiHome,
+  resolveCloudCodeHome,
   validateConfig,
   writeConfigFile,
 } from '../../src/config';
@@ -49,12 +49,12 @@ function makeTempDir(): string {
   return dir;
 }
 
-function expectKimiErrorCode(fn: () => unknown, code: string): void {
+function expectCloudCodeErrorCode(fn: () => unknown, code: string): void {
   try {
     fn();
   } catch (error) {
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(code);
+    expect(error).toBeInstanceOf(CloudCodeError);
+    expect((error as CloudCodeError).code).toBe(code);
     return;
   }
   throw new Error('expected function to throw');
@@ -66,7 +66,6 @@ default_permission_mode = "auto"
 default_plan_mode = false
 merge_all_available_skills = true
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
-telemetry = false
 theme = "dark"
 
 [providers."managed:kimi-code"]
@@ -108,6 +107,11 @@ max_steps_per_run = 42
 max_retries_per_step = 3
 reserved_context_size = 50000
 compaction_trigger_ratio = 0.85
+streaming_tool_execution = false
+
+[behavior_reminders]
+enabled = false
+interval_turns = 40
 
 [background]
 max_running_tasks = 4
@@ -118,6 +122,10 @@ print_wait_ceiling_s = 3600
 
 [subagent]
 timeout_ms = 600000
+
+[secondary_model]
+model = "kimi-code/kimi-for-coding-fast"
+default_effort = "low"
 
 [mcp]
 startup_timeout_ms = 45000
@@ -160,7 +168,6 @@ describe('harness config TOML loader', () => {
     expect(config.defaultPlanMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
     expect(config.extraSkillDirs).toEqual(['~/team-skills', '.agents/team-skills']);
-    expect(config.telemetry).toBe(false);
     expect(config.providers['managed:kimi-code']).toMatchObject({
       type: 'kimi',
       baseUrl: 'https://api.kimi.com/coding/v1',
@@ -197,7 +204,9 @@ describe('harness config TOML loader', () => {
       maxRetriesPerStep: 3,
       reservedContextSize: 50000,
       compactionTriggerRatio: 0.85,
+      streamingToolExecution: false,
     });
+    expect(config.behaviorReminders).toEqual({ enabled: false, intervalTurns: 40 });
     expect(config.background).toMatchObject({
       maxRunningTasks: 4,
       keepAliveOnExit: false,
@@ -206,6 +215,10 @@ describe('harness config TOML loader', () => {
       printWaitCeilingS: 3600,
     });
     expect(config.subagent).toMatchObject({ timeoutMs: 600000 });
+    expect(config.secondaryModel).toEqual({
+      model: 'kimi-code/kimi-for-coding-fast',
+      defaultEffort: 'low',
+    });
     expect(config.mcp).toEqual({ startupTimeoutMs: 45000, toolTimeoutMs: 120000 });
     expect(config.image).toEqual({ maxEdgePx: 1500, readByteBudget: 131072 });
     expect(config.hooks).toEqual([
@@ -243,6 +256,345 @@ read_byte_budget = 524288
     const text = await readFile(configPath, 'utf-8');
     const roundTripped = parseConfigString(text, configPath);
     expect(roundTripped.image).toEqual({ maxEdgePx: 2500, readByteBudget: 524288 });
+  });
+
+  it('round-trips the top-level service_tier scalar', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'service-tier-round-trip.toml');
+    const config = parseConfigString('service_tier = "fast"\n', configPath);
+    expect(config.serviceTier).toBe('fast');
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('service_tier = "fast"');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.serviceTier).toBe('fast');
+
+    // "default" persists explicitly (the /fast toggle-off state).
+    const standard = parseConfigString('service_tier = "default"\n', configPath);
+    expect(standard.serviceTier).toBe('default');
+    await writeConfigFile(configPath, standard);
+    const standardText = await readFile(configPath, 'utf-8');
+    expect(standardText).toContain('service_tier = "default"');
+
+    // Absent key stays absent after a write — never persisted implicitly.
+    const unset = parseConfigString('', configPath);
+    expect(unset.serviceTier).toBeUndefined();
+    await writeConfigFile(configPath, unset);
+    const unsetText = await readFile(configPath, 'utf-8');
+    expect(unsetText).not.toContain('service_tier');
+  });
+
+  it('round-trips the top-level output_style scalar', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'output-style-round-trip.toml');
+    const config = parseConfigString('output_style = "concise"\n', configPath);
+    expect(config.outputStyle).toBe('concise');
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('output_style = "concise"');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.outputStyle).toBe('concise');
+
+    // Absent key stays absent after a write — never persisted implicitly.
+    const unset = parseConfigString('', configPath);
+    expect(unset.outputStyle).toBeUndefined();
+    await writeConfigFile(configPath, unset);
+    const unsetText = await readFile(configPath, 'utf-8');
+    expect(unsetText).not.toContain('output_style');
+  });
+
+  it('round-trips the [snapshot] section', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'snapshot-round-trip.toml');
+    const toml = `
+[snapshot]
+enabled = false
+max_file_size_bytes = 1048576
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.snapshot).toEqual({ enabled: false, maxFileSizeBytes: 1048576 });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.snapshot).toEqual({ enabled: false, maxFileSizeBytes: 1048576 });
+  });
+
+  it('round-trips the [goal] section including nested [goal.tiers.*] tables', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'goal-round-trip.toml');
+    const toml = `
+[goal]
+completion_gate = false
+evidence_lease_turns = 3
+tiered_budgets = true
+
+[goal.tiers.small]
+turns = 5
+tokens = 100000
+
+[goal.tiers.large]
+turns = 200
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.goal).toEqual({
+      completionGate: false,
+      evidenceLeaseTurns: 3,
+      tieredBudgets: true,
+      tiers: {
+        small: { turns: 5, tokens: 100_000 },
+        large: { turns: 200 },
+      },
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.goal).toEqual(config.goal);
+  });
+
+  it('round-trips the [sandbox] section', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'sandbox-round-trip.toml');
+    const toml = `
+[sandbox]
+mode = "enforce"
+network = "deny"
+writable_roots = ["/data/build", "~/.cache"]
+deny_read = ["~/secrets"]
+escalation = "never"
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.sandbox).toEqual({
+      mode: 'enforce',
+      network: 'deny',
+      writableRoots: ['/data/build', '~/.cache'],
+      denyRead: ['~/secrets'],
+      escalation: 'never',
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.sandbox).toEqual({
+      mode: 'enforce',
+      network: 'deny',
+      writableRoots: ['/data/build', '~/.cache'],
+      denyRead: ['~/secrets'],
+      escalation: 'never',
+    });
+  });
+
+  it('rejects invalid [sandbox] values and unknown top-level patch keys', () => {
+    expectCloudCodeErrorCode(
+      () => mergeConfigPatch({ providers: {} }, { sandbox: { mode: 'sometimes' } as never }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+    expectCloudCodeErrorCode(
+      () =>
+        mergeConfigPatch(
+          { providers: {} },
+          { sandbox: { mode: 'enforce' }, unknownSection: {} } as never,
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('deep-merges [sandbox] patches over an existing section', () => {
+    const base = parseConfigString(`
+[sandbox]
+mode = "enforce"
+network = "deny"
+`);
+    const merged = mergeConfigPatch(base, { sandbox: { escalation: 'never' } });
+    expect(merged.sandbox).toEqual({ mode: 'enforce', network: 'deny', escalation: 'never' });
+  });
+
+  it('round-trips the [guardian] section (F3)', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'guardian-round-trip.toml');
+    const toml = `
+[guardian]
+enabled = true
+model = "kimi-k2"
+timeout_ms = 15000
+max_consecutive_denials = 5
+max_window_denials = 12
+window_size = 40
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.guardian).toEqual({
+      enabled: true,
+      model: 'kimi-k2',
+      timeoutMs: 15000,
+      maxConsecutiveDenials: 5,
+      maxWindowDenials: 12,
+      windowSize: 40,
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.guardian).toEqual({
+      enabled: true,
+      model: 'kimi-k2',
+      timeoutMs: 15000,
+      maxConsecutiveDenials: 5,
+      maxWindowDenials: 12,
+      windowSize: 40,
+    });
+  });
+
+  it('rejects invalid [guardian] values', () => {
+    expectCloudCodeErrorCode(
+      () => mergeConfigPatch({ providers: {} }, { guardian: { timeoutMs: -1 } as never }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('round-trips the [behavior_reminders] section and merges its patches', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'behavior-reminders-round-trip.toml');
+    const toml = `
+[behavior_reminders]
+enabled = false
+interval_turns = 40
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.behaviorReminders).toEqual({ enabled: false, intervalTurns: 40 });
+
+    await writeConfigFile(configPath, config);
+    const roundTripped = parseConfigString(await readFile(configPath, 'utf-8'), configPath);
+    expect(roundTripped.behaviorReminders).toEqual({ enabled: false, intervalTurns: 40 });
+
+    // Patch merge is deep: one key updates without dropping the other.
+    const merged = mergeConfigPatch(config, { behaviorReminders: { enabled: true } });
+    expect(merged.behaviorReminders).toEqual({ enabled: true, intervalTurns: 40 });
+  });
+
+  it('round-trips the [secondary_model] section and merges its patches', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'secondary-model-round-trip.toml');
+    const toml = `
+[secondary_model]
+model = "kimi-code/kimi-for-coding-fast"
+default_effort = "low"
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.secondaryModel).toEqual({
+      model: 'kimi-code/kimi-for-coding-fast',
+      defaultEffort: 'low',
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('[secondary_model]');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.secondaryModel).toEqual({
+      model: 'kimi-code/kimi-for-coding-fast',
+      defaultEffort: 'low',
+    });
+
+    // Patch merge is deep: one key updates without dropping the other.
+    const merged = mergeConfigPatch(config, { secondaryModel: { defaultEffort: 'high' } });
+    expect(merged.secondaryModel).toEqual({
+      model: 'kimi-code/kimi-for-coding-fast',
+      defaultEffort: 'high',
+    });
+
+    // Absent section stays absent after a write — never persisted implicitly.
+    const unset = parseConfigString('', configPath);
+    expect(unset.secondaryModel).toBeUndefined();
+    await writeConfigFile(configPath, unset);
+    expect(await readFile(configPath, 'utf-8')).not.toContain('secondary_model');
+  });
+
+  it('rejects invalid [secondary_model] values', () => {
+    expectCloudCodeErrorCode(
+      () => mergeConfigPatch({ providers: {} }, { secondaryModel: { model: 42 } as never }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+    expectCloudCodeErrorCode(
+      () => mergeConfigPatch({ providers: {} }, { secondaryModel: { defaultEffort: true } as never }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('rejects invalid [behavior_reminders] values', () => {
+    expectCloudCodeErrorCode(
+      () => mergeConfigPatch({ providers: {} }, { behaviorReminders: { intervalTurns: 0 } as never }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+    expectCloudCodeErrorCode(
+      () =>
+        mergeConfigPatch({ providers: {} }, { behaviorReminders: { enabled: 'yes' } as never }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('round-trips permission.wrapper_stripping (C3 P2)', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'permission-round-trip.toml');
+    const toml = `
+[permission]
+wrapper_stripping = false
+
+[[permission.rules]]
+decision = "deny"
+scope = "user"
+pattern = "Bash(rm *)"
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.permission?.wrapperStripping).toBe(false);
+    expect(config.permission?.rules).toHaveLength(1);
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('wrapper_stripping = false');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.permission?.wrapperStripping).toBe(false);
+    expect(roundTripped.permission?.rules).toHaveLength(1);
+
+    // Default: absent from config, and patch-merge can flip it both ways.
+    const plain = parseConfigString(`[permission]\n`, configPath);
+    expect(plain.permission?.wrapperStripping).toBeUndefined();
+    const merged = mergeConfigPatch(plain, { permission: { wrapperStripping: true } });
+    expect(merged.permission?.wrapperStripping).toBe(true);
+  });
+
+  it('round-trips permission.git_mutation (C3 P3)', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'git-mutation-round-trip.toml');
+    const toml = `
+[permission]
+git_mutation = "deny"
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.permission?.gitMutation).toBe('deny');
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('git_mutation = "deny"');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.permission?.gitMutation).toBe('deny');
+
+    // Default: absent from config (gate defaults to "ask"), and
+    // patch-merge can flip it both ways.
+    const plain = parseConfigString(`[permission]\n`, configPath);
+    expect(plain.permission?.gitMutation).toBeUndefined();
+    const merged = mergeConfigPatch(plain, { permission: { gitMutation: 'allow' } });
+    expect(merged.permission?.gitMutation).toBe('allow');
+  });
+
+  it('rejects an invalid permission.git_mutation value', () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'git-mutation-invalid.toml');
+    expectCloudCodeErrorCode(
+      () => parseConfigString(`[permission]\ngit_mutation = "yolo"\n`, configPath),
+      ErrorCodes.CONFIG_INVALID,
+    );
   });
 
   it('round-trips a custom registry source field on a provider', async () => {
@@ -371,13 +723,15 @@ removed_flag = true
     expect(text).toContain('default_model = "kimi-code/kimi-for-coding"');
     expect(text).toContain('default_permission_mode = "auto"');
     expect(text).toContain('extra_skill_dirs = [ "~/team-skills", ".agents/team-skills" ]');
-    expect(text).toContain('telemetry = false');
     expect(text).not.toContain('default_yolo');
     expect(text).toContain('[[permission.rules]]');
     expect(text).toContain('pattern = "Bash(rm *)"');
     expect(text).toContain('pattern = "Read(src/**)"');
     expect(text).not.toContain('[[permission.allow]]');
     expect(text).toContain('max_steps_per_turn = 7');
+    expect(text).toContain('[behavior_reminders]');
+    expect(text).toContain('interval_turns = 40');
+    expect(text).toContain('enabled = false');
     expect(text).toContain('GOOGLE_CLOUD_PROJECT = "project-1"');
     expect(text).toContain('theme = "dark"');
     expect(text).toContain('claim_stale_after_ms = 15000');
@@ -387,6 +741,7 @@ removed_flag = true
 
     const reloaded = readConfigFile(configPath);
     expect(reloaded.loopControl?.maxStepsPerTurn).toBe(7);
+    expect(reloaded.behaviorReminders).toEqual({ enabled: false, intervalTurns: 40 });
     expect(reloaded.hooks?.[0]?.event).toBe('PreToolUse');
     expect(reloaded.raw?.['theme']).toBe('dark');
   });
@@ -398,7 +753,7 @@ removed_flag = true
     await ensureConfigFile(configPath);
 
     const text = await readFile(configPath, 'utf-8');
-    expect(text).toContain('Runtime settings for Kimi Code.');
+    expect(text).toContain('Runtime settings for Cloud Code CLI.');
     expect(text).not.toMatch(/^default_thinking =/m);
     expect(text).not.toMatch(/^default_model =/m);
 
@@ -433,12 +788,12 @@ removed_flag = true
     expect(text).not.toContain('default_permission_mode');
   });
 
-  it('rejects invalid TOML and invalid schema with KimiError(config.invalid)', () => {
-    expectKimiErrorCode(
+  it('rejects invalid TOML and invalid schema with CloudCodeError(config.invalid)', () => {
+    expectCloudCodeErrorCode(
       () => parseConfigString('[[[', 'broken.toml'),
       ErrorCodes.CONFIG_INVALID,
     );
-    expectKimiErrorCode(
+    expectCloudCodeErrorCode(
       () =>
         parseConfigString(
           `
@@ -449,7 +804,7 @@ type = "not-a-provider"
         ),
       ErrorCodes.CONFIG_INVALID,
     );
-    expectKimiErrorCode(
+    expectCloudCodeErrorCode(
       () =>
         parseConfigString(
           `
@@ -486,7 +841,7 @@ timeout = 5
   });
 
   it('rejects invalid hooks config', () => {
-    expectKimiErrorCode(
+    expectCloudCodeErrorCode(
       () =>
         parseConfigString(
           `
@@ -501,7 +856,7 @@ hooks = [{ type = "pre-tool-call", command = "echo hi" }]
 
 describe('harness config schema and patch merge', () => {
   it('accepts the empty public config and requires model context size in full configs', () => {
-    expect(KimiConfigSchema.parse({})).toEqual({ providers: {} });
+    expect(CloudCodeConfigSchema.parse({})).toEqual({ providers: {} });
     expect(() =>
       validateConfig({
         providers: {
@@ -516,7 +871,7 @@ describe('harness config schema and patch merge', () => {
 
   it('accepts the Node.js timer upper boundary for MCP timeouts', () => {
     expect(
-      KimiConfigSchema.safeParse({
+      CloudCodeConfigSchema.safeParse({
         mcp: {
           startupTimeoutMs: 2_147_483_647,
           toolTimeoutMs: 2_147_483_647,
@@ -535,7 +890,7 @@ describe('harness config schema and patch merge', () => {
 
   it('rejects MCP timeouts above the Node.js timer limit across config surfaces', () => {
     expect(
-      KimiConfigSchema.safeParse({
+      CloudCodeConfigSchema.safeParse({
         mcp: {
           startupTimeoutMs: 2_147_483_648,
           toolTimeoutMs: 2_147_483_648,
@@ -606,7 +961,7 @@ micro_compaction = false
   });
 
   it('rejects unknown fields in config patches', () => {
-    expectKimiErrorCode(
+    expectCloudCodeErrorCode(
       () => mergeConfigPatch({ providers: {} }, { theme: 'dark' } as never),
       ErrorCodes.CONFIG_INVALID,
     );
@@ -624,7 +979,7 @@ micro_compaction = false
   });
 
   it('accepts maxOutputSize on a model alias and round-trips it', () => {
-    const parsed = KimiConfigSchema.parse({
+    const parsed = CloudCodeConfigSchema.parse({
       providers: { local: { type: 'anthropic', apiKey: 'sk-test' } },
       models: {
         opus: {
@@ -642,7 +997,7 @@ micro_compaction = false
   });
 
   it('leaves maxOutputSize undefined when omitted', () => {
-    const parsed = KimiConfigSchema.parse({
+    const parsed = CloudCodeConfigSchema.parse({
       providers: { local: { type: 'anthropic', apiKey: 'sk-test' } },
       models: {
         opus: {
@@ -657,7 +1012,7 @@ micro_compaction = false
 
   it('rejects maxOutputSize <= 0', () => {
     expect(() =>
-      KimiConfigSchema.parse({
+      CloudCodeConfigSchema.parse({
         providers: { local: { type: 'anthropic', apiKey: 'sk-test' } },
         models: {
           opus: {
@@ -673,18 +1028,18 @@ micro_compaction = false
 });
 
 describe('config path env override', () => {
-  it('uses KIMI_CODE_HOME when no explicit homeDir is supplied', () => {
-    const saved = process.env['KIMI_CODE_HOME'];
+  it('uses CLOUD_CODE_HOME when no explicit homeDir is supplied', () => {
+    const saved = process.env['CLOUD_CODE_HOME'];
     try {
-      process.env['KIMI_CODE_HOME'] = '/tmp/kimi-from-env';
+      process.env['CLOUD_CODE_HOME'] = '/tmp/kimi-from-env';
 
-      expect(resolveKimiHome()).toBe('/tmp/kimi-from-env');
-      expect(resolveKimiHome('/tmp/kimi-explicit')).toBe('/tmp/kimi-explicit');
+      expect(resolveCloudCodeHome()).toBe('/tmp/kimi-from-env');
+      expect(resolveCloudCodeHome('/tmp/kimi-explicit')).toBe('/tmp/kimi-explicit');
       expect(resolveConfigPath({})).toBe('/tmp/kimi-from-env/config.toml');
       expect(resolveConfigPath({ configPath: '/tmp/custom.toml' })).toBe('/tmp/custom.toml');
     } finally {
-      if (saved === undefined) delete process.env['KIMI_CODE_HOME'];
-      else process.env['KIMI_CODE_HOME'] = saved;
+      if (saved === undefined) delete process.env['CLOUD_CODE_HOME'];
+      else process.env['CLOUD_CODE_HOME'] = saved;
     }
   });
 });
@@ -789,7 +1144,7 @@ max_context_size = 128000
     expect(result.config.providers).toEqual({});
     // The whole file is unusable: callers decide to fail startup (fileError)
     // or keep the last good config mid-run (fileWarnings).
-    expect(result.fileError).toBeInstanceOf(KimiError);
+    expect(result.fileError).toBeInstanceOf(CloudCodeError);
     expect(result.fileError?.code).toBe(ErrorCodes.CONFIG_INVALID);
     expect(result.fileError?.message).toContain('Invalid TOML');
     expect(result.fileError?.message).toContain(configPath);
@@ -932,10 +1287,10 @@ max_steps_per_turn = "nope"
       readConfigFileForUpdate(configPath);
       throw new Error('expected readConfigFileForUpdate to throw');
     } catch (error) {
-      expect(error).toBeInstanceOf(KimiError);
-      expect((error as KimiError).message).toContain('fix it first');
-      expect((error as KimiError).message).toContain('kimi doctor');
-      expect((error as KimiError).message).not.toContain('invalid_type');
+      expect(error).toBeInstanceOf(CloudCodeError);
+      expect((error as CloudCodeError).message).toContain('fix it first');
+      expect((error as CloudCodeError).message).toContain('cloudcode doctor');
+      expect((error as CloudCodeError).message).not.toContain('invalid_type');
     }
 
     const goodPath = await writeTempConfig(VALID_TOML);

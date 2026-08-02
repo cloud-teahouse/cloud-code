@@ -1,6 +1,6 @@
 import { Readable, type Writable } from 'node:stream';
 
-import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
+import type { Environment, KaosProcess } from '@cloud-code/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BashTool } from '../../src/tools/builtin/shell/bash';
@@ -75,7 +75,7 @@ describe('BashTool noninteractive env semantics', () => {
     const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
     const sessionEnv = {
       GIT_TERMINAL_PROMPT: 'configured',
-      KIMI_CODE_ENV: 'initial',
+      CLOUD_CODE_ENV: 'initial',
     };
     const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv }).withEnv(sessionEnv);
     const tool = new BashTool(kaos, '/workspace', createBackgroundManager().manager);
@@ -89,9 +89,9 @@ describe('BashTool noninteractive env semantics', () => {
 
     const firstEnv = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
     expect(firstEnv['GIT_TERMINAL_PROMPT']).toBe('configured');
-    expect(firstEnv['KIMI_CODE_ENV']).toBe('initial');
+    expect(firstEnv['CLOUD_CODE_ENV']).toBe('initial');
 
-    sessionEnv.KIMI_CODE_ENV = 'updated';
+    sessionEnv.CLOUD_CODE_ENV = 'updated';
     await executeTool(tool, {
       turnId: '0',
       toolCallId: 'tc_kaos_env_2',
@@ -101,6 +101,6 @@ describe('BashTool noninteractive env semantics', () => {
 
     const secondEnv = execWithEnv.mock.calls[1]?.[1] as Record<string, string>;
     expect(secondEnv['GIT_TERMINAL_PROMPT']).toBe('configured');
-    expect(secondEnv['KIMI_CODE_ENV']).toBe('updated');
+    expect(secondEnv['CLOUD_CODE_ENV']).toBe('updated');
   });
 });

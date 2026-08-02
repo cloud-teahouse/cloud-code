@@ -1,26 +1,21 @@
-export { KimiHarness } from '#/kimi-harness';
-export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
+export { CloudCodeHarness } from '#/cloud-code-harness';
+export type { CloudCodeHarnessRuntimeOptions } from '#/cloud-code-harness';
 export { Session } from '#/session';
-export { KimiAuthFacade } from '#/auth';
-export { createKimiHarness, SDKRpcClient, type SDKRpcClientOptions } from '#/sdk-rpc-client';
+export { CloudCodeAuthFacade } from '#/auth';
+export { createCloudCodeHarness, SDKRpcClient, type SDKRpcClientOptions } from '#/sdk-rpc-client';
+export { RemoteRpcClient, type RemoteRpcClientOptions } from '#/remote-rpc-client';
 export {
-  createKimiHarnessV2,
-  SDKRpcClientV2,
-  type SDKRpcClientV2Options,
-} from '#/sdk-rpc-client-v2';
-export {
-  createKimiConfigRpc,
-  KimiConfigRpcClient,
-  type KimiConfigRpc,
-  type KimiConfigValidationIssue,
-  type KimiConfigValidationPathSegment,
-  type ResolveKimiConfigPathInput,
-  type ValidateKimiConfigTomlInput,
+  createCloudCodeConfigRpc,
+  CloudCodeConfigRpcClient,
+  type CloudCodeConfigRpc,
+  type CloudCodeConfigValidationIssue,
+  type CloudCodeConfigValidationPathSegment,
+  type ResolveCloudCodeConfigPathInput,
+  type ValidateCloudCodeConfigTomlInput,
 } from '#/config-rpc';
 export { SDKRpcClientBase } from '#/rpc';
 export { KimiForCodingProvider } from '#/kimi-code-model-provider';
-export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
-export { removeProviderFromConfig } from '#/v2/config-mapper';
+export type { CloudCodeForCodingProviderOptions } from '#/kimi-code-model-provider';
 
 export {
   applyCatalogProvider,
@@ -46,16 +41,16 @@ export type {
 
 export {
   ErrorCodes,
-  KimiError,
-  type KimiErrorCode,
-  type KimiErrorInfo,
-  type KimiErrorOptions,
-  type KimiErrorPayload,
-  KIMI_ERROR_INFO,
-  fromKimiErrorPayload,
-  isKimiError,
-  toKimiErrorPayload,
-} from '@moonshot-ai/agent-core';
+  CloudCodeError,
+  type CloudCodeErrorCode,
+  type CloudCodeErrorInfo,
+  type CloudCodeErrorOptions,
+  type CloudCodeErrorPayload,
+  CLOUD_CODE_ERROR_INFO,
+  fromCloudCodeErrorPayload,
+  isCloudCodeError,
+  toCloudCodeErrorPayload,
+} from '@cloud-code/agent-core';
 
 // Diagnostic logging — public surface only.
 // RootLogger / getRootLogger / LoggingConfig stay inside agent-core.
@@ -65,23 +60,32 @@ export {
   log,
   redact,
   resolveGlobalLogPath,
-  resolveKimiHome,
-} from '@moonshot-ai/agent-core';
-export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agent-core';
+  resolveCloudCodeHome,
+} from '@cloud-code/agent-core';
+export type { LogContext, LogLevel, LogPayload, Logger } from '@cloud-code/agent-core';
 
 // Host-side config helpers — safe config reader + config path resolution, used
-// by hosts (e.g. the CLI's server telemetry bootstrap) that need to inspect
-// config without spinning up a full KimiCore.
-export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/agent-core';
-export { limitAgentReplayByTurns } from '@moonshot-ai/agent-core';
-export { parseAgentFileText, resolveAgentPath } from '@moonshot-ai/agent-core';
+// by hosts (e.g. the CLI's server bootstrap) that need to inspect
+// config without spinning up a full CloudCodeCore.
+export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@cloud-code/agent-core';
+export { limitAgentReplayByTurns } from '@cloud-code/agent-core';
+// Model-level fast-tier gate shared by the TUI `/fast` command and the footer
+// marker (the request-side guard lives in agent-core's applyServiceTier).
+export { isFastTierSupported } from '@cloud-code/agent-core';
+export type { FastTierModelShape, FastTierProviderShape } from '@cloud-code/agent-core';
+export { parseAgentFileText, resolveAgentPath } from '@cloud-code/agent-core';
 // The synthesized `[models]` alias a `[secondary_model]` recipe with patch
 // fields materializes at runtime — hosts filter it out of model pickers.
-export { SECONDARY_DERIVED_MODEL_ALIAS } from '@moonshot-ai/agent-core';
+export { SECONDARY_DERIVED_MODEL_ALIAS } from '@cloud-code/agent-core';
 
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
-export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
+export { installGlobalProxyDispatcher } from '@cloud-code/agent-core';
+
+// User UI-language preference bridge — the interactive host (TUI) writes it
+// at startup and on every `/language` switch; agents read it when rendering
+// the system prompt's `# Language` section. In-process hosts only.
+export { getUserLanguage, onUserLanguageChange, setUserLanguage } from '@cloud-code/agent-core';
 
 // Image compression — ingestion sites (e.g. the CLI's clipboard paste, the ACP
 // adapter) shrink oversized images while constructing the content part, before
@@ -102,18 +106,17 @@ export {
   sessionMediaOriginalsDir,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
-} from '@moonshot-ai/agent-core';
-export { ImageLimits } from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
+export { ImageLimits } from '@cloud-code/agent-core';
 export type {
   CompressImageOptions,
   CompressImageResult,
   CompressBase64Result,
   ImageCompressionCaptionInput,
-  ImageCompressionTelemetry,
-} from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
 
 // Experimental feature flags — types only. Resolved values come from
-// `KimiHarness.getExperimentalFeatures()` over RPC, not from a re-exported runtime value.
+// `CloudCodeHarness.getExperimentalFeatures()` over RPC, not from a re-exported runtime value.
 export type {
   ExperimentalFeatureState,
   ExperimentalFlagMap,
@@ -122,18 +125,18 @@ export type {
   FlagDefinitionInput,
   FlagId,
   FlagSurface,
-} from '@moonshot-ai/agent-core';
+} from '@cloud-code/agent-core';
 
 export type {
-  KimiAuthCompleteFeedbackUploadInput,
-  KimiAuthCompleteFeedbackUploadPart,
-  KimiAuthCreateFeedbackUploadUrlInput,
-  KimiAuthCreateFeedbackUploadUrlOk,
-  KimiAuthCreateFeedbackUploadUrlResult,
-  KimiAuthFeedbackUploadPart,
-  KimiAuthLoginResult,
-  KimiAuthLogoutResult,
-  KimiAuthSubmitFeedbackInput,
+  CloudCodeAuthCompleteFeedbackUploadInput,
+  CloudCodeAuthCompleteFeedbackUploadPart,
+  CloudCodeAuthCreateFeedbackUploadUrlInput,
+  CloudCodeAuthCreateFeedbackUploadUrlOk,
+  CloudCodeAuthCreateFeedbackUploadUrlResult,
+  CloudCodeAuthFeedbackUploadPart,
+  CloudCodeAuthLoginResult,
+  CloudCodeAuthLogoutResult,
+  CloudCodeAuthSubmitFeedbackInput,
 } from '#/auth';
 
 export * from '#/events';

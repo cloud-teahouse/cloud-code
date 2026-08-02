@@ -2,11 +2,11 @@
  * Shared cron test stub: lightweight Agent stub + injectable ClockSources.
  *
  * Kept out of the broader `test/agent/harness/agent.ts` because cron unit
- * tests only need three Agent surfaces (turn.hasActiveTurn, turn.steer,
- * telemetry.track) and inflating them through `testAgent()` would drag
- * kosong / records / context into every unit-level assertion.
+ * tests only need two Agent surfaces (turn.hasActiveTurn, turn.steer) and
+ * inflating them through `testAgent()` would drag kosong / records /
+ * context into every unit-level assertion.
  */
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
 import type { Agent } from '../../../../src/agent';
 import type { PromptOrigin } from '../../../../src/agent/context/types';
@@ -24,11 +24,6 @@ export const WALL_ANCHOR = 1_700_000_000_000;
 export interface SteerCall {
   readonly content: readonly ContentPart[];
   readonly origin: PromptOrigin;
-}
-
-export interface TelemetryCall {
-  readonly event: string;
-  readonly props: unknown;
 }
 
 export interface EventCall {
@@ -50,14 +45,12 @@ export interface AgentStubOptions {
 export interface AgentStub {
   readonly agent: Agent;
   readonly steerCalls: SteerCall[];
-  readonly telemetryCalls: TelemetryCall[];
   readonly eventCalls: EventCall[];
   setHasActiveTurn(v: boolean): void;
 }
 
 export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
   const steerCalls: SteerCall[] = [];
-  const telemetryCalls: TelemetryCall[] = [];
   const eventCalls: EventCall[] = [];
   let hasActiveTurn = opts.hasActiveTurn ?? false;
   // `?? 42` would collapse explicit `null` (buffered) into 42, so probe
@@ -74,14 +67,8 @@ export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
       return steerReturns;
     },
   };
-  const telemetry = {
-    track: (event: string, props: unknown) => {
-      telemetryCalls.push({ event, props });
-    },
-  };
   const agent = {
     turn,
-    telemetry,
     homedir: opts.homedir,
     emitEvent: (event: AgentEvent) => {
       eventCalls.push({ event });
@@ -90,7 +77,6 @@ export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
   return {
     agent,
     steerCalls,
-    telemetryCalls,
     eventCalls,
     setHasActiveTurn: (v: boolean) => {
       hasActiveTurn = v;

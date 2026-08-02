@@ -1,18 +1,14 @@
 /**
  * Tests for `agent/cron/manager.ts`. Uses a lightweight Agent stub
- * (see ./harness/stub) — only the three surfaces the manager touches
- * (turn.hasActiveTurn, turn.steer, telemetry.track) need to look real.
+ * (see ./harness/stub) — only the two surfaces the manager touches
+ * (turn.hasActiveTurn, turn.steer) need to look real.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 
 import { CronManager } from '../../../src/agent/cron/manager';
 import type { ClockSources } from '../../../src/tools/cron/clock';
-import {
-  CRON_FIRED,
-  CRON_MISSED,
-} from '../../../src/tools/cron/telemetry-events';
 import type { CronTask } from '../../../src/tools/cron/types';
 import {
   createAgentStub,
@@ -117,7 +113,7 @@ describe('CronManager', () => {
   });
 
   describe('handleFire — recurring', () => {
-    it('steers with cron_job origin and emits cron_fired telemetry', () => {
+    it('steers with cron_job origin and the fire envelope', () => {
       const stub = createAgentStub({ steerReturns: 7 });
       const harness = createClocks();
       const manager = new CronManager(stub.agent, {
@@ -164,20 +160,11 @@ describe('CronManager', () => {
           stale: false,
         },
       });
-
-      expect(stub.telemetryCalls.length).toBe(1);
-      const tc = stub.telemetryCalls[0]!;
-      expect(tc.event).toBe(CRON_FIRED);
-      expect(tc.props).toMatchObject({
-        recurring: true,
-        stale: false,
-        buffered: false,
-      });
     });
   });
 
   describe('handleFire — one-shot', () => {
-    it('uses recurring=false in origin and telemetry', () => {
+    it('uses recurring=false in origin', () => {
       const stub = createAgentStub();
       const harness = createClocks();
       const manager = new CronManager(stub.agent, {
@@ -210,9 +197,6 @@ describe('CronManager', () => {
       expect(text).toContain('<cron-fire ');
       expect(text).toContain('recurring="false"');
       expect(text).toContain('<prompt>\none-shot ping\n</prompt>');
-
-      const tc = stub.telemetryCalls[0]!;
-      expect(tc.props).toMatchObject({ recurring: false });
 
       // One-shot was removed from the store after fire.
       expect(manager.store.get(task.id)).toBeUndefined();
@@ -353,7 +337,6 @@ describe('CronManager', () => {
       const origin = stub.steerCalls[0]!.origin;
       if (origin.kind !== 'cron_job') throw new Error('expected cron_job');
       expect(origin.stale).toBe(true);
-      expect(stub.telemetryCalls[0]!.props).toMatchObject({ stale: true });
       // Rendered envelope carries the stale flag too.
       const text = (stub.steerCalls[0]!.content[0] as {
         type: 'text';
@@ -384,12 +367,6 @@ describe('CronManager', () => {
       expect(stub.steerCalls.length).toBe(1);
       expect(manager.store.list()).toHaveLength(0);
 
-      // A `cron_deleted` event closes the lifecycle in telemetry,
-      // symmetric with manual `CronDelete` calls.
-      const events = stub.telemetryCalls.map((c) => c.event);
-      expect(events).toContain('cron_fired');
-      expect(events).toContain('cron_deleted');
-
       // No further fires after the task is gone.
       harness.advance(6 * 60_000);
       manager.tick();
@@ -398,7 +375,7 @@ describe('CronManager', () => {
   });
 
   describe('buffered semantics', () => {
-    it('reports buffered=true on the telemetry event when steer returns null', () => {
+    it('still steers (buffering the prompt) when steer returns null', () => {
       const stub = createAgentStub({ steerReturns: null });
       const harness = createClocks();
       const manager = new CronManager(stub.agent, {
@@ -412,8 +389,8 @@ describe('CronManager', () => {
       harness.advance(6 * 60_000);
       manager.tick();
 
-      expect(stub.telemetryCalls.length).toBe(1);
-      expect(stub.telemetryCalls[0]!.props).toMatchObject({ buffered: true });
+      // The fire is handed to the steer queue, not dropped.
+      expect(stub.steerCalls.length).toBe(1);
     });
   });
 
@@ -432,7 +409,6 @@ describe('CronManager', () => {
       harness.advance(6 * 60_000);
       manager.tick();
       expect(stub.steerCalls.length).toBe(0);
-      expect(stub.telemetryCalls.length).toBe(0);
 
       // Flip back to idle and the next tick fires.
       stub.setHasActiveTurn(false);
@@ -470,10 +446,9 @@ describe('CronManager', () => {
       const manager = new CronManager(stub.agent, { pollIntervalMs: null });
       manager.handleMissed([], () => [{ type: 'text', text: 'should not run' }]);
       expect(stub.steerCalls.length).toBe(0);
-      expect(stub.telemetryCalls.length).toBe(0);
     });
 
-    it('steers cron_missed origin and emits cron_missed telemetry', () => {
+    it('steers cron_missed origin with the missed count', () => {
       const stub = createAgentStub();
       const manager = new CronManager(stub.agent, { pollIntervalMs: null });
 
@@ -504,10 +479,6 @@ describe('CronManager', () => {
       expect(call.origin.kind).toBe('cron_missed');
       if (call.origin.kind !== 'cron_missed') throw new Error('unreachable');
       expect(call.origin.count).toBe(2);
-
-      expect(stub.telemetryCalls.length).toBe(1);
-      expect(stub.telemetryCalls[0]!.event).toBe(CRON_MISSED);
-      expect(stub.telemetryCalls[0]!.props).toEqual({ count: 2 });
     });
   });
 });

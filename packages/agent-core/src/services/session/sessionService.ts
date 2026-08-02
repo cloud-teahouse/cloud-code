@@ -1,6 +1,6 @@
 import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
 import { Emitter } from '../../base/common/event';
-import { ErrorCodes, KimiError } from '../../errors';
+import { ErrorCodes, CloudCodeError } from '../../errors';
 import { isRealUserInput } from '../../agent/compaction';
 import type { AgentContextData, ContextMessage } from '../../agent/context';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '../../rpc';
@@ -22,7 +22,7 @@ import {
   type SessionWarning,
   type UndoSessionRequest,
   type UndoSessionResponse,
-} from '@moonshot-ai/protocol';
+} from '@cloud-code/protocol';
 
 import { IApprovalService } from '../approval/approval';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
@@ -36,7 +36,6 @@ import {
   SessionNotFoundError,
   SessionUndoUnavailableError,
   toProtocolSession,
-  type SessionCreateOptions,
   type SessionListQuery,
 } from './session';
 
@@ -234,7 +233,7 @@ export class SessionService extends Disposable implements ISessionService {
     }
   }
 
-  async create(input: SessionCreate, options?: SessionCreateOptions): Promise<Session> {
+  async create(input: SessionCreate): Promise<Session> {
     if (input.metadata === undefined || typeof input.metadata.cwd !== 'string') {
       throw new Error('SessionService.create: metadata.cwd is required');
     }
@@ -243,7 +242,6 @@ export class SessionService extends Disposable implements ISessionService {
       workDir: input.metadata.cwd,
       metadata: metadataForCore,
       model: input.agent_config?.model,
-      client: options?.client,
     });
     if (input.title !== undefined) {
       try {
@@ -545,7 +543,7 @@ export class SessionService extends Disposable implements ISessionService {
         count: input.count,
       });
     } catch (error) {
-      if (error instanceof KimiError && error.code === ErrorCodes.REQUEST_INVALID) {
+      if (error instanceof CloudCodeError && error.code === ErrorCodes.REQUEST_INVALID) {
         throw new SessionUndoUnavailableError(id, error.message);
       }
       throw error;

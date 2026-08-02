@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "experimentalDecorators": true
+  },
+  "include": [
+    "src",
+    "test",
+    "../agent-core/src/prompt-modules.d.ts",
+    "../agent-core/src/wasm-modules.d.ts"
+  ]
+}

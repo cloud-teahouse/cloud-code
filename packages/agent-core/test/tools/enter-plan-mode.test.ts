@@ -51,7 +51,6 @@ function makeAgent(
     },
     permission: { mode: input.mode ?? 'manual' },
     rpc: { requestApproval },
-    telemetry: { track: vi.fn() },
     emit,
   } as unknown as Agent;
   return { agent, requestApproval, emit };

@@ -13,8 +13,9 @@ import {
   APIRequestTooLargeError,
   isImageFormatError,
   isRecoverableRequestStructureError,
+  type RateLimitSnapshot,
   type TokenUsage,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
@@ -26,19 +27,26 @@ import {
   type LLMChatResponse,
   type LLMRequestTrace,
 } from './llm';
-import { chatWithRetry } from './retry';
-import { recordUnexecutedToolCalls, runToolCallBatch, type ToolCallStepContext } from './tool-call';
+import { chatWithRetry, type ForegroundRetryGate } from './retry';
+import {
+  drainInterruptedToolCalls,
+  recordUnexecutedToolCalls,
+  runToolCallBatch,
+  StreamingToolCallRunner,
+  type ToolCallStepContext,
+} from './tool-call';
 import type {
   ExecutableTool,
   LoopHooks,
   LoopMessageBuilder,
   LoopStepStopReason,
   RecordStepUsageResult,
+  ToolCall,
 } from './types';
 
 type ChatStreamingCallbacks = Pick<
   LLMChatParams,
-  'onTextDelta' | 'onThinkDelta' | 'onToolCallDelta' | 'onTextPart' | 'onThinkPart'
+  'onTextDelta' | 'onThinkDelta' | 'onToolCallDelta' | 'onToolCallReady' | 'onTextPart' | 'onThinkPart'
 >;
 
 export interface ExecuteLoopStepDeps {
@@ -72,8 +80,20 @@ export interface ExecuteLoopStepDeps {
   readonly log?: Logger | undefined;
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
+  /** See RunTurnInput.foregroundRetryGate. */
+  readonly foregroundRetryGate?: ForegroundRetryGate | undefined;
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
   readonly onRequestTrace?: (trace: LLMRequestTrace) => void;
+  /** See RunTurnInput.onRateLimit. */
+  readonly onRateLimit?: ((snapshot: RateLimitSnapshot) => void) | undefined;
+  /**
+   * Streaming tool execution: tool calls whose arguments provably complete
+   * mid-stream are validated and prepared immediately, and read-only ones
+   * start executing before the model finishes. Recorded events keep their
+   * provider order; ineligible calls take the post-stream batch path
+   * unchanged. Defaults to enabled; pass `false` for pure batch behavior.
+   */
+  readonly streamingToolExecution?: boolean | undefined;
 }
 
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
@@ -111,8 +131,11 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     log,
     currentStep,
     maxRetryAttempts,
+    foregroundRetryGate,
     recordUsage,
     onRequestTrace,
+    onRateLimit,
+    streamingToolExecution,
   } = deps;
 
   if (hooks?.beforeStep !== undefined) {
@@ -162,6 +185,13 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   });
   onRequestTrace?.(trace);
 
+  // Streaming tool execution: completed calls are fed to the runner as the
+  // provider stream proves their arguments final. The runner only advances
+  // execution start; the post-stream batch below keeps every recorded event
+  // in provider order.
+  const streamingRunner =
+    streamingToolExecution === false ? undefined : new StreamingToolCallRunner(step);
+
   const chatParams: LLMChatParams = {
     messages,
     tools: stepTools ?? [],
@@ -171,11 +201,13 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
         ? undefined
         : { projection: initialMediaProjection },
     trace,
+    onRateLimit,
     ...createChatStreamingCallbacks({
       dispatchEvent,
       turnId,
       currentStep,
       stepUuid,
+      streamingRunner,
     }),
   };
   const retryInput = {
@@ -185,6 +217,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     currentStep,
     stepUuid,
     maxAttempts: maxRetryAttempts,
+    foregroundGate: foregroundRetryGate,
     log,
   } as const;
   const chatWithMediaProjection = async (
@@ -401,7 +434,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   let effectiveStopReason: LoopStepStopReason =
     stopTurnAfterUsage && stopReason === 'tool_use' ? 'end_turn' : stopReason;
   if (effectiveStopReason === 'tool_use') {
-    const toolBatch = await runToolCallBatch(step, response);
+    const toolBatch = await runToolCallBatch(step, response, streamingRunner);
     if (toolBatch.stopTurn) effectiveStopReason = 'end_turn';
   } else if (
     (stopReason === 'paused' || stopReason === 'unknown' || stopReason === 'max_tokens') &&
@@ -415,7 +448,13 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     // keep their existing behavior (calls vanish): persisting flagged content
     // risks re-triggering the filter on every resend, and a well-formed
     // tool_use response stopped by usage recording keeps its skip behavior.
-    await recordUnexecutedToolCalls(step, response);
+    // Calls the streaming runner already started are drained with their real
+    // results instead: their arguments were provably complete.
+    if (streamingRunner?.hasEntries === true) {
+      await drainInterruptedToolCalls(step, response, streamingRunner);
+    } else {
+      await recordUnexecutedToolCalls(step, response);
+    }
   }
 
   // When a tool batch runs, it drains paired `tool.result` events even when
@@ -452,10 +491,19 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
         stopReason: effectiveStopReason,
         signal,
         llm,
+        rateLimit: response.rateLimit,
       });
       stopTurnAfterStep = stopTurnAfterStep || afterStep?.stopTurn === true;
-    } catch {
+    } catch (error) {
       // The step is already sealed; observer hooks cannot change the result.
+      // But a silently swallowed hook failure is undiagnosable — leave a
+      // trace so a broken host hook (e.g. snapshot tracking) shows up
+      // in the session log instead of just never happening.
+      log?.warn('afterStep hook threw; step result unaffected', {
+        turn_id: turnId,
+        step: currentStep,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -545,8 +593,9 @@ function createChatStreamingCallbacks(deps: {
   readonly turnId: string;
   readonly currentStep: number;
   readonly stepUuid: string;
+  readonly streamingRunner?: StreamingToolCallRunner | undefined;
 }): ChatStreamingCallbacks {
-  const { dispatchEvent, turnId, currentStep, stepUuid } = deps;
+  const { dispatchEvent, turnId, currentStep, stepUuid, streamingRunner } = deps;
 
   return {
     onTextDelta: (delta) => {
@@ -563,6 +612,15 @@ function createChatStreamingCallbacks(deps: {
         argumentsPart: delta.argumentsPart,
       });
     },
+    ...(streamingRunner === undefined
+      ? {}
+      : {
+          // Fire-and-forget by contract: the runner serializes preparation
+          // internally, so a slow approval never stalls the provider stream.
+          onToolCallReady: (toolCall: ToolCall) => {
+            streamingRunner.addReady(toolCall);
+          },
+        }),
     onTextPart: async (part) => {
       await dispatchEvent({
         type: 'content.part',

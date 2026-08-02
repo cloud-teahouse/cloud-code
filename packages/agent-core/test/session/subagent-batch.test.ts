@@ -1,5 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
-import { APIProviderRateLimitError } from '@moonshot-ai/kosong';
+import { APIProviderRateLimitError } from '@cloud-code/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -650,24 +650,24 @@ describe('resolveSwarmMaxConcurrency', () => {
 
   it('returns undefined for empty or whitespace-only values', () => {
     expect(
-      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '' }),
+      resolveSwarmMaxConcurrency({ CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY: '' }),
     ).toBeUndefined();
     expect(
-      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '   ' }),
+      resolveSwarmMaxConcurrency({ CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY: '   ' }),
     ).toBeUndefined();
   });
 
   it('throws for non-positive, non-integer, or non-numeric values', () => {
     for (const raw of ['0', '-1', '2.5', 'abc']) {
       expect(() =>
-        resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: raw }),
-      ).toThrow(/KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY.*positive integer/);
+        resolveSwarmMaxConcurrency({ CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY: raw }),
+      ).toThrow(/CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY.*positive integer/);
     }
   });
 
   it('returns the integer for a positive integer value', () => {
-    expect(resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '3' })).toBe(3);
-    expect(resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: ' 8 ' })).toBe(8);
+    expect(resolveSwarmMaxConcurrency({ CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY: '3' })).toBe(3);
+    expect(resolveSwarmMaxConcurrency({ CLOUD_CODE_AGENT_SWARM_MAX_CONCURRENCY: ' 8 ' })).toBe(8);
   });
 });
 

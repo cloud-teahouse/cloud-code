@@ -4,7 +4,13 @@
  * Wiring: real Anthropic adapter with only the remote SDK client boundary replaced by mocks.
  * Run: pnpm exec vitest run packages/kosong/test/anthropic.test.ts
  */
-import { ChatProviderError } from '#/errors';
+import {
+  ChatProviderError,
+  isImageFormatError,
+  isRetryableGenerateError,
+  isVideoFormatError,
+} from '#/errors';
+import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { AnthropicChatProvider, resolveDefaultMaxTokens } from '#/providers/anthropic';
 import { matchKnownAnthropicModelProfile, matchUnknownClaudeProfile, LATEST_OPUS_PROFILE } from '#/providers/anthropic-profile';
@@ -1001,6 +1007,61 @@ describe('AnthropicChatProvider', () => {
         },
       ];
       await expect(captureRequestBody(provider, '', [], history)).rejects.toThrow(ChatProviderError);
+    });
+
+    it('image media rejection truncates the data URL payload in the error message', async () => {
+      const provider = createProvider();
+      const payload = 'A'.repeat(4096);
+      const url = `data:image/avif;base64,${payload}`;
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url } }] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      let caught: unknown;
+      try {
+        await captureRequestBody(provider, '', [], history);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ChatProviderError);
+      const message = (caught as ChatProviderError).message;
+      // The full base64 payload must not flow into logs/WAL via the message;
+      // a bounded prefix plus the size is enough to locate the offender.
+      expect(message).not.toContain(payload);
+      expect(message).toContain(`${url.slice(0, 64)}…(${String(url.length)} bytes)`);
+      // The static wording survives truncation, so the format-error
+      // classification (media-stripped resend / retry exclusion) still fires.
+      expect(isImageFormatError(caught)).toBe(true);
+    });
+
+    it('video media rejection truncates the payload and stays non-retryable', async () => {
+      const provider = createProvider();
+      const payload = 'B'.repeat(4096);
+      const url = `data:video/x-ms-wmv;base64,${payload}`;
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [{ type: 'video_url', videoUrl: { url } }] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      let caught: unknown;
+      try {
+        await captureRequestBody(provider, '', [], history);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ChatProviderError);
+      const message = (caught as ChatProviderError).message;
+      expect(message).not.toContain(payload);
+      expect(message).toContain(`${url.slice(0, 64)}…(${String(url.length)} bytes)`);
+      // Deterministic client-side rejection: retrying the identical request
+      // would only burn the retry budget (and re-log the payload).
+      expect(isVideoFormatError(caught)).toBe(true);
+      expect(isRetryableGenerateError(caught)).toBe(false);
     });
 
     it('tool result with video content', async () => {
@@ -3270,7 +3331,6 @@ describe('AnthropicChatProvider', () => {
       await collectParts(result);
 
       expect(createFn).toHaveBeenCalledTimes(1);
-      // Verify stream: false is in the params
       const params = createFn.mock.calls[0]![0] as Record<string, unknown>;
       expect(params['stream']).toBe(false);
     });
@@ -3567,5 +3627,87 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     const body = await captureRequestBody(provider, '', [], history);
 
     expect(body['max_tokens']).toBe(128000);
+  });
+});
+
+describe('F8 defensive wire layer (generate() path)', () => {
+  const TRUNCATED_ARGS_HISTORY: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'go' }], toolCalls: [] },
+    {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'writing the file' }],
+      toolCalls: [
+        {
+          type: 'function',
+          id: 'call_write',
+          name: 'Write',
+          arguments: '{"path":"/tmp/a","content":"hello wor',
+        },
+      ],
+    },
+    {
+      role: 'tool',
+      content: [{ type: 'text', text: 'written' }],
+      toolCalls: [],
+      toolCallId: 'call_write',
+    },
+    { role: 'user', content: [{ type: 'text', text: 'next' }], toolCalls: [] },
+  ];
+
+  it('repairs truncated tool-call arguments instead of throwing client-side', async () => {
+    let captured: Record<string, unknown> | undefined;
+    const create = vi.fn().mockImplementation((params: unknown) => {
+      captured = params as Record<string, unknown>;
+      return Promise.resolve(makeAnthropicResponse());
+    });
+    const provider = new AnthropicChatProvider({
+      model: 'k25',
+      apiKey: '',
+      defaultMaxTokens: 1024,
+      stream: false,
+      clientFactory: () => ({ messages: { create }, beta: { messages: { create } } }) as never,
+    });
+    const repairs: string[] = [];
+
+    // The blind spot this pins: convertMessage used to hard-throw
+    // ChatProviderError on the truncated JSON before the request was ever
+    // dispatched, bypassing every retry/fallback chain and wedging the
+    // session. Through generate() the defensive wire layer closes the
+    // arguments first.
+    const result = await generate(provider, 'sys', [], TRUNCATED_ARGS_HISTORY, undefined, {
+      onNormalizeRepair: (kind) => {
+        repairs.push(kind);
+      },
+    });
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'Hello' }]);
+    expect(repairs).toEqual(['arguments_closed']);
+    const messages = captured?.['messages'] as Array<{ role: string; content: unknown[] }>;
+    const assistant = messages.find((message) => message.role === 'assistant')!;
+    const toolUse = (assistant.content as Array<{ type: string; input?: unknown }>).find(
+      (block) => block.type === 'tool_use',
+    )!;
+    expect(toolUse.input).toEqual({ path: '/tmp/a', content: 'hello wor' });
+    // Copy-on-write: the caller's history keeps the truncated arguments.
+    expect(TRUNCATED_ARGS_HISTORY[1]!.toolCalls[0]!.arguments).toBe(
+      '{"path":"/tmp/a","content":"hello wor',
+    );
+  });
+
+  it('keeps the direct provider.generate() throw as the last assertion for non-generate() callers', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'k25',
+      apiKey: '',
+      defaultMaxTokens: 1024,
+      stream: false,
+      clientFactory: () =>
+        ({
+          messages: { create: vi.fn().mockResolvedValue(makeAnthropicResponse()) },
+          beta: { messages: { create: vi.fn() } },
+        }) as never,
+    });
+    await expect(provider.generate('sys', [], TRUNCATED_ARGS_HISTORY)).rejects.toThrow(
+      ChatProviderError,
+    );
   });
 });

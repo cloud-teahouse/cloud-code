@@ -10,7 +10,7 @@ import { readSessionIndex } from '../../session/store/session-index';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
 
-import type { Workspace } from '@moonshot-ai/protocol';
+import type { Workspace } from '@cloud-code/protocol';
 
 import { ILogService } from '../logger/logger';
 import {
@@ -148,7 +148,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       );
     }
 
-    return result.sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
+    return result.toSorted((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
   }
 
   async get(workspaceId: string): Promise<Workspace> {
@@ -166,12 +166,12 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     let stat: Stats;
     try {
       stat = await fsp.stat(root);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ENOTDIR') {
         throw new WorkspaceRootNotFoundError(root);
       }
-      throw err;
+      throw error;
     }
     if (!stat.isDirectory()) {
       throw new WorkspaceRootNotFoundError(root);
@@ -459,10 +459,10 @@ async function countActiveSessions(dir: string): Promise<number> {
   let dirents;
   try {
     dirents = await fsp.readdir(dir, { withFileTypes: true });
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return 0;
-    throw err;
+    throw error;
   }
   let count = 0;
   for (const d of dirents) {

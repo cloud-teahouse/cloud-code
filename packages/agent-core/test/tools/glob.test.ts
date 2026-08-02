@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 
-import { LocalKaos } from '@moonshot-ai/kaos';
-import type { Kaos, KaosProcess, StatResult } from '@moonshot-ai/kaos';
+import { LocalKaos } from '@cloud-code/kaos';
+import type { Kaos, KaosProcess, StatResult } from '@cloud-code/kaos';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -18,7 +18,6 @@ import { ensureRgPath } from '../../src/tools/support/rg-locator';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
-import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 
 vi.mock('../../src/tools/support/rg-locator', () => ({
   ensureRgPath: vi.fn(async () => ({ path: '/mock/rg', source: 'system-path' })),
@@ -107,26 +106,6 @@ describe('GlobTool', () => {
     // are always files-only regardless of its value.
     expect(schema.properties).toHaveProperty('include_dirs');
     expect(schema.properties['include_dirs']?.description?.toLowerCase()).toContain('deprecated');
-  });
-
-  it('tracks when glob uses a non-system ripgrep fallback', async () => {
-    vi.mocked(ensureRgPath).mockResolvedValueOnce({
-      path: '/mock/rg',
-      source: 'share-bin-downloaded',
-    });
-    const records: TelemetryRecord[] = [];
-    const exec = execReturning('/workspace/src/a.ts\n');
-    const tool = new GlobTool(kaosWithExec(exec), workspace, recordingTelemetry(records));
-
-    const result = await executeTool(tool, context({ pattern: 'src/**/*.ts', path: '/workspace' }));
-
-    expect(result.output).toBe('src/a.ts');
-    expect(records).toEqual([
-      {
-        event: 'glob_tool_rg_fallback',
-        properties: { source: 'share-bin-downloaded', outcome: 'resolved' },
-      },
-    ]);
   });
 
   it('injects the Windows path hint into the description on a win32 backend', () => {

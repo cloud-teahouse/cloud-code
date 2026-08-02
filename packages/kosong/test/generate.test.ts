@@ -731,6 +731,134 @@ describe('generate()', () => {
     ]);
   });
 
+  it('onToolCallReady fires at the mid-stream merge boundary with accumulated arguments', async () => {
+    const stream = createMockStream([
+      {
+        type: 'function',
+        id: 'tc-1',
+        name: 'get_weather', arguments: null,
+      },
+      { type: 'tool_call_part', argumentsPart: '{"city":' },
+      { type: 'tool_call_part', argumentsPart: '"Beijing"}' },
+      // A second header closes tc-1 mid-stream: ready must fire here with
+      // the arguments accumulated so far.
+      {
+        type: 'function',
+        id: 'tc-2',
+        name: 'get_time', arguments: null,
+      },
+      { type: 'tool_call_part', argumentsPart: '{"tz":"CST"}' },
+    ]);
+    const provider = createMockProvider(stream);
+
+    const ready: ToolCall[] = [];
+    const result = await generate(provider, '', [], [], {
+      onToolCallReady: (tc) => {
+        ready.push(structuredClone(tc));
+      },
+    });
+
+    expect(ready).toEqual([
+      {
+        type: 'function',
+        id: 'tc-1',
+        name: 'get_weather', arguments: '{"city":"Beijing"}',
+      },
+    ]);
+    expect(ready[0]).not.toHaveProperty('_streamIndex');
+    // The final message is unaffected: both calls land in order.
+    expect(result.message.toolCalls.map((tc) => tc.id)).toEqual(['tc-1', 'tc-2']);
+  });
+
+  it('onToolCallReady does not fire for the last pending call flushed at stream end', async () => {
+    const stream = createMockStream([
+      {
+        type: 'function',
+        id: 'tc-only',
+        name: 'get_weather', arguments: null,
+      },
+      { type: 'tool_call_part', argumentsPart: '{"city":"Beijing"}' },
+    ]);
+    const provider = createMockProvider(stream);
+
+    const ready: ToolCall[] = [];
+    const onToolCall: ToolCall[] = [];
+    await generate(provider, '', [], [], {
+      onToolCallReady: (tc) => {
+        ready.push(tc);
+      },
+      onToolCall: (tc) => {
+        onToolCall.push(tc);
+      },
+    });
+
+    // A stream-end flush cannot distinguish a complete call from one cut
+    // mid-arguments, so the final call reports only through onToolCall.
+    expect(ready).toHaveLength(0);
+    expect(onToolCall.map((tc) => tc.id)).toEqual(['tc-only']);
+  });
+
+  it('onToolCallReady fires when a following text part closes a tool call', async () => {
+    const stream = createMockStream([
+      {
+        type: 'function',
+        id: 'tc-1',
+        name: 'get_weather', arguments: null,
+      },
+      { type: 'tool_call_part', argumentsPart: '{"city":"Beijing"}' },
+      { type: 'text', text: 'Let me check that.' },
+    ]);
+    const provider = createMockProvider(stream);
+
+    const ready: ToolCall[] = [];
+    await generate(provider, '', [], [], {
+      onToolCallReady: (tc) => {
+        ready.push(tc);
+      },
+    });
+
+    expect(ready.map((tc) => tc.id)).toEqual(['tc-1']);
+  });
+
+  it('onToolCallReady delivers an at-flush snapshot isolated from later stream state', async () => {
+    // Pathological interleave (non-conforming provider): tc-1 is flushed by
+    // tc-2's header, then a late delta routes back into tc-1's stored call.
+    // The ready snapshot keeps the at-flush arguments; the final message
+    // keeps the fully-routed ones.
+    const stream = createMockStream([
+      {
+        type: 'function',
+        id: 'tc-1',
+        name: 'tool_a', arguments: null,
+        _streamIndex: 0,
+      },
+      {
+        type: 'function',
+        id: 'tc-2',
+        name: 'tool_b', arguments: null,
+        _streamIndex: 1,
+      },
+      { type: 'tool_call_part', argumentsPart: '{"x":1}', index: 0 },
+      { type: 'tool_call_part', argumentsPart: '{"y":2}', index: 1 },
+    ]);
+    const provider = createMockProvider(stream);
+
+    const ready: ToolCall[] = [];
+    const result = await generate(provider, '', [], [], {
+      onToolCallReady: (tc) => {
+        ready.push(tc);
+      },
+    });
+
+    expect(ready).toHaveLength(1);
+    expect(ready[0]?.id).toBe('tc-1');
+    expect(ready[0]?.arguments).toBe(null);
+    expect(result.message.toolCalls.map((tc) => tc.arguments)).toEqual([
+      '{"x":1}',
+      '{"y":2}',
+    ]);
+  });
+
   it('pre-aborted signal does not call provider.generate', async () => {
     let calledGenerate = false;
     const provider: ChatProvider = {

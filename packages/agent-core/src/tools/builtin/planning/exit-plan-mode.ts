@@ -10,6 +10,8 @@ import type { Agent } from '#/agent';
 import type { PlanData } from '#/agent/plan';
 import { z } from 'zod';
 
+import type { ExitPlanModeStructured } from '@cloud-code/protocol';
+
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type { ToolInputDisplay } from '../../display';
@@ -117,21 +119,18 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     return display;
   }
 
-  private async execution(args: ExitPlanModeInput): Promise<ExecutableToolResult> {
+  private async execution(_args: ExitPlanModeInput): Promise<ExecutableToolResult> {
     if (!this.agent.planMode.isActive) {
       return {
         isError: true,
         output:
           'ExitPlanMode can only be called while plan mode is active. Use EnterPlanMode (or /plan) first.',
+        display: { key: 'toolResult.exitPlanMode.notInPlanMode' },
       };
     }
 
     const resolvedPlan = await this.resolvePlan();
     if (!resolvedPlan.ok) return resolvedPlan.error;
-
-    this.agent.telemetry.track('plan_submitted', {
-      has_options: args.options !== undefined && args.options.length >= 2,
-    });
 
     const failed = this.exitPlanMode();
     if (failed !== undefined) return failed;
@@ -144,17 +143,17 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     // session allow/ask rule — an explicit user decision that keeps the
     // user-approved wording.
     if (this.agent.permission.mode === 'auto') {
-      this.agent.telemetry.track('plan_resolved', { outcome: 'auto_approved' });
       return {
         isError: false,
         output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+        structured: exitPlanModeStructured('auto_approved', resolvedPlan.path),
       };
     }
 
-    this.agent.telemetry.track('plan_resolved', { outcome: 'approved' });
     return {
       isError: false,
       output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      structured: exitPlanModeStructured('approved', resolvedPlan.path),
     };
   }
 
@@ -166,6 +165,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
       return {
         isError: true,
         output: `Failed to exit plan mode: ${message}`,
+        display: { key: 'toolResult.exitPlanMode.exitFailed', params: { error: message } },
       };
     }
   }
@@ -179,7 +179,11 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
       const message = error instanceof Error ? error.message : 'Failed to read plan file.';
       return {
         ok: false,
-        error: { isError: true, output: `Failed to read plan file: ${message}` },
+        error: {
+          isError: true,
+          output: `Failed to read plan file: ${message}`,
+          display: { key: 'toolResult.exitPlanMode.readFailed', params: { error: message } },
+        },
       };
     }
 
@@ -194,13 +198,19 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     const path = source?.path ?? this.agent.planMode.planFilePath;
     return {
       ok: false,
-      error: {
-        isError: true,
-        output:
-          path === null
-            ? 'No plan file found. Write the plan to the current plan file first, then call ExitPlanMode.'
-            : `No plan file found. Write your plan to ${path} first, then call ExitPlanMode.`,
-      },
+      error:
+        path === null
+          ? {
+              isError: true,
+              output:
+                'No plan file found. Write the plan to the current plan file first, then call ExitPlanMode.',
+              display: { key: 'toolResult.exitPlanMode.noPlanFile' },
+            }
+          : {
+              isError: true,
+              output: `No plan file found. Write your plan to ${path} first, then call ExitPlanMode.`,
+              display: { key: 'toolResult.exitPlanMode.noPlanFileAtPath', params: { path } },
+            },
     };
   }
 }
@@ -221,6 +231,13 @@ function hasNoReservedOptionLabels(options: readonly ExitPlanModeOption[]): bool
 
 function normalizeOptionLabel(label: string): string {
   return label.trim().toLowerCase();
+}
+
+function exitPlanModeStructured(
+  outcome: ExitPlanModeStructured['outcome'],
+  path: string | undefined,
+): ExitPlanModeStructured {
+  return path === undefined ? { outcome } : { outcome, path };
 }
 
 function formatAutoApprovedPlanForOutput(plan: string, path: string | undefined): string {

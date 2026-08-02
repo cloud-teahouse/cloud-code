@@ -1,4 +1,4 @@
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@cloud-code/kosong';
 import { estimateTokensForMessage } from '../../utils/tokens';
 import type { PromptOrigin } from '../context/types';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
@@ -76,6 +76,7 @@ export function compactionUserMessageDisposition(
     case 'cron_job':
     case 'cron_missed':
     case 'hook_result':
+    case 'mailbox':
     case 'retry':
       return 'drop';
     default: {
@@ -98,6 +99,39 @@ function extractText(content: readonly ContentPart[]): string {
 
 export function isCompactionSummaryMessage(message: MessageLike): boolean {
   return message.origin?.kind === 'compaction_summary';
+}
+
+/**
+ * KeepPolicy pinned-digest prefix: the length of the leading history segment
+ * that a repeated full compaction must carry over byte-for-byte — everything
+ * up to and including the MOST RECENT compaction summary (kept user messages,
+ * any elision marker, and every earlier summary). 0 when the history has
+ * never been compacted. Digests accumulate and are never re-summarized, so
+ * after the first compaction this prefix stays stable across later ones; only
+ * the range past it feeds the next summarizer input and user-message
+ * selection.
+ */
+export function pinnedDigestPrefixLength(messages: readonly MessageLike[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (isCompactionSummaryMessage(messages[i]!)) return i + 1;
+  }
+  return 0;
+}
+
+/**
+ * KeepPolicy.KeepUserMarked: a user message carrying an explicit keep marker
+ * (`[[keep]]`, `[keep]`, `<keep>`, or `<!-- keep -->`, case-insensitive)
+ * anywhere in its text is never elided by full compaction — the user wrote
+ * the marker precisely to pin the message across context rewrites.
+ */
+const USER_KEEP_MARKER_PATTERN = /\[\[keep\]\]|\[keep\]|<keep>|<!--\s*keep\s*-->/i;
+
+export function hasUserKeepMarker(message: MessageLike): boolean {
+  if (message.role !== 'user') return false;
+  for (const part of message.content) {
+    if (part.type === 'text' && USER_KEEP_MARKER_PATTERN.test(part.text)) return true;
+  }
+  return false;
 }
 
 /**
@@ -253,6 +287,13 @@ export interface CompactionUserSelection<T> {
  * into the beginning of the same message whose end anchors the tail, so a
  * single oversized message still keeps both its start and its most recent
  * part.
+ *
+ * KeepPolicy.KeepUserMarked: messages with a `[[keep]]`-family marker (see
+ * `hasUserKeepMarker`) are pinned — kept verbatim, untruncated, and free of
+ * the budget. The unmarked remainder is head/tail-selected within the budget
+ * left over, and the merged kept set preserves the original message order
+ * with the single elision marker still landing between the oldest kept
+ * cluster and the most recent one.
  */
 export function selectCompactionUserMessages<T extends MessageLike>(
   messages: readonly T[],
@@ -267,6 +308,88 @@ export function selectCompactionUserMessages<T extends MessageLike>(
     return { head: [], tail: [...messages], elided: false, omittedTokens: 0 };
   }
 
+  // Pinned messages leave the pool entirely; the unmarked remainder is
+  // selected within the budget they do not consume.
+  const pinnedIndices: number[] = [];
+  let pinnedTokens = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (!hasUserKeepMarker(messages[i]!)) continue;
+    pinnedIndices.push(i);
+    pinnedTokens += estimateTokensForMessage(messages[i]!);
+  }
+  if (pinnedIndices.length > 0) {
+    const unpinned = messages.filter((_, index) => !pinnedIndices.includes(index));
+    const remainingBudget = Math.max(0, maxTokens - pinnedTokens);
+    const sub = selectCompactionUserMessages(
+      unpinned,
+      remainingBudget,
+      Math.min(Math.max(headTokens, 0), remainingBudget),
+    );
+    return mergePinnedSelection(messages, pinnedIndices, unpinned, sub);
+  }
+
+  return selectWithinBudget(messages, maxTokens, headTokens, totalTokens);
+}
+
+/**
+ * Merge a head/tail selection over the unmarked messages with the pinned
+ * keep-marked ones, preserving original order. Kept unmarked messages are
+ * matched back to their original index by position (head members are the
+ * first `sub.head.length` unmarked ones, tail members the last
+ * `sub.tail.length`), because the sub-selection may have replaced boundary
+ * messages with truncated copies. The merged kept set is then split back into
+ * head/tail at the oldest unmarked tail message, so the single elision marker
+ * the caller inserts still separates "the oldest kept input" (including
+ * pinned messages that sat inside the dropped middle) from "the most recent".
+ * Everything dropped was unmarked, so `sub.omittedTokens` carries over
+ * unchanged.
+ */
+function mergePinnedSelection<T extends MessageLike>(
+  messages: readonly T[],
+  pinnedIndices: readonly number[],
+  unpinned: readonly T[],
+  sub: CompactionUserSelection<T>,
+): CompactionUserSelection<T> {
+  const pinned = new Set(pinnedIndices);
+  const headCount = sub.head.length;
+  const tailCount = sub.tail.length;
+  const unmarkedTotal = unpinned.length;
+  const head: T[] = [];
+  const tail: T[] = [];
+  // Index of the oldest unmarked message with a tail piece in `messages`;
+  // pinned messages at or past it join the tail segment. Undefined when the
+  // tail is empty — the marker then lands at the end of the kept set.
+  let tailStartIndex: number | undefined;
+  let unmarkedSeen = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (pinned.has(i)) {
+      (tailStartIndex === undefined ? head : tail).push(messages[i]!);
+      continue;
+    }
+    const unmarkedPosition = unmarkedSeen;
+    unmarkedSeen += 1;
+    // Independent branches, not if/else: the boundary message may contribute
+    // its BEGINNING to the head and its END to the tail at once (the
+    // head/tail split extends into the same message), so one original index
+    // can emit into both segments.
+    if (unmarkedPosition < headCount) {
+      head.push(sub.head[unmarkedPosition]!);
+    }
+    if (unmarkedPosition >= unmarkedTotal - tailCount) {
+      tailStartIndex ??= i;
+      tail.push(sub.tail[unmarkedPosition - (unmarkedTotal - tailCount)]!);
+    }
+  }
+  return { head, tail, elided: true, omittedTokens: sub.omittedTokens };
+}
+
+/** The plain head/tail selection over a marker-free pool. */
+function selectWithinBudget<T extends MessageLike>(
+  messages: readonly T[],
+  maxTokens: number,
+  headTokens: number,
+  totalTokens: number,
+): CompactionUserSelection<T> {
   const headBudget = Math.min(Math.max(headTokens, 0), maxTokens);
   const tailBudget = maxTokens - headBudget;
 
@@ -338,7 +461,27 @@ export function buildCompactionElisionText(omittedTokens: number): string {
   ].join('\n');
 }
 
-export function buildCompactionSummaryText(summary: string): string {
+export function buildCompactionSummaryText(summary: string, transcriptPath?: string): string {
   const suffix = summary.trim();
-  return `${COMPACTION_SUMMARY_PREFIX}\n${suffix.length > 0 ? suffix : '(no summary available)'}`;
+  let text = `${COMPACTION_SUMMARY_PREFIX}\n${suffix.length > 0 ? suffix : '(no summary available)'}`;
+  if (transcriptPath !== undefined && transcriptPath.length > 0) {
+    text += `\n\nIf you need specific details from before compaction (exact code snippets, error messages, or content you generated), read the full transcript at: ${transcriptPath}`;
+  }
+  return text;
+}
+
+/**
+ * Format the raw summarizer output for landing: strip the `<analysis>`
+ * drafting scratchpad (it improves summary quality but has no informational
+ * value once the summary exists — zero context cost) and unwrap the
+ * `<summary>` tags, keeping their content. Output without an `<analysis>`
+ * block passes through unchanged apart from whitespace normalization.
+ */
+export function formatCompactionSummary(raw: string): string {
+  let text = raw.replace(/<analysis>[\s\S]*?<\/analysis>/, '');
+  const summaryMatch = /<summary>([\s\S]*?)<\/summary>/.exec(text);
+  if (summaryMatch) {
+    text = text.replace(/<summary>[\s\S]*?<\/summary>/, summaryMatch[1]!.trim());
+  }
+  return text.replaceAll(/\n{3,}/g, '\n\n').trim();
 }

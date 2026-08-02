@@ -1,5 +1,5 @@
 /**
- * `ToolService` + `McpService` (Chain 7 / P1.7, W9.1) unit tests.
+ * `ToolService` + `McpService` unit tests.
  *
  * Hermetic: mocks `ICoreProcessService` with an in-memory `rpc` proxy. Exercises:
  *   - tool source mapping: 'builtin' / 'user'→'skill' / 'mcp' + mcp_server_id parse

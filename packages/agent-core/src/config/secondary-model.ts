@@ -1,5 +1,5 @@
 import type {
-  KimiConfig,
+  CloudCodeConfig,
   ModelAlias,
   ModelAliasOverrides,
   SecondaryModelConfig,
@@ -18,16 +18,16 @@ import type {
  * `models.*.overrides`. With no patch fields, subagents bind the pointed
  * entry directly and nothing is synthesized.
  *
- * The `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` env vars override
- * `model` / `default_effort` in memory only: like the `KIMI_MODEL_*`
+ * The `CLOUD_CODE_SECONDARY_MODEL` / `CLOUD_CODE_SECONDARY_EFFORT` env vars override
+ * `model` / `default_effort` in memory only: like the `CLOUD_CODE_MODEL_*`
  * synthesized entries, the derived entry and the env-injected fields must
  * never reach `config.toml`. {@link stripSecondaryModelConfig} is the write
  * path mirror, wired next to `stripEnvModelConfig`.
  */
 
 export const SECONDARY_DERIVED_MODEL_ALIAS = '__secondary__';
-export const SECONDARY_MODEL_ENV = 'KIMI_SECONDARY_MODEL';
-export const SECONDARY_MODEL_EFFORT_ENV = 'KIMI_SECONDARY_EFFORT';
+export const SECONDARY_MODEL_ENV = 'CLOUD_CODE_SECONDARY_MODEL';
+export const SECONDARY_MODEL_EFFORT_ENV = 'CLOUD_CODE_SECONDARY_EFFORT';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -59,7 +59,7 @@ export function secondaryModelPatch(
  * pointed entry does not exist (the session warning reports the dangling
  * pointer; spawn fails with the wrapped error).
  */
-export function applySecondaryModelConfig(config: KimiConfig, env: Env = process.env): KimiConfig {
+export function applySecondaryModelConfig(config: CloudCodeConfig, env: Env = process.env): CloudCodeConfig {
   let secondary = config.secondaryModel;
   const envModel = trimmed(env[SECONDARY_MODEL_ENV]);
   const envEffort = trimmed(env[SECONDARY_MODEL_EFFORT_ENV]);
@@ -101,13 +101,13 @@ export function applySecondaryModelConfig(config: KimiConfig, env: Env = process
  * the env-injected recipe fields (restored from raw when the value being
  * written still equals the env value, so a `getConfig` -> `setConfig`
  * round-trip cannot persist shell overrides, while a genuinely new selection
- * — e.g. a `/secondary_model` pick made under `KIMI_SECONDARY_MODEL` — does
+ * — e.g. a `/secondary_model` pick made under `CLOUD_CODE_SECONDARY_MODEL` — does
  * reach the disk, mirroring the pointer check in `stripEnvModelConfig`).
  */
 export function stripSecondaryModelConfig(
-  config: KimiConfig,
+  config: CloudCodeConfig,
   env: Env = process.env,
-): KimiConfig {
+): CloudCodeConfig {
   let next = config;
 
   if (next.models !== undefined && SECONDARY_DERIVED_MODEL_ALIAS in next.models) {

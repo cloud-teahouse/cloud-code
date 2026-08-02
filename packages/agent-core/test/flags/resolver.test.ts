@@ -15,7 +15,7 @@ const DEFS = [
     id: 'a-on-default',
     title: 'A on default',
     description: 'Fake flag A.',
-    env: 'KIMI_CODE_EXPERIMENTAL_A',
+    env: 'CLOUD_CODE_EXPERIMENTAL_A',
     default: true,
     surface: 'core',
   },
@@ -23,7 +23,7 @@ const DEFS = [
     id: 'b-off-default',
     title: 'B off default',
     description: 'Fake flag B.',
-    env: 'KIMI_CODE_EXPERIMENTAL_B',
+    env: 'CLOUD_CODE_EXPERIMENTAL_B',
     default: false,
     surface: 'tui',
   },
@@ -46,19 +46,19 @@ describe('FlagResolver', () => {
 
   it('L2 per-feature on (lenient truthy values)', () => {
     for (const v of ['1', 'true', 'yes', 'on', 'TRUE', ' On ']) {
-      expect(make({ KIMI_CODE_EXPERIMENTAL_B: v })('b-off-default')).toBe(true);
+      expect(make({ CLOUD_CODE_EXPERIMENTAL_B: v })('b-off-default')).toBe(true);
     }
   });
 
   it('L2 per-feature off (lenient falsy values) overrides default=true', () => {
     for (const v of ['0', 'false', 'no', 'off']) {
-      expect(make({ KIMI_CODE_EXPERIMENTAL_A: v })('a-on-default')).toBe(false);
+      expect(make({ CLOUD_CODE_EXPERIMENTAL_A: v })('a-on-default')).toBe(false);
     }
   });
 
   it('L2 unparseable value falls back to default', () => {
-    expect(make({ KIMI_CODE_EXPERIMENTAL_B: 'maybe' })('b-off-default')).toBe(false);
-    expect(make({ KIMI_CODE_EXPERIMENTAL_A: 'maybe' })('a-on-default')).toBe(true);
+    expect(make({ CLOUD_CODE_EXPERIMENTAL_B: 'maybe' })('b-off-default')).toBe(false);
+    expect(make({ CLOUD_CODE_EXPERIMENTAL_A: 'maybe' })('a-on-default')).toBe(true);
   });
 
   it('L1 master switch: every flag is on when enabled (including default=false)', () => {
@@ -68,7 +68,7 @@ describe('FlagResolver', () => {
   });
 
   it('L1 master switch beats an L2 per-feature off', () => {
-    const enabled = make({ [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_A: '0' });
+    const enabled = make({ [MASTER_ENV]: '1', CLOUD_CODE_EXPERIMENTAL_A: '0' });
     expect(enabled('a-on-default')).toBe(true);
   });
 
@@ -78,7 +78,7 @@ describe('FlagResolver', () => {
   });
 
   it('returns a full snapshot and enabled ids in registry order', () => {
-    const resolver = new FlagResolver({ KIMI_CODE_EXPERIMENTAL_B: '1' }, DEFS);
+    const resolver = new FlagResolver({ CLOUD_CODE_EXPERIMENTAL_B: '1' }, DEFS);
     expect(resolver.snapshot()).toEqual({
       'a-on-default': true,
       'b-off-default': true,
@@ -87,9 +87,9 @@ describe('FlagResolver', () => {
   });
 
   it('reads the env name declared in the registry (the declared name works, others do not)', () => {
-    expect(make({ KIMI_CODE_EXPERIMENTAL_B: '1' })('b-off-default')).toBe(true);
+    expect(make({ CLOUD_CODE_EXPERIMENTAL_B: '1' })('b-off-default')).toBe(true);
     // The name mechanically derived from the id must not take effect (env is explicitly ..._B).
-    expect(make({ KIMI_CODE_EXPERIMENTAL_B_OFF_DEFAULT: '1' })('b-off-default')).toBe(false);
+    expect(make({ CLOUD_CODE_EXPERIMENTAL_B_OFF_DEFAULT: '1' })('b-off-default')).toBe(false);
   });
 
   it('unknown id resolves to false (defensive)', () => {
@@ -128,8 +128,8 @@ describe('FlagResolver', () => {
   it('keeps env precedence above config overrides', () => {
     const resolver = new FlagResolver(
       {
-        KIMI_CODE_EXPERIMENTAL_A: '1',
-        KIMI_CODE_EXPERIMENTAL_B: '0',
+        CLOUD_CODE_EXPERIMENTAL_A: '1',
+        CLOUD_CODE_EXPERIMENTAL_B: '0',
       },
       DEFS,
       {
@@ -172,7 +172,7 @@ describe('FlagResolver', () => {
     });
 
     const fromEnv = new FlagResolver(
-      { KIMI_CODE_EXPERIMENTAL_B: '0' },
+      { CLOUD_CODE_EXPERIMENTAL_B: '0' },
       DEFS,
       { 'b-off-default': true } as never,
     );
@@ -190,7 +190,7 @@ describe('FLAG_DEFINITIONS invariants', () => {
     const seenId = new Set<string>();
     const defs: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS;
     for (const def of defs) {
-      expect(def.env.startsWith('KIMI_CODE_EXPERIMENTAL_')).toBe(true);
+      expect(def.env.startsWith('CLOUD_CODE_EXPERIMENTAL_')).toBe(true);
       expect(def.env).not.toBe(MASTER_ENV);
       expect(def.id).not.toBe('flag'); // reserved: would collide with the master switch
       expect(def.title.length).toBeGreaterThan(0);

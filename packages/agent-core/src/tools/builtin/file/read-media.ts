@@ -24,18 +24,17 @@
  * Read/Write/Edit.
  */
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@cloud-code/kaos';
 import type {
   ContentPart,
   ModelCapability,
   VideoUploadInput as ProviderVideoUploadInput,
-} from '@moonshot-ai/kosong';
+} from '@cloud-code/kosong';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import type { TelemetryClient } from '../../../telemetry';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
@@ -46,7 +45,6 @@ import {
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
-  type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '../../support/image-compress';
 import {
@@ -256,14 +254,12 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
-  private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
   private readonly imageLimits: ImageLimits;
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader | undefined,
-    telemetry?: TelemetryClient,
     imageLimits?: ImageLimits,
   ) {
     if (!capabilities.image_in && !capabilities.video_in) {
@@ -272,8 +268,6 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       throw skip;
     }
     this.description = buildDescription(capabilities);
-    this.compressTelemetry =
-      telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
     this.imageLimits = imageLimits ?? new ImageLimits();
   }
 
@@ -462,7 +456,6 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
             skipResize: args.full_resolution === true,
             maxEdge: this.imageLimits.maxEdgePx(),
-            telemetry: this.compressTelemetry,
           });
           if (!outcome.ok) {
             return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
@@ -521,7 +514,6 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           const compressed = await compressImageForModel(data, fileType.mimeType, {
             maxEdge,
             byteBudget: readByteBudget,
-            telemetry: this.compressTelemetry,
           });
           if (
             compressed.finalByteLength > readByteBudget ||

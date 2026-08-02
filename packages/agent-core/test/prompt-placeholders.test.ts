@@ -27,6 +27,7 @@ const TEMPLATED = new Set([
   'tools/builtin/file/read.md',
   'tools/builtin/file/read-media.md',
   'tools/builtin/shell/bash.md',
+  'tools/builtin/shell/exec-session.md',
 ]);
 
 const STATIC_PLACEHOLDER_PROTOCOL_FILES = new Set([

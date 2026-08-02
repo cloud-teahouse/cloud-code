@@ -97,6 +97,33 @@ describe('approvalResponseSchema (SCHEMAS §6.1)', () => {
     expect(parsed.selected_label).toBe('Run command');
   });
 
+  it('accepts the always scope for persisted permission rules', () => {
+    const parsed = approvalResponseSchema.parse({
+      decision: 'approved',
+      scope: 'always',
+    });
+    expect(parsed.scope).toBe('always');
+  });
+
+  it('accepts an optional permission-mode switch', () => {
+    const parsed = approvalResponseSchema.parse({
+      decision: 'approved',
+      selected_label: 'Approve with Auto mode',
+      mode: 'auto',
+    });
+    expect(parsed.mode).toBe('auto');
+  });
+
+  it('rejects unknown permission-mode values', () => {
+    expect(() =>
+      approvalResponseSchema.parse({ decision: 'approved', mode: 'bypassPermissions' }),
+    ).toThrow();
+  });
+
+  it('rejects unknown scope values', () => {
+    expect(() => approvalResponseSchema.parse({ decision: 'approved', scope: 'forever' })).toThrow();
+  });
+
   it('rejects unknown decision value', () => {
     expect(() => approvalResponseSchema.parse({ decision: 'maybe' })).toThrow();
   });

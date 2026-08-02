@@ -13,7 +13,6 @@ import {
   MAX_CRON_JOBS_PER_SESSION,
   type CronCreateInput,
 } from '../../../src/tools/cron/cron-create';
-import { CRON_SCHEDULED } from '../../../src/tools/cron/telemetry-events';
 import type {
   ExecutableToolErrorResult,
   ExecutableToolResult,
@@ -141,8 +140,8 @@ describe('CronCreateTool', () => {
     expect(tool.description).toContain('the normalized expression');
   });
 
-  it('schedules a recurring task and emits cron_scheduled', async () => {
-    const { stub, manager, tool } = makeHarness();
+  it('schedules a recurring task', async () => {
+    const { manager, tool } = makeHarness();
     const result = await runTool(tool, {
       cron: '*/5 * * * *',
       prompt: 'hi',
@@ -157,15 +156,16 @@ describe('CronCreateTool', () => {
       cron: */5 * * * *
       humanSchedule: every 5 minutes
       recurring: true
+      durable: false
       nextFireAt: <iso>"
     `);
 
     expect(manager.store.list()).toHaveLength(1);
-    expect(stub.telemetryCalls).toHaveLength(1);
-    expect(stub.telemetryCalls[0]!.event).toBe(CRON_SCHEDULED);
-    expect(stub.telemetryCalls[0]!.props).toEqual({
-      recurring: true,
+    expect(result.display).toMatchObject({
+      key: 'toolResult.cron.createdRecurring',
+      params: { id: manager.store.list()[0]!.id, cron: '*/5 * * * *' },
     });
+    expect(typeof result.display?.params?.['nextFireAt']).toBe('string');
   });
 
   it('renders nextFireAt in local time with an explicit offset', async () => {
@@ -187,7 +187,7 @@ describe('CronCreateTool', () => {
   });
 
   it('schedules a one-shot task with recurring=false in the stored record', async () => {
-    const { manager, tool, stub } = makeHarness();
+    const { manager, tool } = makeHarness();
     const result = await runTool(tool, {
       cron: '0 12 * * *',
       prompt: 'noon',
@@ -199,19 +199,21 @@ describe('CronCreateTool', () => {
       cron: 0 12 * * *
       humanSchedule: at 12:00 every day
       recurring: false
+      durable: false
       nextFireAt: <iso>"
     `);
 
     const tasks = manager.store.list();
     expect(tasks).toHaveLength(1);
     expect(tasks[0]!.recurring).toBe(false);
-
-    expect(stub.telemetryCalls).toHaveLength(1);
-    expect(stub.telemetryCalls[0]!.props).toMatchObject({ recurring: false });
+    expect(result.display).toMatchObject({
+      key: 'toolResult.cron.createdOnce',
+      params: { id: tasks[0]!.id, cron: '0 12 * * *' },
+    });
   });
 
   it('rejects an unparseable cron expression', async () => {
-    const { manager, tool, stub } = makeHarness();
+    const { manager, tool } = makeHarness();
     const msg = assertError(
       await runTool(tool, {
         cron: 'not a cron',
@@ -224,11 +226,10 @@ describe('CronCreateTool', () => {
     );
 
     expect(manager.store.list()).toHaveLength(0);
-    expect(stub.telemetryCalls).toHaveLength(0);
   });
 
   it('rejects a legal-but-never-fires cron expression', async () => {
-    const { manager, tool, stub } = makeHarness();
+    const { manager, tool } = makeHarness();
     // Feb 31st — parses fine, never fires.
     const msg = assertError(
       await runTool(tool, {
@@ -242,12 +243,11 @@ describe('CronCreateTool', () => {
     );
 
     expect(manager.store.list()).toHaveLength(0);
-    expect(stub.telemetryCalls).toHaveLength(0);
   });
 
   it('returns an error when KIMI_DISABLE_CRON=1', async () => {
     vi.stubEnv('KIMI_DISABLE_CRON', '1');
-    const { manager, tool, stub } = makeHarness();
+    const { manager, tool } = makeHarness();
     const msg = assertError(
       await runTool(tool, {
         cron: '*/5 * * * *',
@@ -260,11 +260,10 @@ describe('CronCreateTool', () => {
     );
 
     expect(manager.store.list()).toHaveLength(0);
-    expect(stub.telemetryCalls).toHaveLength(0);
   });
 
   it('refuses to schedule past the session cap', async () => {
-    const { manager, tool, stub } = makeHarness();
+    const { manager, tool } = makeHarness();
     // Pre-fill the store with the max number of tasks. The cap reads
     // `store.list().length`, so any well-formed task seeds it.
     const seedNow = manager.clocks.wallNow();
@@ -288,11 +287,10 @@ describe('CronCreateTool', () => {
     );
 
     expect(manager.store.list()).toHaveLength(MAX_CRON_JOBS_PER_SESSION);
-    expect(stub.telemetryCalls).toHaveLength(0);
   });
 
   it('rejects prompts above the 8 KiB byte budget (multi-byte input)', async () => {
-    const { manager, tool, stub } = makeHarness();
+    const { manager, tool } = makeHarness();
     // '汉' is 3 bytes in UTF-8; 3000 repetitions = 9000 bytes > 8192.
     // zod's `.max(8192)` is in code units and would accept this — the
     // byte check inside the tool catches it.
@@ -309,7 +307,6 @@ describe('CronCreateTool', () => {
     );
 
     expect(manager.store.list()).toHaveLength(0);
-    expect(stub.telemetryCalls).toHaveLength(0);
   });
 
   it('documents empty-prompt handling as a loop-layer concern', () => {
@@ -474,7 +471,7 @@ describe('CronCreateTool', () => {
       // the user gets a year-late reminder. Build the cron by pinning
       // *yesterday's* local dom/month — guaranteed to have passed in
       // every timezone, so the next match is next year.
-      const { stub, manager, tool } = makeHarness();
+      const { manager, tool } = makeHarness();
       const yesterday = new Date(manager.clocks.wallNow() - 24 * 60 * 60 * 1000);
       const dom = yesterday.getDate();
       const month = yesterday.getMonth() + 1;
@@ -487,7 +484,6 @@ describe('CronCreateTool', () => {
       const msg = assertError(result);
       expect(msg).toContain('more than a year out');
       expect(manager.store.list()).toHaveLength(0);
-      expect(stub.telemetryCalls).toHaveLength(0);
     });
 
     it('accepts a recurring task whose next fire happens to be a year out', async () => {

@@ -59,15 +59,30 @@ function terminalReason(info: BackgroundTaskInfo): 'timed_out' | 'stopped' | 'fa
   return undefined;
 }
 
-function fullOutputHint(output: BackgroundTaskOutputSnapshot): string | undefined {
+function fullOutputHint(
+  output: BackgroundTaskOutputSnapshot,
+  kind: BackgroundTaskInfo['kind'],
+): string | undefined {
   if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
+  const paging =
+    'Use the Read tool with the output_path to page through the full log ' +
+    `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
+    'lines per page).';
+  if (kind === 'pty-session') {
+    // A session log is the raw PTY stream (merged stdout/stderr, echoed
+    // input included) and keeps growing while the session runs — point the
+    // model at WriteStdin for increments instead of repeat TaskOutput calls.
+    const sessionNote =
+      ' This is a shell session log: the raw PTY stream with stdout/stderr merged and ' +
+      'typed input echoed. While the session is still running, poll it with ' +
+      'WriteStdin(session_id, chars="") for new output instead of re-running TaskOutput.';
+    if (output.truncated) {
+      return `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ${paging}${sessionNote}`;
+    }
+    return `The preview above is the complete output so far. ${paging}${sessionNote}`;
+  }
   if (output.truncated) {
-    return (
-      `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ` +
-      'Use the Read tool with the output_path to page through the full log ' +
-      `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-      'lines per page).'
-    );
+    return `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ${paging}`;
   }
   return (
     'The preview above is the complete output. Use the Read tool with the output_path ' +
@@ -116,7 +131,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
         fullOutputAvailable: output.fullOutputAvailable,
         fullOutputTool:
           output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
-        fullOutputHint: fullOutputHint(output),
+        fullOutputHint: fullOutputHint(output, current.kind),
       }),
       '',
     ];

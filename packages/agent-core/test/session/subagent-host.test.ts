@@ -3,14 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { testKaos } from '../fixtures/test-kaos';
-import { APIStatusError, type Message, type ToolCall } from '@moonshot-ai/kosong';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { APIStatusError, type Message, type ProviderConfig, type ToolCall } from '@cloud-code/kosong';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
-import type { KimiConfig } from '../../src/config';
-import { ErrorCodes, KimiError } from '../../src/errors';
-import { FlagResolver } from '../../src/flags';
+import type { CloudCodeConfig } from '../../src/config/schema';
 import { SessionAgentProfileCatalog, type ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -22,9 +20,20 @@ import {
   formatSubagentTimeoutDescription,
   resolveSubagentTimeoutMs,
   type QueuedSubagentTask,
+  type SpawnSubagentOptions,
+  type SubagentHandle,
 } from '../../src/session/subagent-host';
+import {
+  applySecondaryModelConfig,
+  SECONDARY_MODEL_EFFORT_ENV,
+  SECONDARY_MODEL_ENV,
+} from '../../src/config/secondary-model';
+import { resolveSecondaryModel } from '../../src/session/subagent-binding';
+import { AgentTool } from '../../src/tools/builtin/collaboration/agent';
 import { abortError, userCancellationReason } from '../../src/utils/abort';
+import { createBackgroundManager } from '../agent/background/helpers';
 import { testAgent, type AgentTestContext } from '../agent/harness/agent';
+import { createScriptedGenerate } from '../agent/harness/scripted-generate';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
@@ -33,6 +42,10 @@ import { executeTool } from '../tools/fixtures/execute-tool';
 // wiring (explore subagents get the block prepended, others do not).
 vi.mock('../../src/session/git-context', () => ({
   collectGitContext: vi.fn(async () => ''),
+  // The main-loop git status snapshot is exercised in git-context.test.ts
+  // and profile/context.test.ts; keep it empty here so bootstrapped prompts
+  // stay deterministic.
+  getGitStatusSnapshot: vi.fn(async () => ''),
 }));
 
 const signal = new AbortController().signal;
@@ -93,6 +106,40 @@ describe('formatSubagentTimeoutDescription', () => {
     expect(formatSubagentTimeoutDescription(2 * 60 * 60 * 1000)).toBe('2 hours');
     expect(formatSubagentTimeoutDescription(45 * 1000)).toBe('45 seconds');
     expect(formatSubagentTimeoutDescription(1500)).toBe('1500 ms');
+  });
+});
+
+describe('resolveSecondaryModel', () => {
+  it('returns unset when nothing is configured', () => {
+    expect(resolveSecondaryModel(undefined)).toEqual({ model: undefined, effort: undefined });
+    expect(resolveSecondaryModel({})).toEqual({ model: undefined, effort: undefined });
+  });
+
+  it('uses the config values when set', () => {
+    expect(resolveSecondaryModel({ model: 'fast-model' })).toEqual({
+      model: 'fast-model',
+      effort: undefined,
+    });
+  });
+
+  it('binds the derived entry when defaultEffort is set', () => {
+    expect(resolveSecondaryModel({ model: 'fast-model', defaultEffort: 'low' })).toEqual({
+      model: '__secondary__',
+      effort: 'low',
+    });
+  });
+
+  it('binds the derived entry when the recipe carries patch fields', () => {
+    expect(
+      resolveSecondaryModel({ model: 'fast-model', defaultEffort: 'low', maxContextSize: 65_536 }),
+    ).toEqual({ model: '__secondary__', effort: 'low' });
+  });
+
+  it('treats blank config values as unset', () => {
+    expect(resolveSecondaryModel({ model: '  ', defaultEffort: '' })).toEqual({
+      model: undefined,
+      effort: undefined,
+    });
   });
 });
 
@@ -289,8 +336,7 @@ describe('SessionSubagentHost', () => {
   });
 
   it('runs a child agent turn and returns the last assistant text', async () => {
-    const telemetryTrack = vi.fn();
-    const parent = testAgent({ telemetry: { track: telemetryTrack } });
+    const parent = testAgent();
     parent.configure();
     await parent.rpc.setPermission({ mode: 'yolo' });
     parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
@@ -335,13 +381,6 @@ describe('SessionSubagentHost', () => {
         }),
       }),
     );
-    expect(telemetryTrack).toHaveBeenCalledWith('subagent_created', {
-      subagent_name: 'explore',
-      run_in_background: false,
-      agent_id: 'agent-0',
-      parent_agent_id: 'main',
-      parent_tool_call_id: 'call_agent',
-    });
     expect(parent.allEvents).toContainEqual(
       expect.objectContaining({
         type: '[rpc]',
@@ -468,10 +507,13 @@ describe('SessionSubagentHost', () => {
       'CronList',
       'Edit',
       'EnterPlanMode',
+      'EnterWorktree',
       'ExitPlanMode',
+      'ExitWorktree',
       'Glob',
       'Grep',
       'Read',
+      'SaveMemory',
       'TaskList',
       'TaskOutput',
       'TaskStop',
@@ -759,14 +801,22 @@ describe('SessionSubagentHost', () => {
     parent.configure();
     parent.newEvents();
 
+    // The max_output_tokens recovery chain runs inside the child turn first
+    // (one cap escalation, then up to 3 meta continuations). The harness
+    // default 1M context window already exceeds the 64k escalation target, so
+    // the child goes straight to meta recovery: 1 initial + 3 continuations,
+    // then the exhausted turn still ends with stopReason 'max_tokens' and the
+    // host fails it instead of re-prompting for a better summary.
     const child = testAgent();
-    child.mockNextProviderResponse({
-      parts: [
-        { type: 'think', think: 'The child used its output budget before writing a summary.' },
-      ],
-      finishReason: 'truncated',
-      rawFinishReason: 'length',
-    });
+    for (let i = 0; i < 4; i += 1) {
+      child.mockNextProviderResponse({
+        parts: [
+          { type: 'think', think: 'The child used its output budget before writing a summary.' },
+        ],
+        finishReason: 'truncated',
+        rawFinishReason: 'length',
+      });
+    }
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
@@ -782,7 +832,7 @@ describe('SessionSubagentHost', () => {
     await expect(handle.completion).rejects.toThrow(
       'Subagent turn failed before completing its final summary: reason=max_tokens',
     );
-    expect(child.llmCalls).toHaveLength(1);
+    expect(child.llmCalls).toHaveLength(4);
     expect(parent.allEvents).toContainEqual(
       expect.objectContaining({
         type: '[rpc]',
@@ -1178,232 +1228,572 @@ describe('SessionSubagentHost', () => {
   });
 
   describe('secondary model binding', () => {
-    const secondaryFlags = () =>
-      new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1' });
     const LONG_SUMMARY =
       'Completed the delegated task end to end and reported a technically complete summary so the parent agent can continue without repeating prior work. ' +
       'The report covers the investigation, the changes made, and the verification results in enough detail for the caller to act on directly.';
-    // Harness model registry entries resolvable through the child's
-    // ProviderManager: the secondary alias and the synthesized derived entry
-    // (in production `applySecondaryModelConfig` injects the latter into the
-    // session runtime config).
-    const withSecondaryModels = (config?: KimiConfig): KimiConfig => ({
-      providers: { 'test-provider': { type: 'kimi', apiKey: 'test-key' } },
-      ...config,
-      models: {
-        'cheap-model': {
-          provider: 'test-provider',
-          model: 'cheap-model',
-          maxContextSize: 1_000_000,
-        },
-        '__secondary__': {
-          provider: 'test-provider',
-          model: 'cheap-model',
-          maxContextSize: 65536,
-        },
-      },
-    });
 
     async function spawnChild(options: {
-      config?: KimiConfig;
-      experimentalFlags?: FlagResolver;
-      providerManager?: Session['options']['providerManager'];
-      modelChoice?: 'primary' | 'secondary';
+      secondaryModel?: CloudCodeConfig['secondaryModel'];
+      model?: string;
       profilePreference?: 'primary' | 'secondary';
     }) {
-      const parent = testAgent();
+      const parent = testAgent({ initialConfig: modelTestConfig(options.secondaryModel) });
       parent.configure();
-      const child = testAgent({ initialConfig: withSecondaryModels() });
+      const child = testAgent({ initialConfig: modelTestConfig() });
       child.configure({ tools: ['Read'] });
       child.mockNextResponse({ type: 'text', text: LONG_SUMMARY });
-
-      const session = fakeSession(parent.agent, child.agent, {}, {
-        config: options.config,
-        experimentalFlags: options.experimentalFlags,
-        providerManager: options.providerManager,
-      });
+      const profiles = options.profilePreference === undefined
+        ? undefined
+        : {
+            agent: {
+              name: 'agent',
+              systemPrompt: () => 'agent prompt',
+              tools: ['Read'],
+              subagents: {
+                coder: {
+                  name: 'coder',
+                  systemPrompt: () => 'coder prompt',
+                  tools: ['Read'],
+                  modelPreference: options.profilePreference,
+                },
+              },
+            },
+          };
+      const session = fakeSession(parent.agent, child.agent, {}, profiles);
       const host = new SessionSubagentHost(session, 'main');
-      if (options.profilePreference !== undefined) {
-        vi.spyOn(
-          host as unknown as {
-            resolveProfile: (parent: Agent, name: string) => ResolvedAgentProfile;
-          },
-          'resolveProfile',
-        ).mockReturnValue(
-          profile({
-            name: 'coder',
-            tools: ['Read'],
-            systemPrompt: 'coder prompt',
-            modelPreference: options.profilePreference,
-          }),
-        );
-      }
       const handle = await host.spawn({
         profileName: 'coder',
-        modelChoice: options.modelChoice,
         parentToolCallId: 'call_agent',
-        prompt: 'Do work',
+        prompt: 'Do the work',
         description: 'Do work',
         runInBackground: false,
+        model: options.model,
         signal,
       });
       await handle.completion;
-      return { parent, child, handle };
+      return { parent, child };
     }
 
-    it('binds the secondary model when configured', async () => {
+    it('inherits the parent model by default even when a secondary model is configured', async () => {
       const { parent, child } = await spawnChild({
-        experimentalFlags: secondaryFlags(),
-        config: {
-          providers: {},
-          secondaryModel: { model: 'cheap-model' },
-        },
-      });
-      expect(child.agent.config.modelAlias).toBe('cheap-model');
-      expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
-    });
-
-    it('binds the derived entry when the recipe carries patch fields', async () => {
-      const { child } = await spawnChild({
-        experimentalFlags: secondaryFlags(),
-        config: {
-          providers: {},
-          secondaryModel: { model: 'cheap-model', defaultEffort: 'low' },
-        },
-      });
-      // default_effort is part of the subagent-only patch, so the spawn binds
-      // the synthesized derived entry rather than the pointed alias.
-      expect(child.agent.config.modelAlias).toBe('__secondary__');
-    });
-
-    it('inherits the parent model when the experiment is off', async () => {
-      const { parent, child } = await spawnChild({
-        config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
+        secondaryModel: { model: SECONDARY_ALIAS },
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
     });
 
     it('inherits the parent model for an explicit model: primary choice', async () => {
       const { parent, child } = await spawnChild({
-        experimentalFlags: secondaryFlags(),
-        config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
-        modelChoice: 'primary',
+        secondaryModel: { model: SECONDARY_ALIAS },
+        model: 'primary',
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
     });
 
-    it('honors the profile model_preference over the configured secondary model', async () => {
+    it('honors the profile model_preference when no model is requested', async () => {
       const { parent, child } = await spawnChild({
-        experimentalFlags: secondaryFlags(),
-        config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
+        secondaryModel: { model: SECONDARY_ALIAS },
         profilePreference: 'primary',
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
     });
+  });
+});
 
-    it('fails the spawn with a wrapped error when the secondary model does not resolve', async () => {
-      const parent = testAgent();
-      parent.configure();
-      const child = testAgent();
-      child.configure({ tools: ['Read'] });
-      const config: KimiConfig = {
-        providers: {},
-        secondaryModel: { model: 'missing-model' },
-      };
-      const session = fakeSession(parent.agent, child.agent, {}, {
-        experimentalFlags: secondaryFlags(),
-        config,
-        providerManager: new ProviderManager({ config }),
-      });
-      const host = new SessionSubagentHost(session, 'main');
+describe('SessionSubagentHost fork (inheritContext)', () => {
+  const FORK_PROMPT = 'Deep-dive the root cause and propose the minimal fix.';
 
-      await expect(
-        host.spawn({
-          profileName: 'coder',
-          parentToolCallId: 'call_agent',
-          prompt: 'Do work',
-          description: 'Do work',
-          runInBackground: false,
-          signal,
-        }).then((handle) => handle.completion),
-      ).rejects.toThrow(/\[secondary_model\]\.model/);
+  function seedParentHistory(parent: AgentTestContext): void {
+    parent.agent.context.appendMessage({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'The flaky spec is tests/parser.spec.ts — find the root cause.' },
+      ],
+      toolCalls: [],
     });
+    parent.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'I will read the parser spec.' }],
+      toolCalls: [
+        {
+          type: 'function',
+          id: 'call_read',
+          name: 'Read',
+          arguments: '{"path":"tests/parser.spec.ts"}',
+        },
+      ],
+    });
+    parent.agent.context.appendMessage({
+      role: 'tool',
+      toolCallId: 'call_read',
+      content: [
+        { type: 'text', text: 'it("parses", async () => { run(); /* missing await */ })' },
+      ],
+      toolCalls: [],
+    });
+    parent.agent.context.appendMessage({
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: 'Root cause: the spec does not await run(), so its assertions pass vacuously.',
+        },
+      ],
+      toolCalls: [],
+    });
+  }
 
-    it('preserves a provider configuration error when the secondary alias exists', async () => {
-      const parent = testAgent();
-      parent.configure();
-      const child = testAgent();
-      child.configure({ tools: ['Read'] });
-      const config: KimiConfig = {
-        providers: {},
-        models: {
-          'cheap-model': {
-            provider: 'missing-provider',
-            model: 'cheap-model',
-            maxContextSize: 1_000_000,
+  function spawnFork(
+    host: SessionSubagentHost,
+    overrides: Partial<SpawnSubagentOptions> = {},
+  ): Promise<SubagentHandle> {
+    return host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: FORK_PROMPT,
+      description: 'Deep dive',
+      runInBackground: false,
+      inheritContext: true,
+      signal,
+      ...overrides,
+    });
+  }
+
+  it('seeds the child with the parent projected history followed by the prompt', async () => {
+    const parent = testAgent();
+    parent.configure();
+    seedParentHistory(parent);
+
+    const child = testAgent();
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Reviewed the inherited investigation: the parser spec calls run() without await, so the assertions after it never actually execute; the minimal fix is to await the promise so the test runner observes it. This confirms the root cause from the parent conversation without repeating any file reads. '.repeat(
+        2,
+      ),
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await spawnFork(host);
+    await handle.completion;
+
+    expect(child.llmCalls[0]?.history).toMatchObject([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'The flaky spec is tests/parser.spec.ts — find the root cause.' },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I will read the parser spec.' }],
+        toolCalls: [{ id: 'call_read', name: 'Read' }],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call_read',
+        content: [
+          { type: 'text', text: 'it("parses", async () => { run(); /* missing await */ })' },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: 'Root cause: the spec does not await run(), so its assertions pass vacuously.',
           },
-        },
-        secondaryModel: { model: 'cheap-model' },
-      };
-      const session = fakeSession(parent.agent, child.agent, {}, {
-        experimentalFlags: secondaryFlags(),
-        config,
-        providerManager: new ProviderManager({ config }),
-      });
-      const host = new SessionSubagentHost(session, 'main');
+        ],
+      },
+      { role: 'user', content: [{ type: 'text', text: FORK_PROMPT }] },
+    ]);
+    // The system prompt and tool pool come from the child's own profile, not
+    // the parent's.
+    expect(child.agent.config.data().profileName).toBe('coder');
+  });
 
-      await expect(
-        host.spawn({
-          profileName: 'coder',
-          parentToolCallId: 'call_agent',
-          prompt: 'Do work',
-          description: 'Do work',
-          runInBackground: false,
-          signal,
-        }).then((handle) => handle.completion),
-      ).rejects.toMatchObject({
-        message: 'Provider "missing-provider" for model "cheap-model" is not configured.',
-      });
+  it('trims the trailing open tool exchange (the spawning step) from the inherited history', async () => {
+    const parent = testAgent();
+    parent.configure();
+    seedParentHistory(parent);
+    // The in-flight step that would carry the spawning Agent call: assistant
+    // tool calls with no results yet.
+    parent.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Forking this investigation.' }],
+      toolCalls: [
+        {
+          type: 'function',
+          id: 'call_agent_fork',
+          name: 'Agent',
+          arguments: '{"prompt":"Deep-dive","inherit_context":true}',
+        },
+      ],
     });
 
-    it('keeps the spawned model on resume when the experiment is on', async () => {
-      const parent = testAgent();
-      parent.configure();
-      parent.agent.permission.setMode('yolo');
+    const child = testAgent();
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Confirmed the root cause from the inherited context: the missing await leaves the spec assertions unexecuted. The minimal fix awaits the promise. Reporting the full detail so the parent can proceed without repeating the investigation. '.repeat(
+        2,
+      ),
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
 
-      const child = testAgent({ initialConfig: withSecondaryModels() });
-      child.configure({ tools: ['Read'] });
-      child.agent.config.update({ modelAlias: 'cheap-model' });
-      child.agent.useProfile(
-        profile({ name: 'coder', tools: ['Read'], systemPrompt: 'coder prompt' }),
+    const handle = await spawnFork(host);
+    await handle.completion;
+
+    const forkHistory = child.llmCalls[0]?.history ?? [];
+    expect(forkHistory).toHaveLength(5);
+    expect(JSON.stringify(forkHistory)).toContain('tests/parser.spec.ts');
+    expect(JSON.stringify(forkHistory)).not.toContain('call_agent_fork');
+    expect(forkHistory.at(-1)).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: FORK_PROMPT }],
+    });
+  });
+
+  it('starts fresh without inheritContext even when the parent has history', async () => {
+    const parent = testAgent();
+    parent.configure();
+    seedParentHistory(parent);
+
+    const child = testAgent();
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Handled the delegated task from a blank context as usual and returned a detailed summary so the parent agent can continue without repeating the child agent work or losing any of its own context. '.repeat(
+        2,
+      ),
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: FORK_PROMPT,
+      description: 'Deep dive',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    expect(child.llmCalls[0]?.history).toMatchObject([
+      { role: 'user', content: [{ type: 'text', text: FORK_PROMPT }] },
+    ]);
+  });
+
+  it('rejects inheritContext while the parent is in coordinator mode', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.agent.coordinatorMode.enter();
+
+    const child = testAgent();
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(spawnFork(host)).rejects.toThrow(
+      'inherit_context is not available in coordinator mode',
+    );
+    expect(child.llmCalls).toHaveLength(0);
+  });
+
+  it('rejects inheritContext when the parent is a teammate', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.agent.setTeammateIdentity({ name: 'worker' });
+
+    const child = testAgent();
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(spawnFork(host)).rejects.toThrow(
+      'inherit_context is not available to teammates',
+    );
+    expect(child.llmCalls).toHaveLength(0);
+  });
+
+  it('rejects inheritContext for a teammate spawn', async () => {
+    const parent = testAgent();
+    parent.configure();
+
+    const child = testAgent();
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(spawnFork(host, { teammate: { name: 'worker' } })).rejects.toThrow(
+      'inherit_context cannot spawn a teammate',
+    );
+    expect(child.llmCalls).toHaveLength(0);
+  });
+
+  it('resume continues the fork own history without re-copying newer parent messages', async () => {
+    const parent = testAgent();
+    parent.configure();
+    seedParentHistory(parent);
+
+    const child = testAgent();
+    child.mockNextResponse({
+      type: 'text',
+      text: 'First fork answer: confirmed the unawaited-promise root cause from the inherited investigation and laid out the minimal fix in full detail so the parent can proceed without repeating the work. '.repeat(
+        2,
+      ),
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await spawnFork(host);
+    await handle.completion;
+
+    // The parent moves on after the fork starts; the fork must never see this.
+    parent.agent.context.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'Newer parent-only message.' }],
+      toolCalls: [],
+    });
+
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Second fork answer: applied the awaited-promise fix and verified the spec now exercises its assertions, reporting the complete outcome so the parent can continue confidently. '.repeat(
+        2,
+      ),
+    });
+    const resumeHandle = await host.resume(handle.agentId, {
+      parentToolCallId: 'call_agent_resume',
+      prompt: 'Apply the fix and report.',
+      description: 'Continue fork',
+      runInBackground: false,
+      signal,
+    });
+    await resumeHandle.completion;
+
+    const resumeHistory = JSON.stringify(child.llmCalls[1]?.history ?? []);
+    // The inherited prefix and the fork's own first turn are kept...
+    expect(resumeHistory).toContain('tests/parser.spec.ts');
+    expect(resumeHistory).toContain(FORK_PROMPT);
+    expect(resumeHistory).toContain('First fork answer');
+    expect(resumeHistory).toContain('Apply the fix and report.');
+    // ...but the parent's newer messages are never re-copied.
+    expect(resumeHistory).not.toContain('Newer parent-only message');
+  });
+
+  it('counts the inherited history toward the child own compaction accounting', async () => {
+    const parent = testAgent();
+    parent.configure();
+    seedParentHistory(parent);
+    const parentPending = parent.agent.context.tokenCountWithPending;
+    expect(parentPending).toBeGreaterThan(0);
+
+    const summary =
+      'Confirmed the root cause from the inherited context and reported the minimal fix with full detail so the parent agent can proceed without repeating the investigation. '.repeat(
+        2,
       );
-      child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
-      child.mockNextResponse({ type: 'text', text: LONG_SUMMARY });
+    let pendingAtFirstCall = -1;
+    let childAgent: Agent | undefined;
+    const generate: GenerateFn = async (_provider, _systemPrompt, _tools, _history, callbacks) => {
+      if (pendingAtFirstCall === -1) {
+        pendingAtFirstCall = childAgent?.context.tokenCountWithPending ?? -1;
+      }
+      await callbacks?.onMessagePart?.({ type: 'text', text: summary });
+      return textResult(summary);
+    };
+    const child = testAgent({ generate });
+    childAgent = child.agent;
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
 
-      const session = fakeSession(parent.agent, child.agent, {
-        'agent-0': {
-          homedir: '/tmp/kimi-session/agents/agent-0',
-          type: 'sub',
-          parentAgentId: 'main',
-        },
-      }, {
-        experimentalFlags: secondaryFlags(),
-        config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
-      });
-      const host = new SessionSubagentHost(session, 'main');
+    const handle = await spawnFork(host);
+    await handle.completion;
 
-      const handle = await host.resume('agent-0', {
-        parentToolCallId: 'call_agent',
-        prompt: 'Continue from context',
-        description: 'Continue work',
-        runInBackground: false,
-        signal,
-      });
-      await handle.completion;
-      // With the experiment on, resume no longer realigns the child to the
-      // parent's model: the subagent keeps the model it was bound to at spawn.
-      expect(child.agent.config.modelAlias).toBe('cheap-model');
+    // The seeded prefix plus the fork prompt are all covered by the child's
+    // compaction accounting, so a fork near the context limit compacts like
+    // any other large context.
+    expect(pendingAtFirstCall).toBeGreaterThan(parentPending);
+  });
+});
+
+
+describe('SessionSubagentHost model selection', () => {
+  const savedEnv: { model: string | undefined; effort: string | undefined } = {
+    model: process.env[SECONDARY_MODEL_ENV],
+    effort: process.env[SECONDARY_MODEL_EFFORT_ENV],
+  };
+  beforeEach(() => {
+    delete process.env[SECONDARY_MODEL_ENV];
+    delete process.env[SECONDARY_MODEL_EFFORT_ENV];
+  });
+  afterEach(() => {
+    for (const [name, value] of [
+      [SECONDARY_MODEL_ENV, savedEnv.model],
+      [SECONDARY_MODEL_EFFORT_ENV, savedEnv.effort],
+    ] as const) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  });
+
+  it('inherits the parent model and effort when no selection is made', async () => {
+    const child = await spawnChildWithModel({});
+    expect(child.agent.config.modelAlias).toBe('mock-model');
+    expect(child.agent.config.thinkingEffort).toBe('off');
+  });
+
+  it('uses an explicit spawn-level model alias and keeps the parent effort', async () => {
+    const child = await spawnChildWithModel({
+      parentConfig: modelTestConfig({ model: SECONDARY_ALIAS, defaultEffort: 'low' }),
+      model: SPAWN_ALIAS,
     });
+    expect(child.agent.config.modelAlias).toBe(SPAWN_ALIAS);
+    expect(child.agent.config.thinkingEffort).toBe('off');
+  });
+
+  it('resolves the secondary keyword through the [secondary_model] config', async () => {
+    const child = await spawnChildWithModel({
+      parentConfig: modelTestConfig({ model: SECONDARY_ALIAS, defaultEffort: 'low' }),
+      model: 'secondary',
+    });
+    expect(child.agent.config.modelAlias).toBe('__secondary__');
+    expect(child.agent.config.thinkingEffort).toBe('low');
+  });
+
+  it('keeps the parent effort on the secondary model when no secondary effort is configured', async () => {
+    const child = await spawnChildWithModel({
+      parentConfig: modelTestConfig({ model: SECONDARY_ALIAS }),
+      model: 'secondary',
+    });
+    expect(child.agent.config.modelAlias).toBe(SECONDARY_ALIAS);
+    expect(child.agent.config.thinkingEffort).toBe('off');
+  });
+
+  it('falls back to the parent model when secondary is requested but unconfigured', async () => {
+    const child = await spawnChildWithModel({ model: 'secondary' });
+    expect(child.agent.config.modelAlias).toBe('mock-model');
+    expect(child.agent.config.thinkingEffort).toBe('off');
+  });
+
+  it('lets the secondary env overrides win over the config', async () => {
+    // The env overlay rides config load (applySecondaryModelConfig), so by
+    // the time the session reads secondaryModel the env has already won.
+    process.env[SECONDARY_MODEL_ENV] = ENV_ALIAS;
+    process.env[SECONDARY_MODEL_EFFORT_ENV] = 'high';
+    const child = await spawnChildWithModel({
+      parentConfig: applySecondaryModelConfig(
+        modelTestConfig({ model: SECONDARY_ALIAS, defaultEffort: 'low' }),
+      ),
+      model: 'secondary',
+    });
+    expect(child.agent.config.modelAlias).toBe('__secondary__');
+    expect(child.agent.config.thinkingEffort).toBe('high');
+  });
+
+  it('pins the profile model over a spawn-level model request', async () => {
+    const child = await spawnChildWithModel({
+      parentConfig: modelTestConfig({ model: SECONDARY_ALIAS, defaultEffort: 'low' }),
+      model: 'secondary',
+      profiles: pinnedModelProfiles(),
+    });
+    expect(child.agent.config.modelAlias).toBe(PINNED_ALIAS);
+    expect(child.agent.config.thinkingEffort).toBe('off');
+  });
+
+  it('applies a requested secondary model when resuming a subagent', async () => {
+    const parent = testAgent({
+      initialConfig: modelTestConfig({ model: SECONDARY_ALIAS, defaultEffort: 'low' }),
+    });
+    parent.configure();
+    parent.agent.permission.setMode('yolo');
+
+    const child = testAgent({ initialConfig: modelTestConfig() });
+    child.configure({ tools: ['Read'] });
+    child.agent.useProfile(
+      profile({ name: 'coder', tools: ['Read'], systemPrompt: 'coder prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Resumed the subagent with the secondary model selection applied, carried the task through to completion, and returned a full technical summary so the parent agent can continue without repeating prior work.',
+    });
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': {
+        homedir: '/tmp/kimi-session/agents/agent-0',
+        type: 'sub',
+        parentAgentId: 'main',
+      },
+    });
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.resume('agent-0', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Continue from context',
+      description: 'Continue work',
+      runInBackground: false,
+      model: 'secondary',
+      signal,
+    });
+    await handle.completion;
+
+    expect(child.agent.config.modelAlias).toBe('__secondary__');
+    expect(child.agent.config.thinkingEffort).toBe('low');
+  });
+
+  it('runQueued forwards the task model selection to the spawned child', async () => {
+    const parent = testAgent({
+      initialConfig: modelTestConfig({ model: SECONDARY_ALIAS, defaultEffort: 'low' }),
+    });
+    parent.configure();
+    parent.newEvents();
+
+    const summary =
+      'Completed the queued swarm item with the secondary model applied and returned a detailed technical handoff so the parent can map the result back to the original swarm input. '.repeat(
+        2,
+      );
+    const child = testAgent({ initialConfig: modelTestConfig() });
+    child.mockNextResponse({ type: 'text', text: summary });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(
+      host.runQueued([{ ...queuedTask(1), model: 'secondary', signal }]),
+    ).resolves.toMatchObject([{ agentId: 'agent-0', status: 'completed' }]);
+    expect(child.agent.config.modelAlias).toBe('__secondary__');
+    expect(child.agent.config.thinkingEffort).toBe('low');
+  });
+
+  it('Agent tool spawn resolves the secondary model on the child config end to end', async () => {
+    const parent = testAgent({
+      initialConfig: modelTestConfig({ model: SECONDARY_ALIAS, defaultEffort: 'low' }),
+    });
+    parent.configure();
+    parent.newEvents();
+
+    const summary =
+      'Completed the Agent-tool delegated task on the secondary model and returned a detailed technical handoff so the parent agent can continue without repeating the work. '.repeat(
+        2,
+      );
+    const child = testAgent({ initialConfig: modelTestConfig() });
+    child.mockNextResponse({ type: 'text', text: summary });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const tool = new AgentTool(host, createBackgroundManager().manager);
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_agent',
+      args: {
+        prompt: 'Implement the fix',
+        description: 'Fix bug',
+        model: 'secondary',
+      },
+      signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(child.agent.config.modelAlias).toBe('__secondary__');
+    expect(child.agent.config.thinkingEffort).toBe('low');
   });
 });
 
@@ -1488,6 +1878,114 @@ describe('Session resume permission parent chain', () => {
   });
 });
 
+describe('fork inherit_context end to end', () => {
+  const E2E_PROVIDER = {
+    type: 'kimi',
+    apiKey: 'test-key',
+    model: 'mock-model',
+  } as const satisfies ProviderConfig;
+
+  function e2eProviderManager(): ProviderManager {
+    return new ProviderManager({
+      config: {
+        providers: { test: { type: E2E_PROVIDER.type, apiKey: E2E_PROVIDER.apiKey } },
+        models: {
+          [E2E_PROVIDER.model]: {
+            provider: 'test',
+            model: E2E_PROVIDER.model,
+            maxContextSize: 1_000_000,
+          },
+        },
+      },
+    });
+  }
+
+  it('answers from the inherited parent context without being told', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cloudcode-fork-e2e-'));
+    tempDirs.push(dir);
+    const events: Array<Record<string, unknown>> = [];
+    const rpc = {
+      emitEvent: vi.fn(async (event: Record<string, unknown>) => {
+        events.push(event);
+      }),
+      requestApproval: vi.fn(async () => ({ decision: 'approved', selectedLabel: 'approve' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '', isError: true })),
+    } as unknown as SDKSessionRPC;
+
+    const scripted = createScriptedGenerate();
+    const session = new Session({
+      id: 'fork-e2e',
+      kaos: testKaos.withCwd(dir),
+      homedir: dir,
+      rpc,
+      initializeMainAgent: false,
+      skills: { explicitDirs: [join(dir, 'missing-skills')] },
+      providerManager: e2eProviderManager(),
+    });
+    try {
+      const { agent } = await session.createAgent(
+        { type: 'main', generate: scripted.generate },
+        { profile: profile({ name: 'test', tools: ['Agent'], systemPrompt: 'main prompt' }) },
+      );
+      agent.config.update({ modelAlias: E2E_PROVIDER.model, thinkingEffort: 'off' });
+      agent.permission.setMode('yolo');
+
+      const secret =
+        'the flaky spec is tests/parser.spec.ts and the root cause is an unawaited promise';
+      // Turn 1: the parent learns a fact.
+      scripted.mockNextResponse({ type: 'text', text: `Understood: ${secret}.` });
+      agent.turn.prompt([{ type: 'text', text: 'Investigate the flaky parser test.' }]);
+      await agent.turn.waitForCurrentTurn();
+
+      // Turn 2: the parent forks with inherit_context. The fork prompt does
+      // NOT mention the fact; the child can only know it from the inherited
+      // context. One scripted generate serves parent and child (children
+      // inherit parent.rawGenerate), so the call order is: parent t1, parent
+      // t2 request, child request, parent follow-up.
+      const forkPrompt = 'Summarize the investigation so far and propose the minimal fix.';
+      const childAnswer =
+        'The parser spec calls run() without await, so its assertions never execute; the minimal fix is to await the promise. This conclusion comes from the inherited parent conversation, with no repeated investigation. ';
+      scripted.mockNextResponse({
+        type: 'function',
+        id: 'call_fork',
+        name: 'Agent',
+        arguments: JSON.stringify({
+          prompt: forkPrompt,
+          description: 'Summarize findings',
+          inherit_context: true,
+        }),
+      });
+      scripted.mockNextResponse({ type: 'text', text: childAnswer.repeat(2) });
+      scripted.mockNextResponse({
+        type: 'text',
+        text: 'The fork confirmed the root cause; applying the fix now.',
+      });
+      agent.turn.prompt([{ type: 'text', text: 'Fork a deep dive to confirm and fix.' }]);
+      await agent.turn.waitForCurrentTurn();
+
+      expect(scripted.calls).toHaveLength(4);
+      const forkCall = scripted.calls[2];
+      const forkHistory = JSON.stringify(forkCall?.history ?? []);
+      // The child saw the parent's turn-1 exchange and its own prompt...
+      expect(forkHistory).toContain('Investigate the flaky parser test.');
+      expect(forkHistory).toContain(secret);
+      expect(forkHistory).toContain(forkPrompt);
+      // ...but not the parent's in-flight Agent call (trimmed as an open
+      // exchange).
+      expect(forkHistory).not.toContain('call_fork');
+      // The system prompt comes from the child's own (default coder) profile,
+      // not from the parent.
+      expect(forkCall?.systemPrompt).not.toBe(scripted.calls[1]?.systemPrompt);
+      // The fork's result returned to the parent's follow-up request.
+      const parentFollowup = JSON.stringify(scripted.calls[3]?.history ?? []);
+      expect(parentFollowup).toContain('The parser spec calls run() without await');
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe('Session.createAgent', () => {
   it('uses the Kaos current directory when the session cwd is omitted', async () => {
     const workDir = '/remote/project';
@@ -1547,7 +2045,7 @@ describe('Session.createAgent', () => {
             `${workDir}/.github`,
             `${workDir}/.github/workflows`,
             `${workDir}/src`,
-            `${workDir}/.kimi-code`,
+            `${workDir}/.cloud-code`,
           ].includes(path)
         ) {
           return stat('dir');
@@ -1555,7 +2053,7 @@ describe('Session.createAgent', () => {
         if (
           [
             '/repo/AGENTS.md',
-            `${workDir}/.kimi-code/AGENTS.md`,
+            `${workDir}/.cloud-code/AGENTS.md`,
             `${workDir}/AGENTS.md`,
             `${workDir}/package.json`,
             `${workDir}/src/index.ts`,
@@ -1595,7 +2093,7 @@ describe('Session.createAgent', () => {
       },
       readText: vi.fn(async (path: string) => {
         if (path === '/repo/AGENTS.md') return 'root instructions';
-        if (path === `${workDir}/.kimi-code/AGENTS.md`) return 'brand instructions';
+        if (path === `${workDir}/.cloud-code/AGENTS.md`) return 'brand instructions';
         if (path === `${workDir}/AGENTS.md`) return 'leaf instructions';
         throw new Error(`ENOENT ${path}`);
       }),
@@ -1621,7 +2119,7 @@ describe('Session.createAgent', () => {
     expect(created.agent.config.systemPrompt).toContain('<!-- From: /repo/AGENTS.md -->');
     expect(created.agent.config.systemPrompt).toContain('root instructions');
     expect(created.agent.config.systemPrompt).toContain(
-      '<!-- From: /repo/packages/app/.kimi-code/AGENTS.md -->',
+      '<!-- From: /repo/packages/app/.cloud-code/AGENTS.md -->',
     );
     expect(created.agent.config.systemPrompt).toContain('brand instructions');
     expect(created.agent.config.systemPrompt).toContain(
@@ -1642,7 +2140,7 @@ describe('Session.createAgent', () => {
         if (['/repo', '/repo/.git', '/repo/packages', workDir].includes(path)) {
           return stat('dir');
         }
-        if ([`${kimiHome}/AGENTS.md`, `${realHome}/.kimi-code/AGENTS.md`].includes(path)) {
+        if ([`${kimiHome}/AGENTS.md`, `${realHome}/.cloud-code/AGENTS.md`].includes(path)) {
           return stat('file');
         }
         throw new Error(`ENOENT ${path}`);
@@ -1653,7 +2151,7 @@ describe('Session.createAgent', () => {
       },
       readText: vi.fn(async (path: string) => {
         if (path === `${kimiHome}/AGENTS.md`) return 'kimi home instructions';
-        if (path === `${realHome}/.kimi-code/AGENTS.md`) return 'stale real-home instructions';
+        if (path === `${realHome}/.cloud-code/AGENTS.md`) return 'stale real-home instructions';
         throw new Error(`ENOENT ${path}`);
       }),
     });
@@ -1661,7 +2159,7 @@ describe('Session.createAgent', () => {
       id: 'test-kimi-home-agents-md',
       kaos: kaos.withCwd(workDir),
       homedir: '/tmp/kimi-session',
-      kimiHomeDir: kimiHome,
+      cloudCodeHomeDir: kimiHome,
       rpc: createSessionRpc(),
       initializeMainAgent: false,
     });
@@ -1700,20 +2198,16 @@ describe('Session.createAgent', () => {
       initializeMainAgent: false,
     });
 
-    // Create a parent agent — it should start at the session workDir.
     const parent = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
     expect(parent.agent.config.systemPrompt).toContain(`cwd=${sessionWorkDir}`);
 
-    // Move the parent agent to a different cwd (e.g. after a config.update replay).
     parent.agent.config.update({ cwd: parentWorkDir });
 
-    // Create a subagent from the moved parent.
     const child = await session.createAgent(
       { type: 'sub' },
       { profile: contextProfile(), parentAgentId: parent.id },
     );
 
-    // The subagent should inherit the parent's current cwd, not the session default.
     expect(child.agent.config.systemPrompt).toContain(`cwd=${parentWorkDir}`);
     expect(child.agent.config.systemPrompt).not.toContain(`cwd=${sessionWorkDir}`);
   });
@@ -1825,11 +2319,7 @@ function fakeSession(
   parent: Agent,
   child: Agent,
   metadataAgents: Session['metadata']['agents'] = {},
-  sessionOptions?: {
-    config?: KimiConfig;
-    experimentalFlags?: FlagResolver;
-    providerManager?: Session['options']['providerManager'];
-  },
+  profiles?: Record<string, ResolvedAgentProfile>,
 ) {
   const agents = new Map<string, Agent>([['main', parent]]);
   if (metadataAgents['agent-0'] !== undefined) {
@@ -1837,15 +2327,7 @@ function fakeSession(
   }
   return {
     agents,
-    options: {
-      kimiHomeDir: undefined,
-      config: sessionOptions?.config,
-      providerManager: sessionOptions?.providerManager,
-    },
-    get kimiConfig() {
-      return sessionOptions?.config;
-    },
-    experimentalFlags: sessionOptions?.experimentalFlags ?? new FlagResolver({}),
+    options: { cloudCodeHomeDir: undefined },
     agentCatalog: testAgentCatalog(),
     metadata: {
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -1858,6 +2340,23 @@ function fakeSession(
     writeMetadata: vi.fn(async () => {}),
     systemContextKaos: vi.fn((cwd: string) => parent.kaos.withCwd(cwd)),
     getReadyAgent: vi.fn((id: string) => agents.get(id)),
+    getAgentProfiles: profiles === undefined ? undefined : vi.fn(() => profiles),
+    // Session-shared team/mailbox services as no-op stubs: tests that spawn
+    // through this fake never touch disk-backed team/mailbox state; the e2e
+    // harnesses use real Sessions for that.
+    teamStore: {
+      ensureTeam: vi.fn(async (teamName: string) => ({
+        name: teamName,
+        createdAt: 0,
+        createdBy: 'main',
+        nextTaskId: 1,
+        tasks: [],
+      })),
+    },
+    mailbox: {
+      startTeammateWatcher: vi.fn(),
+      ensureLeaderWatcher: vi.fn(),
+    },
     ensureAgentResumed: vi.fn(async (id: string) => {
       const agent = agents.get(id);
       if (agent === undefined) {
@@ -1878,6 +2377,7 @@ function fakeSession(
             type: config.type ?? 'main',
             parentAgentId,
             swarmItem: options.swarmItem,
+            teammate: options.teammate,
           };
         }
         if (options.profile !== undefined) {
@@ -1962,6 +2462,113 @@ function queuedTask(index: number): QueuedSubagentTask<number> {
     swarmIndex: index,
     runInBackground: false,
   };
+}
+
+const SECONDARY_ALIAS = 'secondary-alias';
+const SPAWN_ALIAS = 'spawn-alias';
+const ENV_ALIAS = 'env-alias';
+const PINNED_ALIAS = 'pinned-alias';
+
+/**
+ * Config registering the model aliases used by the model-selection tests.
+ * Both the parent and the child agent get it so every alias resolves on
+ * either side; `secondary-alias`/`env-alias` declare thinking efforts so the
+ * resolved secondary effort survives verbatim.
+ */
+function modelTestConfig(secondaryModel?: CloudCodeConfig['secondaryModel']): CloudCodeConfig {
+  return {
+    providers: {
+      'test-models': { type: 'kimi', apiKey: 'test-key' },
+    },
+    models: {
+      [SECONDARY_ALIAS]: {
+        provider: 'test-models',
+        model: SECONDARY_ALIAS,
+        maxContextSize: 1_000_000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high'],
+      },
+      [SPAWN_ALIAS]: {
+        provider: 'test-models',
+        model: SPAWN_ALIAS,
+        maxContextSize: 1_000_000,
+      },
+      [ENV_ALIAS]: {
+        provider: 'test-models',
+        model: ENV_ALIAS,
+        maxContextSize: 1_000_000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high'],
+      },
+      [PINNED_ALIAS]: {
+        provider: 'test-models',
+        model: PINNED_ALIAS,
+        maxContextSize: 1_000_000,
+      },
+      // The synthesized derived entry a patch-carrying recipe binds (in
+      // production `applySecondaryModelConfig` injects it into the session
+      // runtime config).
+      '__secondary__': {
+        provider: 'test-models',
+        model: SECONDARY_ALIAS,
+        maxContextSize: 1_000_000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high'],
+      },
+    },
+    ...(secondaryModel === undefined ? {} : { secondaryModel }),
+  };
+}
+
+function pinnedModelProfiles(): Record<string, ResolvedAgentProfile> {
+  return {
+    agent: profile({
+      name: 'agent',
+      tools: [],
+      systemPrompt: 'root prompt',
+      subagents: {
+        coder: {
+          ...profile({ name: 'coder', tools: ['Read'], systemPrompt: 'coder prompt' }),
+          model: PINNED_ALIAS,
+        },
+      },
+    }),
+  };
+}
+
+async function spawnChildWithModel(options: {
+  readonly parentConfig?: CloudCodeConfig;
+  readonly model?: string;
+  readonly profiles?: Record<string, ResolvedAgentProfile>;
+}): Promise<AgentTestContext> {
+  const parent = testAgent({ initialConfig: options.parentConfig ?? modelTestConfig() });
+  parent.configure();
+  parent.newEvents();
+
+  const summary =
+    'Completed the delegated model-selection task and returned a detailed technical handoff so the parent agent can continue confidently without repeating the child work. '.repeat(
+      2,
+    );
+  const child = testAgent({ initialConfig: modelTestConfig() });
+  // Registers the harness mock model on the child so the parent-model
+  // inheritance cases resolve it, mirroring the shared session config in
+  // production; the host's configureChild overrides alias/effort afterwards.
+  child.configure();
+  child.mockNextResponse({ type: 'text', text: summary });
+  const session = fakeSession(parent.agent, child.agent, {}, options.profiles);
+  const host = new SessionSubagentHost(session, 'main');
+
+  const handle = await host.spawn({
+    profileName: 'coder',
+    parentToolCallId: 'call_agent',
+    prompt: 'Implement the fix',
+    description: 'Fix bug',
+    runInBackground: false,
+    model: options.model,
+    signal,
+  });
+  await handle.completion;
+  return child;
 }
 
 function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
