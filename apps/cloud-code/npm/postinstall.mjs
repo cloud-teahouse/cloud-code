@@ -86,7 +86,8 @@ function download(url, dest = null, redirects = 5) {
 
 async function main() {
   // Monorepo/source checkouts skip the download entirely (workspace install).
-  if (existsSync(join(here, '..', '..', 'pnpm-workspace.yaml'))) process.exit(0);
+  // npm/ sits three levels below the repo root.
+  if (existsSync(join(here, '..', '..', '..', 'pnpm-workspace.yaml'))) process.exit(0);
   if (process.env.CLOUD_CODE_SKIP_POSTINSTALL === '1') process.exit(0);
   const name = assetName(process.platform, process.arch);
   if (name === null) {
@@ -98,16 +99,25 @@ async function main() {
   const target = join(outDir, process.platform === 'win32' ? 'cloudcode.exe' : 'cloudcode');
   if (existsSync(target)) process.exit(0);
 
-  mkdirSync(outDir, { recursive: true });
-  const sums = await download(`${base}/sha256sums.txt`);
-  const expected = findSha256Entry(sums, name);
-  if (expected === undefined) throw new Error(`cloudcode-cli: ${name} not found in sha256sums.txt (${base})`);
+  try {
+    mkdirSync(outDir, { recursive: true });
+    const sums = await download(`${base}/sha256sums.txt`);
+    const expected = findSha256Entry(sums, name);
+    if (expected === undefined) throw new Error(`cloudcode-cli: ${name} not found in sha256sums.txt (${base})`);
 
-  await download(`${base}/${name}`, target);
-  const actual = createHash('sha256').update(readFileSync(target)).digest('hex');
-  if (actual !== expected) throw new Error(`cloudcode-cli: sha256 mismatch for ${name} (got ${actual})`);
-  chmodSync(target, 0o755);
-  console.log(`cloudcode-cli: installed ${name} (sha256 verified).`);
+    await download(`${base}/${name}`, target);
+    const actual = createHash('sha256').update(readFileSync(target)).digest('hex');
+    if (actual !== expected) throw new Error(`cloudcode-cli: sha256 mismatch for ${name} (got ${actual})`);
+    chmodSync(target, 0o755);
+    console.log(`cloudcode-cli: installed ${name} (sha256 verified).`);
+  } catch (error) {
+    // Best-effort: never fail the surrounding install. The bin launcher
+    // re-runs this script on first use, so a transient failure (offline,
+    // release still building) self-heals later with a clear message.
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`cloudcode-cli: postinstall could not fetch the runtime binary (${message}); it will be fetched on first run.`);
+    process.exit(0);
+  }
 }
 
 const invokedDirectly =

@@ -1,9 +1,13 @@
 name: Release
 
 on:
+
   push:
     tags:
       - 'v*'
+
+env:
+  CLOUD_CODE_SKIP_POSTINSTALL: "1" # our own postinstall would try to download a not-yet-published release
 
 permissions:
   contents: write

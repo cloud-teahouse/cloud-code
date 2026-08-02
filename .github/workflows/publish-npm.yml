@@ -1,6 +1,7 @@
 name: Publish to npm
 
 on:
+
   release:
     types: [published]
   workflow_dispatch:
@@ -16,6 +17,9 @@ on:
       tag:
         description: "Tag to publish (release channel only, e.g. v0.2.1)"
         required: false
+
+env:
+  CLOUD_CODE_SKIP_POSTINSTALL: "1" # our own postinstall would try to download a not-yet-published release
 
 permissions:
   contents: read
