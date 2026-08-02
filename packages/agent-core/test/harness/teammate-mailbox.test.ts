@@ -295,9 +295,12 @@ describe('team mailbox (real Session e2e)', () => {
 
     await mainAgent.background.wait(taskId);
     expect(mainAgent.background.getTask(taskId)).toMatchObject({ status: 'completed' });
-    // Both inboxes fully consumed.
-    expect(await session.mailbox.store.unread('core', 'alpha')).toHaveLength(0);
-    expect(await session.mailbox.store.unread('core', LEADER_INBOX)).toHaveLength(0);
+    // Both inboxes fully consumed (the leader-side watcher marks read on
+    // delivery to the leader turn, which can lag the task completion under load).
+    await vi.waitFor(async () => {
+      expect(await session.mailbox.store.unread('core', 'alpha')).toHaveLength(0);
+      expect(await session.mailbox.store.unread('core', LEADER_INBOX)).toHaveLength(0);
+    }, { timeout: 10_000 });
   });
 
   it('stops the teammate task on a shutdown request and acks upstream', async () => {

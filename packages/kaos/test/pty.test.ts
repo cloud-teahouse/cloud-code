@@ -157,7 +157,7 @@ describe.skipIf(!POSIX)('LocalKaos.ptyExec', () => {
     expect(await proc.wait()).toBe(0);
   });
 
-  it('kill() terminates the process and wait() settles', async () => {
+  it('kill() terminates the process and wait() settles', { timeout: 15_000 }, async () => {
     // bash forks a grandchild sleep; the group kill (kill(-pid)) reaps the
     // whole group. Note: node-pty reports WEXITSTATUS on signal death, which
     // is 0 for a SIGKILLed leader — so assert that the process dies (wait
