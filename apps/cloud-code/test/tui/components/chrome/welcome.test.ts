@@ -130,23 +130,25 @@ describe('WelcomeComponent channel note', () => {
     setLocalePreference('zh-CN');
     const rendered = new WelcomeComponent(appState, 'dev').render(80);
     const text = plain(rendered);
-    expect(text).toContain('dev 版本，可能不稳定');
+    expect(text).toContain('dev 构建（内部开发版）');
+    expect(text).toContain('本渠道不支持 /update');
     // The note sits outside (after) the box's bottom border.
-    expect(text.indexOf('dev 版本，可能不稳定')).toBeGreaterThan(text.lastIndexOf('╰'));
+    expect(text.indexOf('dev 构建（内部开发版）')).toBeGreaterThan(text.lastIndexOf('╰'));
   });
 
   it('shows the beta note under the box on beta builds', () => {
     setLocalePreference('zh-CN');
     const text = plain(new WelcomeComponent(appState, 'beta').render(80));
-    expect(text).toContain('beta 版本，可能不稳定');
+    expect(text).toContain('beta 构建（main 滚动预发布）');
+    expect(text).toContain('github.com/cloud-teahouse/cloud-code/issues');
   });
 
   it('shows the note in English when the locale is en', () => {
     expect(plain(new WelcomeComponent(appState, 'dev').render(80))).toContain(
-      'dev build, may be unstable',
+      'dev build (internal development)',
     );
     expect(plain(new WelcomeComponent(appState, 'beta').render(80))).toContain(
-      'beta build, may be unstable',
+      'beta build (rolling pre-release from main)',
     );
   });
 

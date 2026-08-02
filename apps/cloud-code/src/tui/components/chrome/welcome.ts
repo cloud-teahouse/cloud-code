@@ -56,7 +56,11 @@ export class WelcomeComponent implements Component {
         : (effectiveActiveModel?.displayName ?? effectiveActiveModel?.model ?? this.state.model);
       const lines = ['', title, prompt, `${t('welcome.label.model')} ${model}`];
       const note = this.channelNote();
-      if (note !== null) lines.push(chalk.hex(currentTheme.palette.textDim)(note));
+      if (note !== null) {
+        for (const noteLine of note.split('\n')) {
+          lines.push(chalk.hex(currentTheme.palette.textDim)(noteLine));
+        }
+      }
       return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
     }
 
@@ -131,7 +135,9 @@ export class WelcomeComponent implements Component {
     lines.push(border('╰' + '─'.repeat(safeWidth - 2) + '╯'));
     const note = this.channelNote();
     if (note !== null) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)(`  ${note}`));
+      for (const noteLine of note.split('\n')) {
+        lines.push(chalk.hex(currentTheme.palette.textDim)(`  ${noteLine}`));
+      }
     }
     lines.push('');
 

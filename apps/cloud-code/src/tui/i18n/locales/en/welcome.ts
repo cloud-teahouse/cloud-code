@@ -12,8 +12,13 @@ export const welcome = {
   'welcome.label.mcp': 'MCP:',
 
   // Dim note under the welcome box, shown only on non-release build channels.
-  'welcome.channelNote.dev': 'dev build, may be unstable',
-  'welcome.channelNote.beta': 'beta build, may be unstable',
+  // Two lines: what the channel is, then what to do about it.
+  'welcome.channelNote.dev':
+    'dev build (internal development) — unverified and may break at any time.\n' +
+    'Not for daily use; this channel does not support /update.',
+  'welcome.channelNote.beta':
+    'beta build (rolling pre-release from main) — latest changes, not fully validated.\n' +
+    'Report issues: github.com/cloud-teahouse/cloud-code/issues · stable channel: npm i -g @cloud-teahouse/cloudcode-cli@latest',
 
   // ── /dance easter egg ──
   'welcome.dance.statusOn': 'Dancing — use {cmd} to turn it off.',
