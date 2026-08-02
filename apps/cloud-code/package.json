@@ -1,6 +1,6 @@
 {
   "name": "@cloud-teahouse/cloudcode-cli",
-  "version": "0.2.1",
+  "version": "0.1.0",
   "description": "Cloud Code CLI — The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -23,12 +23,13 @@
     "tui"
   ],
   "bin": {
-    "cloudcode": "dist/main.mjs",
-    "cloud-code": "dist/main.mjs"
+    "cloudcode": "npm/bin.mjs",
+    "cloud-code": "npm/bin.mjs"
   },
   "files": [
     "dist",
     "native",
+    "npm",
     "README.md"
   ],
   "type": "module",
@@ -56,7 +57,6 @@
     "test:native:smoke": "node scripts/native/smoke.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:cli-only": "tsx --import ../../build/register-raw-text-loader.mjs ./src/main.ts",
-
     "dev:plugin-marketplace": "node scripts/dev-plugin-marketplace-server.mjs",
     "build:plugin-marketplace": "node scripts/build-plugin-marketplace-cdn.mjs",
     "dev:prod": "node dist/main.mjs",
@@ -64,7 +64,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm -w run build:packages && vitest run",
     "e2e": "pnpm -w run build:packages && KIMI_E2E=1 vitest run test/e2e",
-    "e2e:real": "pnpm -w run build:packages && KIMI_E2E_REAL=1 vitest run test/e2e/real-llm-smoke.e2e.test.ts"
+    "e2e:real": "pnpm -w run build:packages && KIMI_E2E_REAL=1 vitest run test/e2e/real-llm-smoke.e2e.test.ts",
+    "postinstall": "node npm/postinstall.mjs"
   },
   "optionalDependencies": {
     "@mariozechner/clipboard": "^0.3.9",

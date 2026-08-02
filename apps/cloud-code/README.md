@@ -14,7 +14,7 @@ Cloud Code CLI is not yet published to npm or a binary CDN, so build it from sou
 You need Node.js 24.15.0 or later and pnpm:
 
 ```sh
-git clone https://github.com/yspbwx2010/cloud-code.git
+git clone https://github.com/cloud-teahouse/cloud-code.git
 cd cloud-code
 pnpm install
 pnpm build
@@ -56,8 +56,8 @@ Take a look at this project and explain the main directories.
 
 ## Repository & Issues
 
-- Source: https://github.com/yspbwx2010/cloud-code
-- Issues: https://github.com/yspbwx2010/cloud-code/issues
+- Source: https://github.com/cloud-teahouse/cloud-code
+- Issues: https://github.com/cloud-teahouse/cloud-code/issues
 
 ## License
 

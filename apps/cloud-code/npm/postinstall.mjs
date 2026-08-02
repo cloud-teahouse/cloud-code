@@ -85,6 +85,9 @@ function download(url, dest = null, redirects = 5) {
 }
 
 async function main() {
+  // Monorepo/source checkouts skip the download entirely (workspace install).
+  if (existsSync(join(here, '..', '..', 'pnpm-workspace.yaml'))) process.exit(0);
+  if (process.env.CLOUD_CODE_SKIP_POSTINSTALL === '1') process.exit(0);
   const name = assetName(process.platform, process.arch);
   if (name === null) {
     console.error(`cloudcode-cli: unsupported platform ${process.platform}/${process.arch}; install from source or use WSL.`);
