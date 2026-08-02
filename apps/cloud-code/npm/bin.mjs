@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-/** cloudcode bin launcher: exec the platform binary fetched by postinstall,
- *  falling back to the built JS entry in monorepo/source checkouts. */
+/** cloudcode bin launcher: exec the platform binary from postinstall; if it
+ *  is missing (e.g. the install script was blocked), fetch and verify it on
+ *  first run. In monorepo checkouts, fall back to the built JS entry. */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -10,16 +11,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const binary = join(here, 'bin', process.platform === 'win32' ? 'cloudcode.exe' : 'cloudcode');
 const distEntry = join(here, '..', 'dist', 'main.mjs');
 
-const [command, args] = existsSync(binary)
-  ? [binary, process.argv.slice(2)]
-  : existsSync(distEntry)
-    ? [process.execPath, [distEntry, ...process.argv.slice(2)]]
-    : [null, null];
-
-if (command === null) {
-  console.error('cloudcode-cli: binary missing — reinstall (`npm install -g @cloud-teahouse/cloudcode-cli`) or run `node npm/postinstall.mjs` in the package directory.');
-  process.exit(1);
+if (!existsSync(binary)) {
+  if (existsSync(join(here, '..', '..', 'pnpm-workspace.yaml')) && existsSync(distEntry)) {
+    // Monorepo/source checkout: run the built JS entry directly.
+    const result = spawnSync(process.execPath, [distEntry, ...process.argv.slice(2)], {
+      stdio: 'inherit',
+    });
+    process.exit(result.status ?? (result.signal === null ? 1 : 0));
+  }
+  console.error('cloudcode-cli: runtime binary not found (postinstall may have been blocked) — fetching it now…');
+  const result = spawnSync(process.execPath, [join(here, 'postinstall.mjs')], { stdio: 'inherit' });
+  if (result.status !== 0 || !existsSync(binary)) {
+    console.error('cloudcode-cli: could not fetch the runtime binary. Download it manually from https://github.com/cloud-teahouse/cloud-code/releases');
+    process.exit(1);
+  }
 }
 
-const result = spawnSync(command, args, { stdio: 'inherit' });
+const result = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit' });
 process.exit(result.status ?? (result.signal === null ? 1 : 0));

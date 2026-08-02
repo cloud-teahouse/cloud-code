@@ -53,5 +53,5 @@ time) a tag whose Release already exists.
 | Secret | Used by | Status |
 |---|---|---|
 | `GITHUB_TOKEN` | `release.yml` (creates the Release) | automatic, no setup needed |
-| `NPM_TOKEN` | `publish-npm.yml` (npm authentication) | **not yet configured** — create a granular access token on npmjs.com with publish rights for `cloudcode-cli` and add it under Settings → Secrets and variables → Actions |
+| npm Trusted Publishing | `publish-npm.yml` (npm authentication) | **configured** — OIDC publisher entry on npmjs.com for `cloud-teahouse/cloud-code` + this workflow file; no token secret is used. Legacy alternative: an `NPM_TOKEN` secret also works if added back as an `env` |
 | `AUR_SSH_KEY` | none yet — planned for pushing the `cloudcode-bin` AUR package from the release flow (see `docs/open-source-plan.md`) | **not yet configured** — no workflow consumes it today; add the AUR account's SSH private key here when that step lands |

@@ -19,13 +19,16 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # npm trusted publishing (OIDC) + provenance
 
 # Publishes the scoped package @cloud-teahouse/cloudcode-cli
-# (apps/cloud-code). Its postinstall script fetches the platform binary from
-# the matching GitHub Release assets and verifies it against sha256sums.txt
-# (see apps/cloud-code/npm/): a `vX.Y.Z` release for dist-tag latest, the
-# rolling `beta` pre-release for dist-tag beta.
+# (apps/cloud-code). Authentication is npm Trusted Publishing (GitHub OIDC
+# token exchange) — no NPM_TOKEN secret is used; the publisher entry is
+# configured on npmjs.com for this repo + workflow file. Its postinstall
+# script fetches the platform binary from the matching GitHub Release assets
+# and verifies it against sha256sums.txt (see apps/cloud-code/npm/): a
+# `vX.Y.Z` release for dist-tag latest, the rolling `beta` pre-release for
+# dist-tag beta.
 jobs:
   publish-release:
     if: github.event_name == 'release' || inputs.channel == 'release'
@@ -42,13 +45,13 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      # Trusted publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
       - name: Publish @cloud-teahouse/cloudcode-cli
         working-directory: apps/cloud-code
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
 
   # Beta npm builds are manual for now: Actions → "Publish to npm" → channel
@@ -67,6 +70,7 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
@@ -79,6 +83,4 @@ jobs:
 
       - name: Publish @cloud-teahouse/cloudcode-cli (beta)
         working-directory: apps/cloud-code
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public --tag beta

@@ -65,7 +65,7 @@ export class WelcomeComponent implements Component {
 
     // Logo + side-by-side text. The crab mascot (shape borrowed from Claude
     // Code's Clawd) is rendered in the primary theme color.
-    const logo = [' ▐█▛█▛█▌', ' ▐█████▌'] as const;
+    const logo = [' ▐█▛█▛█▌', ' ▐█████▌', ''] as const;
     const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
     const gap = '  ';
     const textWidth = Math.max(4, innerWidth - logoWidth - gap.length);
