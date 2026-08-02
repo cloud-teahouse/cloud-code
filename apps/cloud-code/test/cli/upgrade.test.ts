@@ -83,7 +83,7 @@ describe('handleUpgrade', () => {
     expect(deps.promptForInstallChoice).toHaveBeenCalledWith({
       currentVersion: '0.4.0',
       target: { version: '0.5.0' },
-      installCommand: 'npm install -g cloudcode-cli@0.5.0',
+      installCommand: 'npm install -g @cloud-teahouse/cloudcode-cli@0.5.0',
       installSource: 'npm-global',
     });
     expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin');
@@ -91,7 +91,7 @@ describe('handleUpgrade', () => {
       targetVersion: '0.5.0',
       source: 'npm-global',
     }));
-    expect(stdout.join('')).toContain('Updated cloudcode-cli to 0.5.0');
+    expect(stdout.join('')).toContain('Updated @cloud-teahouse/cloudcode-cli to 0.5.0');
     expect(stderr.join('')).toBe('');
   });
 
@@ -129,7 +129,7 @@ describe('handleUpgrade', () => {
 
     expect(deps.installUpdate).not.toHaveBeenCalled();
     expect(deps.promptForInstallChoice).not.toHaveBeenCalled();
-    expect(stdout.join('')).toContain('To update manually, run: npm install -g cloudcode-cli@0.5.0');
+    expect(stdout.join('')).toContain('To update manually, run: npm install -g @cloud-teahouse/cloudcode-cli@0.5.0');
   });
 
   it('prints the manual update command without prompting when not interactive', async () => {
@@ -140,7 +140,7 @@ describe('handleUpgrade', () => {
 
     expect(deps.promptForInstallChoice).not.toHaveBeenCalled();
     expect(deps.installUpdate).not.toHaveBeenCalled();
-    expect(stdout.join('')).toContain('To update manually, run: npm install -g cloudcode-cli@0.5.0');
+    expect(stdout.join('')).toContain('To update manually, run: npm install -g @cloud-teahouse/cloudcode-cli@0.5.0');
   });
 
   it('returns a failing exit code when the foreground install fails', async () => {
@@ -154,7 +154,7 @@ describe('handleUpgrade', () => {
     await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(1);
 
     expect(stderr.join('')).toContain(
-      'warning: failed to install cloudcode-cli@0.5.0: npm exited with code 1',
+      'warning: failed to install @cloud-teahouse/cloudcode-cli@0.5.0: npm exited with code 1',
     );
     expect(deps.logger.warn).toHaveBeenCalledWith('manual upgrade install failed', expect.objectContaining({
       targetVersion: '0.5.0',
@@ -192,6 +192,6 @@ describe('handleUpgrade', () => {
     await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
 
     expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin');
-    expect(stdout.join('')).toContain('Updated cloudcode-cli to 0.5.0');
+    expect(stdout.join('')).toContain('Updated @cloud-teahouse/cloudcode-cli to 0.5.0');
   });
 });
