@@ -18,11 +18,11 @@ Cloud Code CLI 是一个住在终端里的编码 agent：读你的代码库、�
 预编译二进制（linux/macOS/windows，x64 + arm64）见 [Releases](https://github.com/cloud-teahouse/cloud-code/releases) 页面。
 
 ```sh
-# npm（安装时按平台拉取二进制）
-npm install -g cloudcode-cli
+# 安装脚本（默认 release 通道；--channel=beta 装滚动 beta 版）
+curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh | bash
 
-# Arch Linux（AUR）
-yay -S cloudcode-bin
+# npm（安装时按平台拉取二进制）
+npm install -g @cloud-teahouse/cloudcode-cli
 ```
 
 运行 `cloudcode`，然后 `/login` 连接账号。

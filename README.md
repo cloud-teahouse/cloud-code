@@ -18,11 +18,11 @@ Cloud Code CLI is a coding agent that lives in your terminal: it reads your code
 Prebuilt binaries (linux/macOS/windows, x64 + arm64) are on the [Releases](https://github.com/cloud-teahouse/cloud-code/releases) page.
 
 ```sh
-# npm (platform binary fetched on install)
-npm install -g cloudcode-cli
+# Install script (release channel by default; --channel=beta for the rolling beta)
+curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh | bash
 
-# Arch Linux (AUR)
-yay -S cloudcode-bin
+# npm (platform binary fetched on install)
+npm install -g @cloud-teahouse/cloudcode-cli
 ```
 
 Then run `cloudcode`, and `/login` to connect an account.
