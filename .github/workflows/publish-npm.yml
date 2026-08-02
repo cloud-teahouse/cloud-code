@@ -4,6 +4,13 @@ on:
 
   release:
     types: [published]
+  # Auto-publish the beta dist-tag: the public repo's CI rebuilds the rolling
+  # `beta` pre-release on every push to main, and its completion fires this.
+  # Inert in the private repo (no main branch, so CI never runs there).
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       channel:
@@ -24,6 +31,12 @@ env:
 permissions:
   contents: read
   id-token: write # npm trusted publishing (OIDC) + provenance
+
+# Serialise publishes: queued runs keep FIFO order, so the beta dist-tag ends
+# up on the newest main commit even when several CI runs finish close together.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
 
 # Publishes the scoped package @cloud-teahouse/cloudcode-cli
 # (apps/cloud-code). Authentication is npm Trusted Publishing (GitHub OIDC
@@ -58,14 +71,22 @@ jobs:
         working-directory: apps/cloud-code
         run: npm publish --provenance --access public
 
-  # Beta npm builds are manual for now: Actions → "Publish to npm" → channel
-  # `beta`. The version is `0.1.0-beta.<short8>` so beta installs never
-  # collide with tagged releases, and `--tag beta` keeps `latest` untouched.
+  # Beta npm builds run automatically after a successful CI run on main
+  # (workflow_run above), or manually: Actions → "Publish to npm" → channel
+  # `beta`. The version is `<package.json version>-beta.<short8>` so beta
+  # installs never collide with tagged releases, and `--tag beta` keeps
+  # `latest` untouched. workflow_run fires only after the whole CI run
+  # completes, so the rolling `beta` pre-release the postinstall downloads
+  # from already carries this exact commit's binaries.
   publish-beta:
-    if: github.event_name == 'workflow_dispatch' && inputs.channel == 'beta'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.channel == 'beta') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -79,7 +100,10 @@ jobs:
       - run: pnpm build
 
       - name: Compute beta version
-        run: echo "BETA_VERSION=0.1.0-beta.${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          PKG_VERSION="$(node -p "require('./apps/cloud-code/package.json').version")"
+          echo "BETA_VERSION=${PKG_VERSION}-beta.${SHA::8}" >> "$GITHUB_ENV"
 
       - name: Set the beta version on the package
         working-directory: apps/cloud-code

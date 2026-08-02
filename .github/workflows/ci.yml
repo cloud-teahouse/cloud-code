@@ -22,7 +22,7 @@ concurrency:
 # `github.repository` instead of repo-local edits — nothing to toggle during
 # the snapshot export. The public repo (cloud-teahouse/cloud-code) builds
 # beta-channel binaries here and republishes them into the rolling `beta`
-# pre-release on every push to dev. The private repo skips those jobs and
+# pre-release on every push to main. The private repo skips those jobs and
 # builds dev-channel artifacts in dev-ci.yml instead, so each repo builds
 # exactly the channel it ships. Tagged `v*` releases stay in release.yml.
 jobs:
@@ -171,12 +171,12 @@ jobs:
           echo "build-version: ${GITHUB_SHA::8}-beta"
           echo
           cat <<'EOF'
-          Rolling beta build of Cloud Code CLI, rebuilt on every push to `dev`.
-          Install: `curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash -s -- --channel=beta`
+          Rolling beta build of Cloud Code CLI, rebuilt on every push to `main`.
+          Install: `curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh | bash -s -- --channel=beta`
           or npm: `npm install -g @cloud-teahouse/cloudcode-cli@beta`
 
-          滚动 beta 构建，每次推送 `dev` 分支时重建。
-          安装：`curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash -s -- --channel=beta`
+          滚动 beta 构建，每次推送 `main` 分支时重建。
+          安装：`curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh | bash -s -- --channel=beta`
           或 npm：`npm install -g @cloud-teahouse/cloudcode-cli@beta`
           EOF
           } > release-notes.md
