@@ -5,14 +5,14 @@
   "description": "TypeScript SDK for the Cloud Code CLI Agent",
   "license": "MIT",
   "author": "Moonshot AI",
-  "homepage": "https://github.com/yspbwx2010/cloud-code/tree/dev/packages/node-sdk#readme",
+  "homepage": "https://github.com/cloud-teahouse/cloud-code/tree/main/packages/node-sdk#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
+    "url": "git+https://github.com/cloud-teahouse/cloud-code.git",
     "directory": "packages/node-sdk"
   },
   "bugs": {
-    "url": "https://github.com/yspbwx2010/cloud-code/issues"
+    "url": "https://github.com/cloud-teahouse/cloud-code/issues"
   },
   "keywords": [
     "kimi",

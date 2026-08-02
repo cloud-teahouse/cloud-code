@@ -5,14 +5,14 @@
   "description": "Execution environment abstraction for AI agent applications",
   "license": "MIT",
   "author": "Moonshot AI",
-  "homepage": "https://github.com/yspbwx2010/cloud-code/tree/dev/packages/kaos#readme",
+  "homepage": "https://github.com/cloud-teahouse/cloud-code/tree/main/packages/kaos#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
+    "url": "git+https://github.com/cloud-teahouse/cloud-code.git",
     "directory": "packages/kaos"
   },
   "bugs": {
-    "url": "https://github.com/yspbwx2010/cloud-code/issues"
+    "url": "https://github.com/cloud-teahouse/cloud-code/issues"
   },
   "keywords": [
     "kimi",

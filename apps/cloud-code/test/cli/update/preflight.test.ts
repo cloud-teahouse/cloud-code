@@ -514,14 +514,16 @@ describe('runUpdatePreflight', () => {
       // pipefail must come before the pipeline so a failed `curl` is not masked
       // by the trailing `bash` exiting 0 (see "surfaces a failed curl" below).
       expect(script).toContain('set -o pipefail');
-      expect(script).toContain('curl -fsSL https://code.kimi.com/kimi-code/install.sh');
+      expect(script).toContain(
+        'curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh',
+      );
       expect(script).toContain('| bash');
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
     }
   });
 
-  it('native on win32: prints manual powershell command, does not spawn', async () => {
+  it('native on win32: prints manual WSL command, does not spawn', async () => {
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.detectInstallSource.mockResolvedValue('native');
@@ -530,7 +532,9 @@ describe('runUpdatePreflight', () => {
     try {
       const { stdout, options } = captureOutput();
       await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
-      expect(stdout.join('')).toContain('irm https://code.kimi.com/kimi-code/install.ps1 | iex');
+      expect(stdout.join('')).toContain(
+        'wsl bash -c "curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh | bash"',
+      );
       expect(promptForInstallChoice).not.toHaveBeenCalled();
       expect(mocks.spawn).not.toHaveBeenCalled();
     } finally {

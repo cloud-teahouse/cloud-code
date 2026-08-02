@@ -2468,6 +2468,10 @@ export class CloudCodeTUI {
   }
 
   mergeCurrentTurnSteps(): boolean {
+    // Session replay folds every turn in a single mergeAllTurnSteps pass at
+    // the end; folding per append here re-scans the whole current turn each
+    // time, which is O(n²) over a long replayed turn.
+    if (this.state.appState.isReplaying) return false;
     return this.foldCurrentTurnContent(
       TRANSCRIPT_KEEP_RECENT_STEPS,
       TRANSCRIPT_KEEP_RECENT_ASSISTANT,

@@ -311,7 +311,10 @@ export class AgentRecords {
     let hasMetadata = false;
     let shouldRewrite = false;
     let warning: string | undefined;
-    const replayedRecords: AgentRecord[] | undefined = rewriteMigratedRecords ? [] : undefined;
+    // Allocated lazily once the header tells us a migration rewrite will
+    // actually happen; otherwise every resume would accumulate a second full
+    // copy of the wire that is never used.
+    let replayedRecords: AgentRecord[] | undefined;
     let completed = true;
     this._replaying = true;
     try {
@@ -329,6 +332,9 @@ export class AgentRecords {
           } else {
             migrations = resolveWireMigrations(readVersion);
             shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
+          }
+          if (rewriteMigratedRecords && shouldRewrite) {
+            replayedRecords = [];
           }
         }
         let migratedRecord = migrateWireRecord(

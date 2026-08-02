@@ -11,3 +11,9 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+
+// Never sign test commits: a developer shell with global commit.gpgsign=true
+// and an unavailable key would fail every git commit the suites create.
+process.env['GIT_CONFIG_COUNT'] = '1';
+process.env['GIT_CONFIG_KEY_0'] = 'commit.gpgsign';
+process.env['GIT_CONFIG_VALUE_0'] = 'false';

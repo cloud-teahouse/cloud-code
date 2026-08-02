@@ -32,6 +32,9 @@ export const toolResults = {
     'Exited and removed worktree at {path}. ' +
     'Discarded commits: {commits}, uncommitted files: {files}. ' +
     'Session is now back in {cwd}.',
+  'toolResult.worktree.exit.blockedByAgents':
+    'Refusing to remove worktree at {path}: {count} subagent(s) are still anchored inside ' +
+    'it ({agents}) and would lose their working directory. Stop them first, or keep the worktree.',
 
   // ── memory ──
   'toolResult.memory.saved':

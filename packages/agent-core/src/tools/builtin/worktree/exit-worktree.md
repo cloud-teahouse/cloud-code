@@ -22,6 +22,10 @@ If called without an active EnterWorktree session, the tool is a **no-op**: it r
   - `"remove"` — delete the worktree directory and its branch. Use this for a clean exit when the work is merged elsewhere or abandoned.
 - `discard_changes` (optional, default false): only meaningful with `action: "remove"`. If the worktree has uncommitted files or commits not on the original branch, the tool REFUSES to remove it unless this is `true`. If the tool returns an error listing changes, confirm with the user before re-invoking with `discard_changes: true`.
 
+## Subagent anchors
+
+`action: "remove"` also REFUSES when any subagent (background agent or teammate) still has its working directory inside the worktree — removing the directory would strand it. Stop those agents first, or use `"keep"`. There is no override flag for this gate.
+
 ## Behavior
 
 - Restores the session's working directory to where it was before EnterWorktree; all tools follow.

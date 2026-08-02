@@ -30,6 +30,9 @@ export const toolResults: Record<keyof typeof enDomain, string> = {
   'toolResult.worktree.exit.removedWithDiscards':
     '已退出并删除位于 {path} 的 worktree。' +
     '丢弃的提交：{commits}，未提交的文件：{files}。会话已回到 {cwd}。',
+  'toolResult.worktree.exit.blockedByAgents':
+    '拒绝删除位于 {path} 的 worktree：仍有 {count} 个子代理锚定在其中（{agents}），' +
+    '删除会使它们丢失工作目录。请先停止这些子代理，或选择保留 worktree。',
 
   // ── memory ──
   'toolResult.memory.saved':

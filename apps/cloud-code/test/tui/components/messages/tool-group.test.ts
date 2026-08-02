@@ -418,4 +418,32 @@ describe('ToolGroupComponent', () => {
       b.dispose();
     });
   });
+
+  it('returns the identical line array until width or content changes', () => {
+    const ui = stubTui();
+    const group = new ToolGroupComponent('Grep', ui);
+    const a = createCall('call_grep_1', 'Grep', { pattern: 'foo' }, ui);
+    group.attach('call_grep_1', a);
+    succeed(a, 'call_grep_1', 'hit\n');
+
+    // The transcript container validates children by render-output identity,
+    // so an unchanged group must hand back the same array, not an equal copy.
+    const first = group.render(120);
+    expect(group.render(120)).toBe(first);
+
+    // Width changes re-render; the new width is cached the same way.
+    expect(group.render(80)).not.toBe(first);
+    const wide = group.render(120);
+    expect(wide).not.toBe(first);
+    expect(group.render(120)).toBe(wide);
+
+    // Content changes (an attach flushes a fresh body) invalidate the cache.
+    const b = createCall('call_grep_2', 'Grep', { pattern: 'bar' }, ui);
+    group.attach('call_grep_2', b);
+    expect(group.render(120)).not.toBe(wide);
+
+    group.dispose();
+    a.dispose();
+    b.dispose();
+  });
 });

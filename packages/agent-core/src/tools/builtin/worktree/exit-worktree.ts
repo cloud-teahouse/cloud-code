@@ -89,6 +89,29 @@ export class ExitWorktreeTool implements BuiltinTool<ExitWorktreeInput> {
           }
         }
 
+        if (args.action === 'remove') {
+          // A subagent anchored inside the worktree keeps working from its
+          // spawn-time cwd snapshot; removing the directory would strand it.
+          // Unlike the dirty gate this one has no override flag — the fix is
+          // to stop the agents or keep the worktree, never to confirm anyway.
+          const anchored = await this.agent.subagentHost?.listAgentsAnchoredAt(session.path);
+          if (anchored !== undefined && anchored.length > 0) {
+            const names = anchored.map((entry) => entry.teammateName ?? entry.agentId).join(', ');
+            return {
+              isError: true,
+              output:
+                `Refusing to remove worktree at ${session.path}: ${anchored.length} ` +
+                `${anchored.length === 1 ? 'subagent is' : 'subagents are'} still anchored inside ` +
+                `it (${names}) and would lose their working directory. Stop them first, or use ` +
+                'action: "keep" to preserve the worktree.',
+              display: {
+                key: 'toolResult.worktree.exit.blockedByAgents',
+                params: { path: session.path, count: anchored.length, agents: names },
+              },
+            };
+          }
+        }
+
         try {
           const result = await this.agent.worktree.exit({
             action: args.action,

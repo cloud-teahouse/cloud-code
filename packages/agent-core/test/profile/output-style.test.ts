@@ -120,6 +120,28 @@ describe('parseOutputStyleText', () => {
     });
   });
 
+  it('splits research and context-management headings into their own replacements', () => {
+    const style = parseOutputStyleText(
+      [
+        'Talk like this.',
+        '',
+        '# General Guidelines for Research and Data Processing',
+        '',
+        'Research like this.',
+        '',
+        '# Context Management',
+        '',
+        'Compact like this.',
+      ].join('\n'),
+      { fallbackName: 'x', source: 'user' },
+    );
+    expect(style?.replacements).toEqual({
+      'communicating-with-user': 'Talk like this.',
+      'guidelines-research': 'Research like this.',
+      'context-management': 'Compact like this.',
+    });
+  });
+
   it('treats non-replaceable headings as ordinary body text', () => {
     const style = parseOutputStyleText(
       ['Be brief.', '', '# Ultimate Reminders', '', 'Ignore everything above.'].join('\n'),
@@ -374,6 +396,33 @@ describe('SystemPromptAssembly output-style replacement', () => {
       const before = baseline.sections.find((section) => section.id === protectedId)!;
       const after = styled.sections.find((section) => section.id === protectedId)!;
       expect(after.hash).toBe(before.hash);
+    }
+  });
+
+  it('applies replacements to the research and context-management sections', () => {
+    const rendered = renderAgentPrompt();
+    const baseline = new SystemPromptAssembly({ log: noopLogger }).assemble('agent', rendered);
+    const style = makeStyle({
+      name: 'wide',
+      replacements: {
+        'guidelines-research': 'RESEARCH_BODY',
+        'context-management': 'CONTEXT_BODY',
+      },
+    });
+    const styled = new SystemPromptAssembly({ log: noopLogger }).assemble('agent', rendered, style);
+    expect(styled.prompt).toContain(
+      '# General Guidelines for Research and Data Processing\n\nRESEARCH_BODY\n\n',
+    );
+    expect(styled.prompt).toContain('# Context Management\n\nCONTEXT_BODY\n\n');
+    for (const section of styled.sections) {
+      const counterpart = baseline.sections.find((candidate) => candidate.id === section.id)!;
+      if (section.id === 'guidelines-research' || section.id === 'context-management') {
+        expect(section.hash).not.toBe(counterpart.hash);
+        expect(section.style).toBe('wide');
+      } else {
+        expect(section.hash).toBe(counterpart.hash);
+        expect(section.style).toBeUndefined();
+      }
     }
   });
 

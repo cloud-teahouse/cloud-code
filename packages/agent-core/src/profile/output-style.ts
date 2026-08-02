@@ -1,29 +1,32 @@
 /**
  * Output styles (Claude Code parity): a user-selectable, pluggable
  * REPLACEMENT for the "style surface" of the system prompt. A style is a
- * markdown file whose body supplies new content for one or two replaceable
+ * markdown file whose body supplies new content for one or more replaceable
  * prompt sections; the selection applies at prompt assembly
  * (`SystemPromptAssembly.assemble`), replacing section content — never
  * appending.
  *
- * The replaceable boundary is deliberately narrow. Only the two sections that
- * govern how the agent talks about its work are style-replaceable:
+ * The replaceable boundary is deliberately narrow. Only the sections that
+ * govern how the agent talks about and paces its work are style-replaceable:
  * - `communicating-with-user` — tone, verbosity, reply format;
- * - `delivering-work` — task-completion and reporting discipline.
+ * - `delivering-work` — task-completion and reporting discipline;
+ * - `guidelines-research` — research and data-processing workflow;
+ * - `context-management` — how the agent treats compacted context.
  * Everything else is protected: `identity`, `prompt-and-tool-use`,
- * `guidelines-coding` (which carries the security policy), `context-management`,
- * every runtime-derived section, and `ultimate-reminders` can never be
- * rewritten by a style, no matter what a style file contains. A style file
+ * `delegating-to-subagents`, `guidelines-coding` (which carries the security
+ * policy), every runtime-derived section, and `ultimate-reminders` can never
+ * be rewritten by a style, no matter what a style file contains. A style file
  * therefore cannot weaken permissions, security rules, or tool discipline.
  *
  * File format (compatible with Claude Code's `.claude/output-styles/*.md`):
  * frontmatter `name` / `description`; `keep-coding-instructions` is accepted
  * and ignored — the boundary above already preserves every coding instruction,
  * so the flag has no meaning here. The body replaces
- * `communicating-with-user`; a line exactly `# Delivering work` splits off the
- * remainder as the `delivering-work` replacement, and a leading
- * `# Communicating with the user` heading line is dropped. Any other heading
- * is ordinary body text.
+ * `communicating-with-user`; a heading line that exactly names another
+ * replaceable section (`# Delivering work`, `# General Guidelines for
+ * Research and Data Processing`, `# Context Management`) redirects the
+ * remainder into that section, and a leading `# Communicating with the user`
+ * heading line is dropped. Any other heading is ordinary body text.
  *
  * Sources, in rising precedence (later sources win a name collision, matching
  * CC's built-in < plugin < user < project order):
@@ -53,7 +56,12 @@ export const DEFAULT_OUTPUT_STYLE_NAME = 'default';
 export type OutputStyleSource = 'builtin' | 'plugin' | 'user' | 'project';
 
 /** Section ids a style may replace — see the module header for the boundary. */
-export const REPLACEABLE_SECTION_IDS = ['communicating-with-user', 'delivering-work'] as const;
+export const REPLACEABLE_SECTION_IDS = [
+  'communicating-with-user',
+  'delivering-work',
+  'guidelines-research',
+  'context-management',
+] as const;
 export type ReplaceableSectionId = (typeof REPLACEABLE_SECTION_IDS)[number];
 
 const REPLACEABLE_SECTION_ID_SET: ReadonlySet<string> = new Set(REPLACEABLE_SECTION_IDS);
@@ -62,6 +70,8 @@ const REPLACEABLE_SECTION_ID_SET: ReadonlySet<string> = new Set(REPLACEABLE_SECT
 const SECTION_HEADING_LINES: Readonly<Record<string, ReplaceableSectionId>> = {
   '# Communicating with the user': 'communicating-with-user',
   '# Delivering work': 'delivering-work',
+  '# General Guidelines for Research and Data Processing': 'guidelines-research',
+  '# Context Management': 'context-management',
 };
 
 export function isReplaceableSectionId(id: string): id is ReplaceableSectionId {

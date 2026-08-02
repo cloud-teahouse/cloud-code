@@ -5,14 +5,14 @@
   "description": "The LLM abstraction layer for modern AI agent applications",
   "license": "MIT",
   "author": "Moonshot AI",
-  "homepage": "https://github.com/yspbwx2010/cloud-code/tree/dev/packages/kosong#readme",
+  "homepage": "https://github.com/cloud-teahouse/cloud-code/tree/main/packages/kosong#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
+    "url": "git+https://github.com/cloud-teahouse/cloud-code.git",
     "directory": "packages/kosong"
   },
   "bugs": {
-    "url": "https://github.com/yspbwx2010/cloud-code/issues"
+    "url": "https://github.com/cloud-teahouse/cloud-code/issues"
   },
   "keywords": [
     "llm",

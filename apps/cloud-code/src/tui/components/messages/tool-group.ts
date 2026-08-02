@@ -42,6 +42,7 @@ import {
 } from '#/tui/constant/symbols';
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { shimmerText } from '#/tui/utils/shimmer';
 
 import { applyCardTone, type CardTone } from './card-tone';
@@ -89,6 +90,14 @@ export class ToolGroupComponent extends Container {
   private toneCache:
     | { refs: string[][]; width: number; tone: CardTone; out: string[] }
     | undefined;
+  /**
+   * Width-keyed render cache mirroring the message components': the
+   * transcript re-renders every child on every frame, and an unchanged group
+   * must return the identical line array so the container's per-child
+   * validation stays an O(1) identity check instead of a full subtree
+   * re-render.
+   */
+  private renderCache: { width: number; lines: string[] } | undefined;
   /**
    * Header animation while any call is in flight: the ● bullet breathes
    * bright/dim and the title carries the shimmer wave, on the same cadence a
@@ -184,9 +193,14 @@ export class ToolGroupComponent extends Container {
       if (snap !== undefined) this.lastFlushPhases.set(entry.toolCallId, snap.phase);
     });
 
+    this.markRenderDirty();
     this.syncAnimationTimer(pending > 0);
     this.invalidate();
     this.ui?.requestRender();
+  }
+
+  private markRenderDirty(): void {
+    this.renderCache = undefined;
   }
 
   private buildHeader(total: number, pending: number, failed: number): string {
@@ -260,6 +274,7 @@ export class ToolGroupComponent extends Container {
       }
       // Only the header text changes on a tick — the body stays cached.
       this.headerText.setText(this.buildHeader(snapshots.length, pending, failed));
+      this.markRenderDirty();
       this.ui?.requestRender();
     }, RUNNING_ANIMATION_INTERVAL_MS);
   }
@@ -318,6 +333,7 @@ export class ToolGroupComponent extends Container {
     const hovered = id === GROUP_HIT_ZONE;
     if (hovered === this.hovered) return false;
     this.hovered = hovered;
+    this.markRenderDirty();
   }
 
   /**
@@ -329,31 +345,44 @@ export class ToolGroupComponent extends Container {
    */
   override render(width: number): string[] {
     const safeWidth = Math.max(1, width);
+    if (
+      isRenderCacheEnabled() &&
+      this.renderCache !== undefined &&
+      this.renderCache.width === safeWidth
+    ) {
+      return this.renderCache.lines;
+    }
     const childLines = this.children.map((child) => child.render(safeWidth));
     const base = childLines.flat();
     const spacerRows = childLines[0]?.length ?? 0;
     const headerRows = childLines[1]?.length ?? 0;
     this.zoneMeta = { width: safeWidth, lines: base.length, spacerRows, headerRows };
     const tone: CardTone = this.clickExpanded ? 'click' : this.hovered ? 'hover' : 'normal';
-    if (tone === 'normal') return base;
-    const cached = this.toneCache;
-    if (
-      cached !== undefined &&
-      cached.width === safeWidth &&
-      cached.tone === tone &&
-      cached.refs.length === childLines.length &&
-      cached.refs.every((ref, i) => ref === childLines[i])
-    ) {
-      return cached.out;
+    let result = base;
+    if (tone !== 'normal') {
+      const cached = this.toneCache;
+      if (
+        cached !== undefined &&
+        cached.width === safeWidth &&
+        cached.tone === tone &&
+        cached.refs.length === childLines.length &&
+        cached.refs.every((ref, i) => ref === childLines[i])
+      ) {
+        result = cached.out;
+      } else {
+        result = applyCardTone(base, {
+          width: safeWidth,
+          tone,
+          bgFrom: spacerRows,
+          toneFrom: spacerRows + headerRows,
+        });
+        this.toneCache = { refs: childLines, width: safeWidth, tone, out: result };
+      }
     }
-    const out = applyCardTone(base, {
-      width: safeWidth,
-      tone,
-      bgFrom: spacerRows,
-      toneFrom: spacerRows + headerRows,
-    });
-    this.toneCache = { refs: childLines, width: safeWidth, tone, out };
-    return out;
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, lines: result };
+    }
+    return result;
   }
 
   /** Releases timers so destroyed components cannot refresh later. */

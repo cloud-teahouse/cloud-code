@@ -55,6 +55,8 @@ type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
 type CompactionReplayRecord = Extract<AgentReplayRecord, { type: 'compaction' }>;
 type GoalReplayLifecycleChange = GoalChange & { readonly kind: 'lifecycle' };
 
+const REPLAY_YIELD_RECORD_INTERVAL = 50;
+
 export interface SessionReplayHost {
   state: TUIState;
   readonly streamingUI: StreamingUIController;
@@ -94,7 +96,7 @@ export class SessionReplayRenderer {
       }
 
       this.hydrateSnapshot(main);
-      this.renderRecords(main);
+      await this.renderRecords(main);
       this.applyTerminalBackgroundAgentStatuses(main);
       this.host.mergeAllTurnSteps();
       return true;
@@ -197,10 +199,19 @@ export class SessionReplayRenderer {
   // Record rendering
   // ---------------------------------------------------------------------------
 
-  private renderRecords(agent: ResumedAgentState): void {
+  private async renderRecords(agent: ResumedAgentState): Promise<void> {
     const context = createReplayRenderContext();
+    let recordsSinceYield = 0;
     for (const record of limitReplayRecordsByTurn(agent.replay, REPLAY_TURN_LIMIT)) {
       this.renderRecord(context, record);
+      // A long agentic turn mounts thousands of components in this loop;
+      // yielding periodically keeps the UI responsive during hydration.
+      if (++recordsSinceYield >= REPLAY_YIELD_RECORD_INTERVAL) {
+        recordsSinceYield = 0;
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+      }
     }
     this.flushAssistant(context);
     this.cleanupRuntime(context);

@@ -86,8 +86,11 @@ export const CLOUD_CODE_PLUGIN_MARKETPLACE_URL_ENV = 'CLOUD_CODE_PLUGIN_MARKETPL
 // Official plugins whose usage bills against the user's plan quota. Installing
 // one of these shows a quota note after the install result.
 export const QUOTA_CONSUMING_PLUGIN_IDS: readonly string[] = ['kimi-datasource'];
-export const CLOUD_CODE_INSTALL_SH_URL = `${CLOUD_CODE_CDN_BASE}/install.sh`;
-export const CLOUD_CODE_INSTALL_PS1_URL = `${CLOUD_CODE_CDN_BASE}/install.ps1`;
+// Native install script: OUR repo's scripts/install.sh (the URL the README
+// advertises). Never point this at the upstream CDN — its install.sh would
+// replace this build with upstream's product on update.
+export const CLOUD_CODE_INSTALL_SH_URL =
+  'https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh';
 
 // Official download page, referenced by prompt copy that steers users away
 // from third-party install sources. Must point at OUR repo — never upstream's
@@ -97,5 +100,7 @@ export const CLOUD_CODE_INSTALL_PS1_URL = `${CLOUD_CODE_CDN_BASE}/install.ps1`;
 export const KIMI_CODE_OFFICIAL_INSTALL_URL = 'https://github.com/cloud-teahouse/cloud-code';
 
 // Native install commands, split by platform. Use these for prompt copy and spawn calls only; do not assemble the strings elsewhere.
+// There is no native Windows installer — install.sh covers Unix, so the
+// Windows path goes through WSL.
 export const NATIVE_INSTALL_COMMAND_UNIX = `curl -fsSL ${CLOUD_CODE_INSTALL_SH_URL} | bash`;
-export const NATIVE_INSTALL_COMMAND_WIN = `irm ${CLOUD_CODE_INSTALL_PS1_URL} | iex`;
+export const NATIVE_INSTALL_COMMAND_WIN = `wsl bash -c "curl -fsSL ${CLOUD_CODE_INSTALL_SH_URL} | bash"`;

@@ -25,6 +25,7 @@ import {
 	type TerminalColorScheme,
 } from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
+import { TranscriptRowIndex } from "./transcript-index.ts";
 import {
 	asciiVisibleWidth,
 	extractSegments,
@@ -541,6 +542,29 @@ export class TUI extends Container {
 	private lastScrollRegionLineCount = 0; // From the last composed frame (for scroll clamping)
 	private lastViewportHeight = 0;
 	/**
+	 * Transcript row geometry: caches each scroll-region child's rendered line
+	 * count (keyed on layout width) so line → child lookups are O(log n) and
+	 * steady frames materialize only the viewport window instead of rendering
+	 * and concatenating the whole transcript.
+	 */
+	private transcriptIndex = new TranscriptRowIndex();
+	/**
+	 * Gutter-prefixed line blocks keyed on the rendered lines array identity
+	 * (unchanged children return identical references from their render
+	 * caches), so a steady frame never re-prefixes a child that did not
+	 * change. WeakMap: superseded renders are collected with their lines.
+	 */
+	private transcriptPrefixCache = new WeakMap<string[], { lead: string; block: string[] }>();
+	/**
+	 * Latched by every public render request (a component mutation may be
+	 * pending) and cleared by the first compose that revalidates the row
+	 * index. TUI-internal chrome repaints (scroll position, scrollbar/badge
+	 * hover) go through {@link requestChromeRender} and leave the latch alone:
+	 * they cannot mutate transcript content, so the cached geometry stays
+	 * exact for those frames and the compose skips the full revalidation.
+	 */
+	private transcriptDirty = true;
+	/**
 	 * Rows clipped off the slot's top in the last composed frame (the slot is
 	 * taller than the screen and keeps its bottom). Mouse row translation from
 	 * the visible slot top into the slot's (unclipped) rendered output must add
@@ -652,6 +676,7 @@ export class TUI extends Container {
 		this.transcriptScrollbarHover = false;
 		this.transcriptScrollbarDrag = false;
 		this.transcriptScrollbarGrabOffset = null;
+		this.transcriptIndex.reset();
 		this.clearTranscriptZoneHover();
 		if (this.started) {
 			// Already running: switch the terminal mode live.
@@ -671,9 +696,18 @@ export class TUI extends Container {
 	 * Both must remain mounted in the children tree; when they are not (e.g.
 	 * a fullscreen takeover swapped the children), rendering falls back to a
 	 * plain top-aligned full-screen frame.
+	 *
+	 * When the scroll region is a Container, the fullscreen composer renders
+	 * it through the row index: children are laid out at the terminal width
+	 * minus the container's {@link Container.leftInset}/{@link
+	 * Container.rightInset} and each line carries the left-inset gutter — the
+	 * layout a gutter-style transcript container produces itself. Containers
+	 * with per-child chrome rows (rowsBeforeChild) stay on the legacy
+	 * whole-render path.
 	 */
 	setLayoutRegions(regions: { scroll?: Component; slot?: Component }): void {
 		this.layoutRegions = regions;
+		this.transcriptIndex.reset();
 		this.requestRender();
 	}
 
@@ -685,7 +719,7 @@ export class TUI extends Container {
 		if (next !== this.scrollTop) this.clearTranscriptZoneHover();
 		this.scrollTop = next;
 		this.followOutput = this.scrollTop >= maxScroll;
-		this.requestRender();
+		this.requestChromeRender();
 	}
 
 	/** Page-scroll the viewport (positive = down). */
@@ -697,7 +731,7 @@ export class TUI extends Container {
 	scrollToBottom(): void {
 		if (!this.fullscreen) return;
 		this.followOutput = true;
-		this.requestRender();
+		this.requestChromeRender();
 	}
 
 	/** Jump to the oldest transcript line; leaves follow mode (unless the
@@ -708,7 +742,7 @@ export class TUI extends Container {
 		this.scrollTop = 0;
 		const maxScroll = Math.max(0, this.lastScrollRegionLineCount - this.lastViewportHeight);
 		this.followOutput = this.scrollTop >= maxScroll;
-		this.requestRender();
+		this.requestChromeRender();
 	}
 
 	isFollowingOutput(): boolean {
@@ -1045,6 +1079,10 @@ export class TUI extends Container {
 	}
 
 	override invalidate(): void {
+		// Tree-wide dirty (theme switch): every child's cached lines carry stale
+		// styling, so the transcript geometry must be rebuilt from scratch too.
+		this.transcriptIndex.reset();
+		this.transcriptDirty = true;
 		super.invalidate();
 		for (const overlay of this.overlayStack) overlay.component.invalidate?.();
 	}
@@ -1152,6 +1190,10 @@ export class TUI extends Container {
 	}
 
 	requestRender(force = false): void {
+		// Latch before the early return: a mutation may be pending even when a
+		// render is already scheduled, and the next fullscreen compose must
+		// revalidate the transcript row index for it.
+		this.transcriptDirty = true;
 		if (force) {
 			this.previousLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
@@ -1169,6 +1211,18 @@ export class TUI extends Container {
 	}
 
 	/**
+	 * Schedule a repaint that provably has no transcript mutations behind it —
+	 * scroll-position and TUI-chrome (scroll badge/scrollbar) updates only.
+	 * The fullscreen composer may trust the row index's cached geometry for
+	 * these frames instead of revalidating every child.
+	 */
+	private requestChromeRender(): void {
+		if (this.renderRequested) return;
+		this.renderRequested = true;
+		process.nextTick(() => this.scheduleRender());
+	}
+
+	/**
 	 * Request a viewport repaint that preserves the terminal's native
 	 * scrollback: the visible region is rewritten in place and leftover rows
 	 * below the new content are erased with `\x1b[J` — never the `\x1b[3J`
@@ -1177,6 +1231,9 @@ export class TUI extends Container {
 	 * history scrolled into the native buffer must survive.
 	 */
 	requestCollapseRender(): void {
+		// A public render request: a mutation may be pending, so the next
+		// fullscreen compose must revalidate the transcript row index.
+		this.transcriptDirty = true;
 		this.collapseRenderRequested = true;
 		this.scheduleImmediateRender();
 	}
@@ -1400,12 +1457,15 @@ export class TUI extends Container {
 	/**
 	 * Hit-test the transcript scroll region's children at a viewport row:
 	 * `viewportRow` is 0-based from the viewport's top, so the transcript line
-	 * under the pointer is `scrollTop + viewportRow`. The walk renders children
-	 * at the width the scroll container lays them out (terminal columns minus
-	 * its gutter insets) — render caches keep this cheap — and hit-tests the
-	 * zones composed within the child that owns the line. The returned event
-	 * is expressed in that child's frame, ready for {@link dispatchHitZone}'s
-	 * owner re-translation. Returns null when no child — or no zone of the
+	 * under the pointer is `scrollTop + viewportRow`. The line → child lookup
+	 * goes through the row index's binary search whenever its cached geometry
+	 * is exact (warm index, no mutation latched for the next render); the
+	 * fallback is a top-down walk that renders children at the width the
+	 * scroll container lays them out (terminal columns minus its gutter
+	 * insets) — render caches keep this cheap. Either way only the child that
+	 * owns the line gets its zones resolved. The returned event is expressed
+	 * in that child's frame, ready for {@link dispatchHitZone}'s owner
+	 * re-translation. Returns null when no child — or no zone of the
 	 * requested kind — covers the point.
 	 */
 	private transcriptZoneHit(
@@ -1418,6 +1478,20 @@ export class TUI extends Container {
 		const line = this.scrollTop + viewportRow;
 		const colInset = scroll.leftInset();
 		const childWidth = Math.max(1, width - colInset - scroll.rightInset());
+		if (!this.transcriptDirty && this.transcriptIndex.isWarmFor(scroll, childWidth)) {
+			const entry = this.transcriptIndex.locate(line);
+			if (entry === null) return null;
+			const child = entry.child;
+			if (!hasHitZones(child)) return null;
+			const translated: MouseEvent = {
+				...event,
+				row: line - entry.base,
+				col: event.col - colInset,
+				slotRelative: false,
+			};
+			const zone = hitZoneAt(resolveHitZones(child, childWidth), translated.row, translated.col, kind);
+			return zone === null ? null : { zone, event: translated };
+		}
 		let acc = 0;
 		for (const child of scroll.children) {
 			const base = acc + scroll.rowsBeforeChild(child);
@@ -1605,6 +1679,19 @@ export class TUI extends Container {
 			// The transcript scrollbar is TUI chrome like the badge: its hover
 			// reveal is tracked here, ahead of component routing.
 			this.updateTranscriptScrollbarHover(event);
+			// Cheap pre-dedupe on the raw pointer cell, ahead of every hit-walk
+			// below (transcript zone hover and the focused-component row
+			// translation): don't pay for either when the answer cannot have
+			// changed — same raw cell, no render since (layout frozen), and no
+			// render request pending (a mutation may be waiting for one).
+			const rawKey = `${event.row}:${event.col}`;
+			if (
+				rawKey === this.lastMotionRawKey &&
+				this.lastMotionRawEpoch === this.renderEpoch &&
+				!this.renderRequested
+			) {
+				return;
+			}
 			// Transcript content zones (tool cards/groups) likewise track
 			// button-free motion ahead of — and independently of — the focused
 			// component's own hover routing.
@@ -1615,19 +1702,6 @@ export class TUI extends Container {
 			if (focused === null) return;
 			const zoneAware = hasHitZones(focused);
 			if (focused.handleMouse === undefined && !zoneAware) return;
-			// Cheap pre-dedupe on the raw pointer cell: the row translation
-			// below walks and renders slot containers (rowOffsetWithin), so
-			// don't pay for it when the answer cannot have changed — same raw
-			// cell, no render since (layout frozen), and no render request
-			// pending (a mutation may be waiting for one).
-			const rawKey = `${event.row}:${event.col}`;
-			if (
-				rawKey === this.lastMotionRawKey &&
-				this.lastMotionRawEpoch === this.renderEpoch &&
-				!this.renderRequested
-			) {
-				return;
-			}
 			const { slot } = this.layoutRegions;
 			let row: number;
 			let col: number;
@@ -1907,7 +1981,7 @@ export class TUI extends Container {
 		}
 		if (hovered === this.scrollIndicatorHovered) return;
 		this.scrollIndicatorHovered = hovered;
-		this.requestRender();
+		this.requestChromeRender();
 	}
 
 	/**
@@ -1941,7 +2015,7 @@ export class TUI extends Container {
 		const hovered = this.isTranscriptScrollbarCell(event.row, event.col);
 		if (hovered === this.transcriptScrollbarHover) return;
 		this.transcriptScrollbarHover = hovered;
-		this.requestRender();
+		this.requestChromeRender();
 	}
 
 	/**
@@ -1966,7 +2040,7 @@ export class TUI extends Container {
 		if (this.transcriptScrollbarGrabOffset !== null) {
 			// No jump — but the grab reveals the bar even if no motion preceded
 			// the press (the drag flag alone engages it).
-			this.requestRender();
+			this.requestChromeRender();
 			return;
 		}
 		this.scrollTranscriptToTrackRow(viewportRow);
@@ -2016,7 +2090,7 @@ export class TUI extends Container {
 		if (next !== this.scrollTop) this.clearTranscriptZoneHover();
 		this.scrollTop = next;
 		this.followOutput = this.scrollTop >= maxScroll;
-		this.requestRender();
+		this.requestChromeRender();
 	}
 
 	/**
@@ -2634,10 +2708,38 @@ export class TUI extends Container {
 		const viewportHeight = height - slotHeight;
 		this.lastViewportHeight = viewportHeight;
 
-		// Scroll region: show [scrollTop, scrollTop + viewportHeight).
-		const scrollLines = scroll.render(width);
-		this.lastScrollRegionLineCount = scrollLines.length;
-		const maxScroll = Math.max(0, scrollLines.length - viewportHeight);
+		// Scroll region: show [scrollTop, scrollTop + viewportHeight). The row
+		// index caches per-child geometry, so a steady frame materializes only
+		// the viewport window instead of rendering and concatenating the whole
+		// transcript; the legacy whole-render fallback covers non-Container
+		// scroll regions and containers the index cannot reproduce (per-child
+		// chrome rows).
+		const scrollContainer = scroll instanceof Container ? scroll : null;
+		const childWidth =
+			scrollContainer === null
+				? width
+				: Math.max(1, width - scrollContainer.leftInset() - scrollContainer.rightInset());
+		let indexed = false;
+		if (scrollContainer !== null && !this.transcriptIndex.isDeclinedFor(scrollContainer)) {
+			if (this.transcriptDirty || !this.transcriptIndex.isWarmFor(scrollContainer, childWidth)) {
+				indexed = this.transcriptIndex.syncFull(scrollContainer, childWidth);
+				// The legacy fallback re-renders the whole region every frame,
+				// so the latch may drop even when the index declined.
+				this.transcriptDirty = false;
+			} else {
+				indexed = true;
+			}
+		}
+		let scrollLines: string[] | null = null;
+		let scrollLineCount: number;
+		if (indexed) {
+			scrollLineCount = this.transcriptIndex.totalLines;
+		} else {
+			scrollLines = scroll.render(width);
+			scrollLineCount = scrollLines.length;
+		}
+		this.lastScrollRegionLineCount = scrollLineCount;
+		const maxScroll = Math.max(0, scrollLineCount - viewportHeight);
 		if (this.followOutput) {
 			this.scrollTop = maxScroll;
 		}
@@ -2649,7 +2751,9 @@ export class TUI extends Container {
 			this.followOutput = true;
 		}
 
-		const slice = scrollLines.slice(this.scrollTop, this.scrollTop + viewportHeight);
+		const slice = indexed
+			? this.materializeTranscriptWindow(scrollContainer!, this.scrollTop, viewportHeight)
+			: scrollLines!.slice(this.scrollTop, this.scrollTop + viewportHeight);
 		this.clipKittyImagesToSlice(slice);
 
 		// Transcript is top-aligned: content starts at the viewport top and the
@@ -2712,7 +2816,7 @@ export class TUI extends Container {
 		// splicing text into an image escape would corrupt the image.
 		if ((this.transcriptScrollbarHover || this.transcriptScrollbarDrag) && maxScroll > 0) {
 			const thumb = scrollbarThumb(
-				{ scrollTop: this.scrollTop, viewport: viewportHeight, content: scrollLines.length },
+				{ scrollTop: this.scrollTop, viewport: viewportHeight, content: scrollLineCount },
 				viewportHeight,
 			);
 			if (thumb !== null) {
@@ -2726,6 +2830,42 @@ export class TUI extends Container {
 
 		frame.push(...slotView);
 		return frame;
+	}
+
+	/**
+	 * The transcript rows of [fromLine, fromLine + count), composed from the
+	 * row index: only the children intersecting the window are touched, and
+	 * each child's gutter-prefixed block is reused across frames by lines
+	 * identity (render caches return identical references for unchanged
+	 * content, so the frame rows stay reference-stable for the differential
+	 * renderer). Byte-equivalent to rendering the whole scroll region and
+	 * slicing it.
+	 */
+	private materializeTranscriptWindow(scroll: Container, fromLine: number, count: number): string[] {
+		const lead = " ".repeat(scroll.leftInset());
+		const rows: string[] = [];
+		const toLine = fromLine + count;
+		for (const entry of this.transcriptIndex.windowEntries(fromLine, toLine)) {
+			const lines = entry.lines;
+			let block: string[];
+			if (lead.length === 0) {
+				block = lines;
+			} else {
+				let cached = this.transcriptPrefixCache.get(lines);
+				if (cached === undefined || cached.lead !== lead) {
+					cached = { lead, block: lines.map((line) => lead + line) };
+					this.transcriptPrefixCache.set(lines, cached);
+				}
+				block = cached.block;
+			}
+			const start = Math.max(fromLine - entry.base, 0);
+			const end = Math.min(entry.base + entry.height, toLine) - entry.base;
+			for (let i = start; i < end && rows.length < count; i++) {
+				rows.push(block[i]!);
+			}
+			if (rows.length >= count) break;
+		}
+		return rows;
 	}
 
 	/**

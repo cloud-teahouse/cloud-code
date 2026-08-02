@@ -165,4 +165,56 @@ describe('ExitWorktreeTool', () => {
     });
     expect(existsSync(state.path)).toBe(false);
   });
+
+  it('remove: refuses while subagents are anchored inside, succeeds once cleared', async () => {
+    const repo = initRepo();
+    const ctx = await makeAgent(repo);
+    const { state } = await ctx.agent.worktree.enter({ name: 'exit-anchored' });
+    let anchors: readonly { agentId: string; teammateName?: string; cwd: string }[] = [
+      { agentId: 'agent-1', teammateName: 'alpha', cwd: state.path },
+      { agentId: 'agent-2', cwd: join(state.path, 'nested') },
+    ];
+    Object.defineProperty(ctx.agent, 'subagentHost', {
+      value: {
+        listAgentsAnchoredAt: async () => anchors,
+        // refreshSystemPrompt re-renders the delegatable catalog on exit.
+        delegatableSubagents: () => ({}),
+      },
+      configurable: true,
+    });
+    const tool = new ExitWorktreeTool(ctx.agent);
+
+    const refused = await call(tool, { action: 'remove' });
+    expect(refused).toMatchObject({ isError: true });
+    const refusal = (refused as { output: string }).output;
+    expect(refusal).toContain('2 subagents are still anchored');
+    expect(refusal).toContain('alpha');
+    expect(refusal).toContain('action: "keep"');
+    expect(refused.display).toEqual({
+      key: 'toolResult.worktree.exit.blockedByAgents',
+      params: { path: state.path, count: 2, agents: 'alpha, agent-2' },
+    });
+    expect(existsSync(state.path)).toBe(true);
+    expect(ctx.agent.worktree.isActive).toBe(true);
+
+    // keep never consults the anchor gate.
+    const kept = await call(tool, { action: 'keep' });
+    expect(kept).not.toMatchObject({ isError: true });
+    expect(existsSync(state.path)).toBe(true);
+
+    // Anchors cleared (agents stopped) — removal proceeds.
+    anchors = [];
+    const ctx2 = await makeAgent(repo);
+    await ctx2.agent.worktree.enter({ name: 'exit-anchored' });
+    Object.defineProperty(ctx2.agent, 'subagentHost', {
+      value: {
+        listAgentsAnchoredAt: async () => anchors,
+        delegatableSubagents: () => ({}),
+      },
+      configurable: true,
+    });
+    const removed = await call(new ExitWorktreeTool(ctx2.agent), { action: 'remove' });
+    expect(removed).not.toMatchObject({ isError: true });
+    expect(existsSync(state.path)).toBe(false);
+  });
 });

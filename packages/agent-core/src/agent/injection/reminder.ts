@@ -1,7 +1,5 @@
 /**
- * Reminder authority tiers and writing rules (Claude system-reminder port —
- * see `docs/research/claude-system-prompts-analysis.md` §4 and the
- * `system-reminder-*` corpus under `claude-code-system-prompts/`).
+ * Reminder authority tiers and writing rules (Claude system-reminder port).
  *
  * Every `<system-reminder>` this runtime produces carries an authority tier.
  * The tiers exist so that low-stakes nudges stop borrowing the authority of

@@ -5,14 +5,14 @@
   "description": "The unified agent engine for Cloud Code CLI",
   "license": "MIT",
   "author": "Moonshot AI",
-  "homepage": "https://github.com/yspbwx2010/cloud-code/tree/dev/packages/agent-core#readme",
+  "homepage": "https://github.com/cloud-teahouse/cloud-code/tree/main/packages/agent-core#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yspbwx2010/cloud-code.git",
+    "url": "git+https://github.com/cloud-teahouse/cloud-code.git",
     "directory": "packages/agent-core"
   },
   "bugs": {
-    "url": "https://github.com/yspbwx2010/cloud-code/issues"
+    "url": "https://github.com/cloud-teahouse/cloud-code/issues"
   },
   "keywords": [
     "kimi",

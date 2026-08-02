@@ -431,6 +431,27 @@ export class SessionSubagentHost {
     return metadata.swarmItem;
   }
 
+  /**
+   * Session-wide anchor scan backing the ExitWorktree(remove) gate: any
+   * subagent — at any depth, teammate or not — whose configured cwd sits
+   * inside `dir` would be stranded by the directory's removal, so the gate
+   * refuses while this list is non-empty. `keep` never consults it.
+   */
+  async listAgentsAnchoredAt(
+    dir: string,
+  ): Promise<readonly { agentId: string; teammateName?: string | undefined; cwd: string }[]> {
+    const anchored: { agentId: string; teammateName?: string | undefined; cwd: string }[] = [];
+    for (const [agentId, metadata] of Object.entries(this.session.metadata.agents)) {
+      if (metadata?.type !== 'sub') continue;
+      const agent = await this.session.ensureAgentResumed(agentId);
+      const cwd = agent.config.cwd;
+      if (cwd === dir || cwd.startsWith(`${dir}/`) || cwd.startsWith(`${dir}\\`)) {
+        anchored.push({ agentId, teammateName: metadata.teammate?.name, cwd });
+      }
+    }
+    return anchored;
+  }
+
   private resolveProfile(parent: Agent, profileName: string): ResolvedAgentProfile {
     const profile = this.tryResolveProfile(parent, profileName);
     if (profile === undefined) {
