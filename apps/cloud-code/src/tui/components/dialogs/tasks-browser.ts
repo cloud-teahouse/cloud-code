@@ -833,18 +833,18 @@ export class TasksBrowserApp extends Container implements Focusable {
     const remainingDashes = Math.max(0, innerWidth - titleSegmentWidth);
     const topMid =
       titleWidth > 0 && titleSegmentWidth <= innerWidth
-        ? currentTheme.fg('primary', '─ ') +
+        ? currentTheme.fg('border', '─ ') +
           titleStyled +
           ' ' +
-          currentTheme.fg('primary', '─'.repeat(remainingDashes))
-        : currentTheme.fg('primary', '─'.repeat(innerWidth));
-    const top = currentTheme.fg('primary', '┌') + topMid + currentTheme.fg('primary', '┐');
-    const bottom = currentTheme.fg('primary', '└' + '─'.repeat(innerWidth) + '┘');
+          currentTheme.fg('border', '─'.repeat(remainingDashes))
+        : currentTheme.fg('border', '─'.repeat(innerWidth));
+    const top = currentTheme.fg('border', '┌') + topMid + currentTheme.fg('border', '┐');
+    const bottom = currentTheme.fg('border', '└' + '─'.repeat(innerWidth) + '┘');
 
     const lines: string[] = [top];
     for (let i = 0; i < innerHeight; i++) {
       const inner = content[i] ?? '';
-      lines.push(currentTheme.fg('primary', '│') + fitExactly(inner, innerWidth) + currentTheme.fg('primary', '│'));
+      lines.push(currentTheme.fg('border', '│') + fitExactly(inner, innerWidth) + currentTheme.fg('border', '│'));
     }
     lines.push(bottom);
     return lines;

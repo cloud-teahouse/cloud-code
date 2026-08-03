@@ -307,7 +307,7 @@ export class HelpPanelComponent extends Container implements Focusable {
     const kbdRow = (s: KeyboardShortcut): string =>
       renderRow(
         [
-          { text: s.keys, token: 'warning', width: kbdWidth },
+          { text: s.keys, token: 'primary', width: kbdWidth },
           { text: resolveDescription(s.description), token: 'textDim' },
         ],
         { margin: 4 },
@@ -331,19 +331,19 @@ export class HelpPanelComponent extends Container implements Focusable {
       `  ${dim(t('help.greeting'))}`,
       '',
       // Section: keyboard shortcuts
-      `  ${currentTheme.bold(t('help.section.shortcuts'))}`,
+      `  ${currentTheme.boldFg('primary', t('help.section.shortcuts'))}`,
       ...shortcuts.map(kbdRow),
       // Section: vim NORMAL-mode keys (only when vim editing is enabled)
       ...(vimShortcuts.length > 0
         ? [
             '',
-            `  ${currentTheme.bold(t('help.section.vim'))}`,
+            `  ${currentTheme.boldFg('primary', t('help.section.vim'))}`,
             ...vimShortcuts.map(kbdRow),
           ]
         : []),
       '',
       // Section: slash commands
-      `  ${currentTheme.bold(t('help.section.commands'))}`,
+      `  ${currentTheme.boldFg('primary', t('help.section.commands'))}`,
       ...sortedCmds.map((cmd, i) => {
         const label = cmdLabels[i] ?? `/${cmd.name}`;
         const row = renderRow(

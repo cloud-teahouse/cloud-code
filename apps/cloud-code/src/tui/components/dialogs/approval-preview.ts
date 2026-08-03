@@ -160,7 +160,7 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
   }
 
   private renderHeader(width: number): string {
-    const title = currentTheme.boldFg('primary', t('approval.preview.title'));
+    const title = currentTheme.boldFg('borderFocus', t('approval.preview.title'));
     return fitExactly(title + this.headerTitle, width);
   }
 
@@ -172,14 +172,14 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
     if (this.scrollTop < 0) this.scrollTop = 0;
 
     const viewRows = bodyHeight - 2;
-    const top = currentTheme.fg('primary', '┌' + '─'.repeat(Math.max(0, width - 2)) + '┐');
-    const bottom = currentTheme.fg('primary', '└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
+    const top = currentTheme.fg('borderFocus', '┌' + '─'.repeat(Math.max(0, width - 2)) + '┐');
+    const bottom = currentTheme.fg('borderFocus', '└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
 
     const out: string[] = [top];
     for (let i = 0; i < viewRows; i++) {
       const lineIndex = this.scrollTop + i;
       const raw = this.bodyLines[lineIndex] ?? '';
-      out.push(currentTheme.fg('primary', '│ ') + fitExactly(raw, innerWidth) + currentTheme.fg('primary', ' │'));
+      out.push(currentTheme.fg('borderFocus', '│ ') + fitExactly(raw, innerWidth) + currentTheme.fg('borderFocus', ' │'));
     }
     out.push(bottom);
     return out;
