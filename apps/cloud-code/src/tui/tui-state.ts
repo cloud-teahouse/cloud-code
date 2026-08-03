@@ -42,7 +42,7 @@ export interface TUIState {
    *  directly; in inline mode this container's own render() inserts a filler
    *  gap after the transcript to bottom-anchor the slot. */
   rootContainer: BottomAnchorContainer;
-  /** Fixed bottom slot: activity/todo/queue/btw/notice/editor/footer, in order. */
+  /** Fixed bottom slot: notice/activity/todo/queue/btw/swarm/editor/footer, in order. */
   slotContainer: Container;
   transcriptContainer: Container;
   activityContainer: Container;
@@ -50,7 +50,7 @@ export interface TUIState {
   todoPanel: TodoPanelComponent;
   queueContainer: Container;
   btwPanelContainer: Container;
-  /** Single-slot bottom notice area between btwPanel and editorContainer;
+  /** Single-slot notice area heading the slot, right under the transcript;
    *  transient showStatus/showNotice output lands here (latest replaces). */
   noticeContainer: Container;
   /** Live Agent Swarm progress grids, pinned right above the input editor

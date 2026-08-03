@@ -123,8 +123,8 @@ function showPluginInstallResult(
         )
       : '';
   const action = describeInstallAction(previous, summary);
-  // One logical notice, one call: the bottom notice slot is single-entry, so
-  // a multi-line result must arrive as a single message.
+  // One logical notice, one call: the transient notice slot is single-entry,
+  // so a multi-line result must arrive as a single message.
   // Quota note rides the same message: gate on provenance, not just the id —
   // a local/GitHub fork whose manifest reuses a billed plugin's id is not the
   // official quota-consuming build.

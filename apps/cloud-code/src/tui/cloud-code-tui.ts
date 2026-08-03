@@ -343,7 +343,7 @@ function appendSteerText(parts: PromptPart[], text: string): void {
 const DETACH_HINT_DISPLAY_MS = 4_000;
 
 /**
- * How long a transient notice above the editor stays visible before it
+ * How long a transient notice at the top of the slot stays visible before it
  * auto-clears. Recorded notices (`transcript: true`) are unaffected — they
  * scroll with the message flow by design.
  */
@@ -1053,7 +1053,7 @@ export class CloudCodeTUI {
     const { ui, rootContainer, slotContainer } = this.state;
     ui.clear();
     // The root holds exactly two regions: the scrollable transcript and the
-    // fixed bottom slot (activity/todo/queue/btw/notice/swarm/editor +
+    // fixed bottom slot (notice/activity/todo/queue/btw/swarm/editor +
     // footer). In fullscreen mode the TUI pins the slot and scrolls the
     // transcript viewport; in inline mode the sections stack in the same order.
     // Full-screen takeovers (tasks/workflows browsers, approval preview)
@@ -1063,12 +1063,13 @@ export class CloudCodeTUI {
     rootContainer.addChild(this.state.transcriptContainer);
     rootContainer.addChild(slotContainer);
     slotContainer.clear();
+    // Transient notices head the slot, right under the transcript viewport:
+    // pinned to the conversation instead of wedged between the todo/queue
+    // panels and the editor below.
+    slotContainer.addChild(this.state.noticeContainer);
     slotContainer.addChild(this.state.activityContainer);
     slotContainer.addChild(this.state.todoPanelContainer);
     slotContainer.addChild(this.state.queueContainer);
-    // Transient notices sit ABOVE the btw panel: with the panel open they must
-    // not wedge themselves between the conversation and the editor.
-    slotContainer.addChild(this.state.noticeContainer);
     slotContainer.addChild(this.state.btwPanelContainer);
     slotContainer.addChild(this.state.swarmContainer);
     slotContainer.addChild(this.state.editorContainer);
@@ -2665,12 +2666,13 @@ export class CloudCodeTUI {
   /**
    * Transient vs. recorded routing (see StatusNoticeOptions for the full
    * classification standard). Transient notices land in the single-slot
-   * noticeContainer above the editor — a bottom-anchored area that can never
-   * be scrolled away — where the newest notice replaces the previous one
-   * instead of stacking, keeping the chrome height bounded. A transient
-   * notice also auto-clears after NOTICE_DISPLAY_MS (the timer resets when a
-   * newer notice arrives): it is immediate feedback, not a persistent status.
-   * Recorded ones keep scrolling with the message flow in the transcript.
+   * noticeContainer at the top of the slot, right under the transcript — an
+   * anchored area that can never be scrolled away — where the newest notice
+   * replaces the previous one instead of stacking, keeping the chrome height
+   * bounded. A transient notice also auto-clears after NOTICE_DISPLAY_MS (the
+   * timer resets when a newer notice arrives): it is immediate feedback, not
+   * a persistent status. Recorded ones keep scrolling with the message flow
+   * in the transcript.
    *
    * Note: these lines were never part of transcriptEntries (the export/replay
    * model), so moving transient ones out of the transcript does not change

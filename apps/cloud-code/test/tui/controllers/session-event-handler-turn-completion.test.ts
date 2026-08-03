@@ -134,7 +134,7 @@ describe('SessionEventHandler turn completion line', () => {
     expect(body).toMatch(/for 10s$/);
   });
 
-  it('no longer routes the verb line to the notice slot above the editor', () => {
+  it('no longer routes the verb line to the transient notice slot', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
 

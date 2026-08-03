@@ -365,7 +365,7 @@ function renderTranscript(driver: MessageDriver): string {
 }
 
 // Transient showStatus/showNotice output lives in the single-slot notice
-// container above the editor, not in the transcript.
+// container at the top of the slot, not in the transcript.
 function renderNoticeArea(driver: MessageDriver): string {
   return driver.state.noticeContainer.render(120).join('\n');
 }
@@ -544,7 +544,7 @@ command = "vim"
     });
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('hello before reload');
-    // Transient command feedback lands in the bottom notice slot.
+    // Transient command feedback lands in the transient notice slot.
     expect(stripSgr(renderNoticeArea(driver))).toContain('Session reloaded.');
   });
 
@@ -2855,12 +2855,11 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
     const rootChildren = driver.state.slotContainer.children;
-    // Transient notices sit directly above the /btw panel; below it only the
-    // (usually empty) swarm zone separates the panel from the editor — notices
-    // never wedge between the conversation and the input area.
-    expect(rootChildren.indexOf(driver.state.noticeContainer)).toBe(
-      rootChildren.indexOf(driver.state.btwPanelContainer) - 1,
-    );
+    // Transient notices head the slot, right under the transcript — above the
+    // /btw panel too, so they never wedge between the conversation and the
+    // panels or the input area. Below the panel only the (usually empty)
+    // swarm zone separates it from the editor.
+    expect(rootChildren.indexOf(driver.state.noticeContainer)).toBe(0);
     expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
       rootChildren.indexOf(driver.state.swarmContainer) - 1,
     );

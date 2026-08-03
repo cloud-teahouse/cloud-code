@@ -595,7 +595,7 @@ export class SubAgentEventHandler {
 
     const width = Math.floor(terminalColumns);
     // The grid lives in the bottom slot while running. Budget its height from
-    // the slot's OTHER chrome (activity/todo/queue/btw/notice/editor/footer)
+    // the slot's OTHER chrome (notice/activity/todo/queue/btw/editor/footer)
     // — never from the swarm container itself, or the budget feeds back into
     // the thing it is sizing (and rendering it here would recurse).
     const rowsAfterSwarm = state.slotContainer.children

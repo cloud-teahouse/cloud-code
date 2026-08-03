@@ -48,7 +48,7 @@ import type { SlashCommandHost } from './dispatch';
 
 export async function handleFeedbackCommand(host: SlashCommandHost): Promise<void> {
   const fallback = (reason: string): void => {
-    // One logical notice, one call: the bottom notice slot is single-entry,
+    // One logical notice, one call: the transient notice slot is single-entry,
     // so a multi-line result must arrive as a single message.
     host.showStatus(`${reason}\n${FEEDBACK_ISSUE_URL}`);
     openUrl(FEEDBACK_ISSUE_URL);
@@ -104,7 +104,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     const attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
 
     stopSpinner({ ok: true, label: resolveDescription(FEEDBACK_STATUS_SUCCESS) });
-    // One logical notice, one call: the bottom notice slot is single-entry,
+    // One logical notice, one call: the transient notice slot is single-entry,
     // so a multi-line result must arrive as a single message.
     host.showStatus(
       [

@@ -324,9 +324,9 @@ export interface LoginProgressSpinnerHandle {
 /**
  * Routing option for showStatus/showNotice/showError.
  *
- * Transient (default) → the single-slot notice container above the editor,
- * where each new notice replaces the previous one. For immediate feedback
- * with no look-back value: command confirmations (theme/language/permission/
+ * Transient (default) → the single-slot notice container at the top of the
+ * slot, right under the transcript, where each new notice replaces the
+ * previous one. For immediate feedback with no look-back value: command confirmations (theme/language/permission/
  * login), action outcomes, startup/progress hints, the turn-completion line.
  *
  * Recorded (`transcript: true`) → the transcript, scrolling with the message
