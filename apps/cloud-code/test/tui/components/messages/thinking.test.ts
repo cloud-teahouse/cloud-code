@@ -15,8 +15,12 @@ const longThinking = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'lin
 
 describe('ThinkingComponent', () => {
   it('shows the live spinner header before thinking content', () => {
+    // The spinner glyph derives from wall-clock — pin it at frame 0.
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
     const component = new ThinkingComponent('working it out', true, 'live');
     const out = strip(component.render(80).join('\n'));
+    vi.useRealTimers();
 
     expect(out).toContain('⠋ thinking...');
     expect(out).not.toContain('  ⠋ thinking...');
@@ -38,6 +42,8 @@ describe('ThinkingComponent', () => {
 
   it('animates the live spinner and stops on finalize', () => {
     vi.useFakeTimers();
+    // The glyph derives from wall-clock: t=0 lands on frame ⠋, t=80 on ⠙.
+    vi.setSystemTime(0);
     const requestRender = vi.fn();
     const component = new ThinkingComponent('step', true, 'live', {
       requestRender,
@@ -160,10 +166,11 @@ describe('ThinkingComponent', () => {
       try {
         currentTheme.setPalette(darkColors);
         vi.useFakeTimers();
+        // The wavefront is wall-clock derived: t=400 puts it over the title.
+        vi.setSystemTime(400);
         const component = new ThinkingComponent('a short thought', true, 'live', {
           requestRender: () => {},
         } as unknown as TUI);
-        vi.advanceTimersByTime(80);
         const out = component.render(80);
         const titleRow = out[1]!;
         const contentRow = out[2]!;
@@ -174,8 +181,8 @@ describe('ThinkingComponent', () => {
         // …while the content row stays in its single dim tone.
         const contentCodes = new Set(contentRow.match(/\u001B\[38;2;\d+;\d+;\d+m/g) ?? []);
         expect(contentCodes.size).toBeLessThanOrEqual(1);
-        // The wave advances with the spinner tick…
-        vi.advanceTimersByTime(80);
+        // The wave advances with the shimmer bucket (+100ms), not the repaint count…
+        vi.advanceTimersByTime(100);
         expect(component.render(80)[1]).not.toBe(titleRow);
         // …and freezes with the block once finalized (the title row is gone).
         component.finalize();

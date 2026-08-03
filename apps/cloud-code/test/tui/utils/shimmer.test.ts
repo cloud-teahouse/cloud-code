@@ -28,14 +28,14 @@ describe('shimmerText', () => {
   it('preserves the plain text under the colour codes', () => {
     chalk.level = 3;
     const title = 'Using Read (foo.ts)';
-    expect(strip(shimmerText(title, 7))).toBe(title);
+    expect(strip(shimmerText(title, 700))).toBe(title);
   });
 
   it('lerps the foreground per character from textDim up to a bold textStrong peak', () => {
     chalk.level = 3;
     const title = 'Using Read (foo.ts)';
     // Frame 10 puts the wavefront at character 6 of the 19-char title.
-    const out = shimmerText(title, 10);
+    const out = shimmerText(title, 1000);
     expect(colorCodes(out).size).toBeGreaterThan(1);
     // The wavefront character (index 6) reaches textStrong, bold.
     expect(out).toContain(chalk.rgb(245, 245, 245).bold('R'));
@@ -62,7 +62,7 @@ describe('shimmerText', () => {
     // sweep: dim gray (textDim) sinking toward bold near-black (textStrong).
     currentTheme.setPalette(lightColors);
     const title = 'Using Read (foo.ts)';
-    const out = shimmerText(title, 10);
+    const out = shimmerText(title, 1000);
     expect(colorCodes(out).size).toBeGreaterThan(1);
     expect(out).toContain(chalk.rgb(26, 26, 26).bold('R'));
 
@@ -74,7 +74,22 @@ describe('shimmerText', () => {
   it('is pure per frame and travels with the frame index', () => {
     chalk.level = 3;
     const title = 'Using Read (foo.ts)';
-    expect(shimmerText(title, 10)).toBe(shimmerText(title, 10));
-    expect(shimmerText(title, 10)).not.toBe(shimmerText(title, 11));
+    expect(shimmerText(title, 1000)).toBe(shimmerText(title, 1000));
+    expect(shimmerText(title, 1000)).not.toBe(shimmerText(title, 1100));
+  });
+});
+
+describe('blinkPhaseOn', () => {
+  it('holds the phase within a half-period and flips at the boundary', async () => {
+    const { blinkPhaseOn } = await import('#/tui/utils/shimmer');
+    expect(blinkPhaseOn(1000)).toBe(blinkPhaseOn(1099));
+    expect(blinkPhaseOn(1000)).not.toBe(blinkPhaseOn(1600));
+  });
+
+  it('is wall-clock derived — irregular render times never skew the rhythm', async () => {
+    const { blinkPhaseOn } = await import('#/tui/utils/shimmer');
+    // Two renders 400ms apart see the same phase; 600ms apart always differ.
+    expect(blinkPhaseOn(0)).toBe(blinkPhaseOn(400));
+    expect(blinkPhaseOn(0)).not.toBe(blinkPhaseOn(700));
   });
 });

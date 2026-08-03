@@ -145,6 +145,8 @@ describe('ToolCallComponent', () => {
       chalk.level = 3;
       try {
         vi.useFakeTimers();
+        // The blink phase is wall-clock derived: t=0 is the bright half.
+        vi.setSystemTime(0);
         const component = new ToolCallComponent(
           { id: 'call_blink', name: 'Read', args: { path: 'foo.ts' } },
           undefined,
@@ -156,7 +158,7 @@ describe('ToolCallComponent', () => {
         expect(headerLine(component)).toContain(bright);
         expect(headerLine(component)).not.toContain(dim);
 
-        // 5 ticks × 100ms = 0.5s → the dim half-phase.
+        // +0.5s → the dim half-phase.
         vi.advanceTimersByTime(500);
         expect(headerLine(component)).toContain(dim);
         expect(headerLine(component)).not.toContain(bright);
@@ -2873,8 +2875,21 @@ describe('ToolCallComponent', () => {
       component.setHoveredZone('card');
       const hovered = component.render(100);
       expect(hovered[0]).toBe(base[0]); // spacer untouched
-      expect(hovered[1]).toBe(base[1]); // header keeps its colors
-      expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
+      // The header is painted by the hover background but keeps its text and
+      // foreground colors.
+      expect(hovered[1]).not.toBe(base[1]);
+      expect(strip(hovered[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
+      expect(
+        hovered
+          .slice(1)
+          .map((line) => strip(line).trimEnd())
+          .join('\n'),
+      ).toBe(
+        base
+          .slice(1)
+          .map((line) => strip(line).trimEnd())
+          .join('\n'),
+      );
       const body = hovered.slice(2).join('\n');
       expect(body).toContain(TEXT_OPEN);
       expect(body).not.toContain(DIM_OPEN);
@@ -3101,8 +3116,21 @@ describe('ToolCallComponent', () => {
       component.setHoveredZone('card');
       const hovered = component.render(100);
       expect(hovered[0]).toBe(base[0]); // spacer untouched
-      expect(hovered[1]).toBe(base[1]); // header keeps its colors
-      expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
+      // The header is painted by the hover background but keeps its text and
+      // foreground colors.
+      expect(hovered[1]).not.toBe(base[1]);
+      expect(strip(hovered[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
+      expect(
+        hovered
+          .slice(1)
+          .map((line) => strip(line).trimEnd())
+          .join('\n'),
+      ).toBe(
+        base
+          .slice(1)
+          .map((line) => strip(line).trimEnd())
+          .join('\n'),
+      );
       const body = hovered.slice(2).join('\n');
       expect(body).toContain(TEXT_OPEN); // whitened line numbers and hint
       expect(body).not.toContain('\x1b[2m');

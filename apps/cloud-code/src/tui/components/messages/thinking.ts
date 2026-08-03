@@ -35,9 +35,6 @@ export class ThinkingComponent implements Component {
   private mode: ThinkingRenderMode;
   private expanded = false;
   private readonly ui: TUI | undefined;
-  private spinnerFrame = 0;
-  /** Shimmer wavefront position for the live title; advances on the spinner tick. */
-  private shimmerFrame = 0;
   private spinnerInterval: ReturnType<typeof setInterval> | undefined;
   /** Pointer hover over the block's zone: the gray text renders white. */
   private hovered = false;
@@ -175,14 +172,16 @@ export class ThinkingComponent implements Component {
           : contentLines;
       const spinner = currentTheme.fg(
         'textDim',
-        `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
+        `${BRAILLE_SPINNER_FRAMES[
+          Math.floor(Date.now() / BRAILLE_SPINNER_INTERVAL_MS) % BRAILLE_SPINNER_FRAMES.length
+        ]} `,
       );
       // The live title carries the shimmer wave on the spinner's own tick
       // (the content stays dim italic); finalize() stops the tick, so the
       // wave freezes with the block instead of burning frames forever.
       rendered = [
         '',
-        spinner + shimmerText(t('notices.thinking.live'), this.shimmerFrame),
+        spinner + shimmerText(t('notices.thinking.live')),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     } else {
@@ -231,9 +230,9 @@ export class ThinkingComponent implements Component {
 
   private startSpinner(): void {
     if (this.ui === undefined || this.spinnerInterval !== undefined) return;
+    // The glyph phase derives from wall-clock at render time; the interval
+    // only schedules repaints, so timer drift never bends the rhythm.
     this.spinnerInterval = setInterval(() => {
-      this.spinnerFrame = (this.spinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
-      this.shimmerFrame += 1;
       this.markRenderDirty();
       this.ui?.requestRender();
     }, BRAILLE_SPINNER_INTERVAL_MS);

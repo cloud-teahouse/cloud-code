@@ -30,7 +30,7 @@ import {
   StatusLineCommandRunner,
   type StatusLinePayload,
 } from '#/tui/utils/status-line-command';
-import { shimmerText } from '#/tui/utils/shimmer';
+import { shimmerFrameAt, shimmerText } from '#/tui/utils/shimmer';
 import {
   createGitStatusCache,
   formatGitBadgeBase,
@@ -125,7 +125,7 @@ function formatGoalBadge(
   goal: AppState['goal'],
   colors: ColorPalette,
   wallClockMs?: number,
-  shimmerFrame?: number,
+  shimmerFrameAtMs?: number,
 ): string | null {
   if (goal === null || goal === undefined) return null;
   // Show the badge for every persisted, resumable status. `complete` clears the
@@ -159,8 +159,8 @@ function formatGoalBadge(
   return (
     chalk.hex(colors.textMuted)('[' + t('footer.goal.badgePrefix') + ' ') +
     chalk.hex(dotColor)('●') +
-    (shimmerFrame !== undefined
-      ? shimmerText(` ${label}`, shimmerFrame) + chalk.hex(colors.textMuted)(']')
+    (shimmerFrameAtMs !== undefined
+      ? shimmerText(` ${label}`, shimmerFrameAtMs) + chalk.hex(colors.textMuted)(']')
       : chalk.hex(colors.textMuted)(` ${label}]`))
   );
 }
@@ -342,9 +342,6 @@ export class FooterComponent implements Component {
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
-  /** Shimmer wave position for the active-goal badge; advanced by the goal
-   * timer, which runs only while the goal is active. */
-  private goalShimmerFrame = 0;
   /**
    * Non-terminal background-task counts split by kind so the footer can
    * render two distinct badges. `bashTasks` covers `bash-*` BPM tasks
@@ -548,7 +545,7 @@ export class FooterComponent implements Component {
       state.goal,
       colors,
       this.goalWallClockMs(state.goal),
-      state.goal?.status === 'active' ? this.goalShimmerFrame : undefined,
+      state.goal?.status === 'active' ? Date.now() : undefined,
     );
 
     const model = modelDisplayName(state);
@@ -812,7 +809,7 @@ export class FooterComponent implements Component {
       goalClock === undefined ? '' : Math.round(goalClock / 1000),
       // The badge shimmers while the goal is active; the frame must bust the
       // cache or the wave never repaints. Static states omit it entirely.
-      goal?.status === 'active' ? this.goalShimmerFrame : '',
+      goal?.status === 'active' ? shimmerFrameAt() : '',
     ];
     const turnUsage = state.turnUsage;
     parts.push(
@@ -889,7 +886,6 @@ export class FooterComponent implements Component {
     if (goal?.status === 'active') {
       if (this.goalTimer !== null) return;
       this.goalTimer = setInterval(() => {
-        this.goalShimmerFrame += 1;
         this.onRefresh();
       }, GOAL_TIMER_INTERVAL_MS);
       this.goalTimer.unref?.();

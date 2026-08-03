@@ -19,9 +19,7 @@ import type { TUI } from '@cloud-code/pi-tui';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
-import { shimmerText } from '#/tui/utils/shimmer';
-
-import { RUNNING_ANIMATION_INTERVAL_MS } from '../messages/tool-call';
+import { blinkPhaseOn, shimmerText } from '#/tui/utils/shimmer';
 
 const BLINK_INTERVAL = 500;
 
@@ -43,12 +41,7 @@ export class CompactionComponent extends Container {
   private readonly now: () => number;
   private readonly startedAt: number;
   private readonly estimatedTotalMs: number;
-  private blinkOn = true;
   private blinkTimer: ReturnType<typeof setInterval> | null = null;
-  /** Shimmer wave position for the in-progress label and progress-line tail;
-   * advanced by its own fast tick (the 500ms blink is too coarse for a wave). */
-  private shimmerFrame = 0;
-  private shimmerTimer: ReturnType<typeof setInterval> | null = null;
   private done = false;
   private canceled = false;
   private tokensBeforeDone: number | undefined;
@@ -83,7 +76,6 @@ export class CompactionComponent extends Container {
     this.addInstructionChild();
 
     this.startBlink();
-    this.startShimmer();
   }
 
   private addInstructionChild(): void {
@@ -126,7 +118,6 @@ export class CompactionComponent extends Container {
     this.tokensAfter = tokensAfter;
     this.summary = summary;
     this.stopBlink();
-    this.stopShimmer();
     this.removeProgressChild();
     this.headerText.setText(this.buildHeader());
     if (this.expanded) {
@@ -139,7 +130,6 @@ export class CompactionComponent extends Container {
     if (this.done || this.canceled) return;
     this.canceled = true;
     this.stopBlink();
-    this.stopShimmer();
     this.removeProgressChild();
     this.headerText.setText(this.buildHeader());
     this.ui?.requestRender();
@@ -180,7 +170,6 @@ export class CompactionComponent extends Container {
 
   dispose(): void {
     this.stopBlink();
-    this.stopShimmer();
   }
 
   private buildHeader(): string {
@@ -211,8 +200,10 @@ export class CompactionComponent extends Container {
       const label = currentTheme.boldFg('warning', t('selectors.compaction.cancelled'));
       return `${bullet}${label}`;
     }
-    const bullet = this.blinkOn ? currentTheme.fg('text', STATUS_BULLET) : '  ';
-    const label = shimmerText(t('selectors.compaction.compacting'), this.shimmerFrame);
+    const bullet = blinkPhaseOn(this.now(), BLINK_INTERVAL)
+      ? currentTheme.fg('text', STATUS_BULLET)
+      : '  ';
+    const label = shimmerText(t('selectors.compaction.compacting'), this.now());
     const tip = this.tip
       ? currentTheme.fg('textDim', t('selectors.compaction.tip', { tip: this.tip }))
       : '';
@@ -220,31 +211,13 @@ export class CompactionComponent extends Container {
   }
 
   private startBlink(): void {
+    // The bullet phase derives from wall-clock at build time; the interval
+    // only schedules repaints, so timer drift never bends the rhythm.
     this.blinkTimer = setInterval(() => {
-      this.blinkOn = !this.blinkOn;
       this.headerText.setText(this.buildHeader());
       this.progressText?.setText(this.buildProgressLine());
       this.ui?.requestRender();
     }, BLINK_INTERVAL);
-  }
-
-  /** The shimmer tick: same cadence as the running tool-call titles. Runs
-   * only while the component lives (construction → markDone/markCanceled/
-   * dispose), so a finished compaction carries no per-frame cost. */
-  private startShimmer(): void {
-    this.shimmerTimer = setInterval(() => {
-      this.shimmerFrame += 1;
-      this.headerText.setText(this.buildHeader());
-      this.progressText?.setText(this.buildProgressLine());
-      this.ui?.requestRender();
-    }, RUNNING_ANIMATION_INTERVAL_MS);
-  }
-
-  private stopShimmer(): void {
-    if (this.shimmerTimer !== null) {
-      clearInterval(this.shimmerTimer);
-      this.shimmerTimer = null;
-    }
   }
 
   override render(width: number): string[] {
@@ -295,7 +268,7 @@ export class CompactionComponent extends Container {
     if (splitAt === -1) return currentTheme.dim(composed);
     const before = composed.slice(0, splitAt);
     const after = composed.slice(splitAt + BAR_SENTINEL.length);
-    return currentTheme.dim(before) + bar + shimmerText(after, this.shimmerFrame);
+    return currentTheme.dim(before) + bar + shimmerText(after, this.now());
   }
 
   private removeProgressChild(): void {

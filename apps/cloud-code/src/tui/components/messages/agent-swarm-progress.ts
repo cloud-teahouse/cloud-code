@@ -204,14 +204,6 @@ export class AgentSwarmProgressComponent implements Component {
   private promptTemplateText = '';
   private activitySpinnerText: (() => string) | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
-  /**
-   * Shimmer wave position for the working status-line label. Advances one
-   * step per working render — while the swarm is live the embedded activity
-   * spinner (and the estimator timer) already repaint continuously, so no
-   * extra interval is needed; once the status leaves `working` the label
-   * renders statically and the counter idles.
-   */
-  private shimmerFrame = 0;
 
   constructor(options: AgentSwarmProgressOptions) {
     this.description = options.description;
@@ -552,7 +544,7 @@ export class AgentSwarmProgressComponent implements Component {
     // freeze to their static status color.
     const label =
       status === 'working'
-        ? ` ${shimmerText(labelText, this.shimmerFrame++)}`
+        ? ` ${shimmerText(labelText)}`
         : renderStatusLabel(labelText, totalStatusLabelColor(status, this.members, this.colors));
     if (this.members.length === 0) return truncateToWidth(label, width);
     const barWidth = Math.max(0, width - visibleWidth(label) - TOTAL_STATUS_BAR_GAP);
@@ -566,7 +558,7 @@ export class AgentSwarmProgressComponent implements Component {
   private renderOrchestratingStatusLine(width: number): string {
     if (this.itemsStarted) {
       return truncateToWidth(
-        ` ${shimmerText(resolveDescription(ORCHESTRATING_LABEL), this.shimmerFrame++)}`,
+        ` ${shimmerText(resolveDescription(ORCHESTRATING_LABEL))}`,
         width,
       );
     }
@@ -574,8 +566,8 @@ export class AgentSwarmProgressComponent implements Component {
     const promptTemplate = collapseWhitespace(this.promptTemplateText);
     const label = ` ${shimmerText(
       resolveDescription(promptTemplate.length > 0 ? PROMPTING_LABEL : ORCHESTRATING_LABEL),
-      this.shimmerFrame++,
     )}`;
+
     if (promptTemplate.length === 0) return truncateToWidth(label, width);
 
     const availablePromptWidth = Math.max(

@@ -421,6 +421,26 @@ describe('AgentSwarmProgressComponent', () => {
     }
   });
 
+  it('keeps the shimmer phase stable across repeated renders at one wall-clock time', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000);
+      const component = createComponent();
+      registerSubagents(component, 1);
+      startSubagents(component, 1);
+
+      const first = component.render(100);
+      const second = component.render(100);
+
+      expect(second).toEqual(first);
+    } finally {
+      vi.useRealTimers();
+      chalk.level = previousLevel;
+    }
+  });
+
   it('renders failure details from live subagent failures', () => {
     const component = createComponent();
 

@@ -122,7 +122,17 @@ describe('ToolGroupComponent', () => {
       const grepRows = grepGroup.render(120);
       const branchRow = grepRows.find((l) => l.includes('foo'));
       expect(branchRow).toBeDefined();
-      expect(branchRow!).toContain(currentTheme.fg('textDim', '  ├─ '));
+      // The whole tree row (gutter, label and tail) shares one textDim span.
+      expect(branchRow!).toContain(currentTheme.fg('textDim', '  ├─ foo · running…'));
+      expect(branchRow!).not.toContain(currentTheme.fg('text', 'foo'));
+
+      succeed(c, 'call_grep_1', 'one\ntwo\n');
+      succeed(d, 'call_grep_2', 'only\n');
+      const completedRows = grepGroup.render(120);
+      const completedBranchRow = completedRows.find((l) => l.includes('foo'));
+      expect(completedBranchRow).toBeDefined();
+      expect(completedBranchRow!).toContain(currentTheme.fg('textDim', '  ├─ foo · 2 matches'));
+      expect(completedBranchRow!).not.toContain(currentTheme.fg('text', 'foo'));
 
       bashGroup.dispose();
       grepGroup.dispose();
@@ -239,6 +249,8 @@ describe('ToolGroupComponent', () => {
     chalk.level = 3;
     try {
       vi.useFakeTimers();
+      // The blink phase is wall-clock derived: t=0 is the bright half.
+      vi.setSystemTime(0);
       const requestRender = vi.fn();
       const ui = { terminal: { rows: 40 }, requestRender } as unknown as TUI;
       const group = new ToolGroupComponent('Bash', ui);
@@ -251,7 +263,7 @@ describe('ToolGroupComponent', () => {
       const dim = chalk.hex(darkColors.textDim).dim(STATUS_BULLET);
 
       expect(headerLine(group)).toContain(bright);
-      // 5 ticks × 100ms = 0.5s → the dim half-phase.
+      // +0.5s → the dim half-phase.
       vi.advanceTimersByTime(500);
       expect(headerLine(group)).toContain(dim);
 
@@ -393,8 +405,21 @@ describe('ToolGroupComponent', () => {
       group.setHoveredZone('card');
       const hovered = group.render(120);
       expect(hovered[0]).toBe(base[0]); // spacer untouched
-      expect(hovered[1]).toBe(base[1]); // header keeps its colors
-      expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
+      // The header is painted by the hover background but keeps its text and
+      // foreground colors.
+      expect(hovered[1]).not.toBe(base[1]);
+      expect(strip(hovered[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
+      expect(
+        hovered
+          .slice(1)
+          .map((line) => strip(line).trimEnd())
+          .join('\n'),
+      ).toBe(
+        base
+          .slice(1)
+          .map((line) => strip(line).trimEnd())
+          .join('\n'),
+      );
       const body = hovered.slice(2).join('\n');
       expect(body).toContain(TEXT_OPEN);
       expect(body).not.toContain('\x1b[2m');

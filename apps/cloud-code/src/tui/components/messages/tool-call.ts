@@ -38,7 +38,7 @@ import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName, isMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRawStructuredPayload } from '#/tui/utils/structured-payload';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
-import { shimmerText } from '#/tui/utils/shimmer';
+import { blinkPhaseOn, shimmerText } from '#/tui/utils/shimmer';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import { agentSwarmResultIsUserCancelled, agentSwarmResultSummary } from './agent-swarm-progress';
@@ -64,10 +64,8 @@ const MAX_SUBAGENT_DESCRIPTION_LENGTH = 60;
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const AUTO_APPROVED_PLAN_MARKER = '## Plan (auto-approved, not user-reviewed):';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
-/** Animation tick for an in-flight header: drives the ● blink and the title shimmer. */
+/** Animation tick for an in-flight header: schedules repaints for the blink phase and title shimmer. */
 export const RUNNING_ANIMATION_INTERVAL_MS = 100;
-/** ● blink half-period in animation ticks (5 × 100ms = 0.5s bright, 0.5s dim). */
-export const BLINK_HALF_PERIOD_TICKS = 5;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
 
@@ -862,7 +860,6 @@ export class ToolCallComponent extends Container {
    * throttle.
    */
   private runningAnimationTimer: ReturnType<typeof setInterval> | undefined;
-  private runningAnimationFrame = 0;
 
   /**
    * Registered by a group container (`AgentGroupComponent` or
@@ -1447,7 +1444,6 @@ export class ToolCallComponent extends Container {
         return;
       }
       // Only the header text changes on a tick — the body stays cached.
-      this.runningAnimationFrame += 1;
       this.headerText.setText(this.buildHeader());
       this.ui?.requestRender();
     }, RUNNING_ANIMATION_INTERVAL_MS);
@@ -1886,15 +1882,13 @@ export class ToolCallComponent extends Container {
     } else if (isTruncated) {
       bullet = currentTheme.fg('error', '✗ ');
     } else {
-      // In-flight: the bullet breathes bright/dim on the animation tick
-      // (0.5s per half-phase). This is timer-driven, not re-render-driven —
-      // the old marker ↔ blank toggle flickered on every re-render, which a
-      // fixed cadence avoids. The bullet freezes on the bright phase once
-      // the result lands.
-      bullet =
-        Math.floor(this.runningAnimationFrame / BLINK_HALF_PERIOD_TICKS) % 2 === 0
-          ? currentTheme.fg('text', STATUS_BULLET)
-          : currentTheme.dimFg('textDim', STATUS_BULLET);
+      // In-flight: the bullet breathes bright/dim on a wall-clock phase (0.5s
+      // per half). Time-derived, so event-loop congestion shifts repaints but
+      // never the rhythm. The bullet freezes on the bright phase once the
+      // result lands.
+      bullet = blinkPhaseOn()
+        ? currentTheme.fg('text', STATUS_BULLET)
+        : currentTheme.dimFg('textDim', STATUS_BULLET);
     }
 
     if (toolCall.name === 'ExitPlanMode') {
@@ -1943,7 +1937,7 @@ export class ToolCallComponent extends Container {
       }
       if (!isFinished) {
         // In-flight: the label carries the shimmer wave instead of a static tone.
-        return `${bullet}${shimmerText(t('messages.toolCall.bash.running'), this.runningAnimationFrame)}`;
+        return `${bullet}${shimmerText(t('messages.toolCall.bash.running'))}`;
       }
       const tone = isError ? 'error' : 'primary';
       const chipStr = result !== undefined ? this.buildHeaderChip(result) : '';
@@ -1974,7 +1968,7 @@ export class ToolCallComponent extends Container {
       // carrying the shimmer wave; the MCP provenance suffix stays dim chrome.
       const title = `${verb} ${decoded?.toolName ?? toolCall.name}${keyArg ? ` (${keyArg})` : ''}`;
       const mcpSuffix = decoded !== null ? currentTheme.dim(` · MCP/${decoded.serverName}`) : '';
-      return `${bullet}${shimmerText(title, this.runningAnimationFrame)}${mcpSuffix}`;
+      return `${bullet}${shimmerText(title)}${mcpSuffix}`;
     }
     const verbStyled = isTruncated
       ? currentTheme.fg('error', verb)
@@ -2306,7 +2300,7 @@ export class ToolCallComponent extends Container {
       // shimmer wave — the braille marker keeps its own animation and the
       // stats stay dim chrome.
       const title = `${labelText} ${this.singleSubagentStatusText(phase)}${descriptionPlain}`;
-      return `${marker}${shimmerText(title, this.runningAnimationFrame)}${currentTheme.dim(statsText)}`;
+      return `${marker}${shimmerText(title)}${currentTheme.dim(statsText)}`;
     }
     const label = currentTheme.boldFg('primary', labelText);
     const status = this.formatSingleSubagentStatus(phase);

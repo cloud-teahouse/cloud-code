@@ -17,6 +17,10 @@ export const COMMAND_PREVIEW_LINES = 10;
 // the narrowest width the dialog render-parity suite exercises.
 export const DIALOG_MIN_WIDTH = 24;
 
+// Wall-clock bucket used by every text shimmer. Components may repaint on
+// different schedules, but the phase itself never depends on render count.
+export const SHIMMER_INTERVAL_MS = 100;
+
 // Animation frames are shared by the login/update loaders and live thinking.
 export const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 export const BRAILLE_SPINNER_INTERVAL_MS = 80;

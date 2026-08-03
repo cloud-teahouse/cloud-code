@@ -171,6 +171,8 @@ describe('updateActivityPane terminal progress', () => {
 
   it('moves the moon spinner into the AgentSwarm progress row while active', () => {
     vi.useFakeTimers();
+    // The spinner glyph derives from wall-clock — pin it at the first frame.
+    vi.setSystemTime(0);
     try {
       const { driver, state, setProgress } = makeDriverWithTerminalProgress();
       const progress = startSwarmProgress(driver, state);

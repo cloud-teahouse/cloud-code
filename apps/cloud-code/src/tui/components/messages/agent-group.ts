@@ -21,10 +21,10 @@ import { Container, Spacer, Text } from '@cloud-code/pi-tui';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { resolveDescription, t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
-import { shimmerText } from '#/tui/utils/shimmer';
+import { blinkPhaseOn, shimmerText } from '#/tui/utils/shimmer';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
-import { BLINK_HALF_PERIOD_TICKS, RUNNING_ANIMATION_INTERVAL_MS } from './tool-call';
+import { RUNNING_ANIMATION_INTERVAL_MS } from './tool-call';
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
 
 const THROTTLE_MS = 200;
@@ -60,7 +60,6 @@ export class AgentGroupComponent extends Container {
    * snapshot reads non-terminal, so a finished group costs nothing.
    */
   private animationTimer: ReturnType<typeof setInterval> | undefined;
-  private animationFrame = 0;
 
   constructor(private readonly ui: TUI | undefined) {
     super();
@@ -182,19 +181,17 @@ export class AgentGroupComponent extends Container {
       return `${bullet}${currentTheme.boldFg('primary', headerLabel)}${tail}`;
     }
 
-    // In-flight: the ● bullet blinks on the same RUNNING_ANIMATION cadence
-    // that drives the shimmer (matching the plain ToolGroup), the title
-    // carries the shimmer wave, and the elapsed tail stays dim chrome.
-    const bullet =
-      Math.floor(this.animationFrame / BLINK_HALF_PERIOD_TICKS) % 2 === 0
-        ? currentTheme.fg('text', STATUS_BULLET)
-        : currentTheme.dimFg('textDim', STATUS_BULLET);
+    // In-flight: the ● bullet blinks on a wall-clock half-second phase, the
+    // title carries the shimmer wave, and the elapsed tail stays dim chrome.
+    const bullet = blinkPhaseOn()
+      ? currentTheme.fg('text', STATUS_BULLET)
+      : currentTheme.dimFg('textDim', STATUS_BULLET);
     const parts = formatBreakdownParts(counts);
     const headerText = parts.length > 0
       ? t('swarm.group.running.breakdown', { count: total, parts: parts.join(', ') })
       : t('swarm.group.running', { count: total });
     const tail = formatHeaderTail({ toolCount: 0, tokens: 0, elapsedSeconds });
-    return `${bullet}${shimmerText(headerText, this.animationFrame)}${tail}`;
+    return `${bullet}${shimmerText(headerText)}${tail}`;
   }
 
   private syncAnimationTimer(needed: boolean): void {
@@ -204,7 +201,6 @@ export class AgentGroupComponent extends Container {
     }
     if (this.animationTimer !== undefined) return;
     this.animationTimer = setInterval(() => {
-      this.animationFrame += 1;
       const snapshots = this.entries.map((e) => e.tc.getSubagentSnapshot());
       if (countPhases(snapshots).terminal === snapshots.length) {
         // Phase transitions flush through the snapshot listener, so this is

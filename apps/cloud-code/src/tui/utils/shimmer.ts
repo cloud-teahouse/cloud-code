@@ -3,20 +3,21 @@
  *
  * A per-character brightness wave sweeps left→right across the title text:
  * each frame a character's foreground lerps between the `textDim` (base) and
- * `textStrong` (peak) theme tokens by its distance from the wavefront, and
- * the peak band renders bold (Claude Code's spinner shimmer, made
- * continuous). Anchoring the base at `textDim` keeps the sweep visible in
- * every palette — dark lifts dim gray toward bright white, light sinks dim
- * gray toward bold near-black, where the old `text` → `textStrong` lerp was
- * a no-op (`text` == `textStrong` in the light palette). The caller advances
- * `frame` on its animation tick and re-renders; while the tool is finished
- * the shimmer is simply not applied, so a completed title freezes with no
- * per-frame cost. Palette reads go through `currentTheme` at call time, so a
- * theme switch is picked up on the next frame.
+ * `textStrong` (peak) theme tokens by its distance from the wavefront, and the
+ * peak band renders bold (Claude Code's spinner shimmer, made continuous).
+ * Anchoring the base at `textDim` keeps the sweep visible in every palette —
+ * dark lifts dim gray toward bright white, light sinks dim gray toward bold
+ * near-black, where the old `text` → `textStrong` lerp was a no-op (`text` ==
+ * `textStrong` in the light palette). The phase derives from wall-clock time,
+ * so callers only need to repaint while the surface is active; render count
+ * and timer drift cannot change the shimmer speed. Palette reads go through
+ * `currentTheme` at call time, so a theme switch is picked up on the next
+ * frame.
  */
 
 import chalk from 'chalk';
 
+import { SHIMMER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
 /** Reach of the bright band to either side of the wavefront, in characters. */
@@ -31,7 +32,22 @@ const BOLD_BLEND_THRESHOLD = 0.5;
 
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-export function shimmerText(text: string, frame: number): string {
+/** Convert a wall-clock timestamp into the shared shimmer cadence bucket. */
+export function shimmerFrameAt(nowMs = Date.now()): number {
+  return Math.floor(nowMs / SHIMMER_INTERVAL_MS);
+}
+
+/**
+ * Wall-clock blink phase: `true` on the bright half of each 500ms period.
+ * Deriving blink from time instead of a per-timer tick counter keeps the
+ * rhythm constant when the event loop is congested — setInterval drift can
+ * shift when a repaint happens, but never how far the phase has advanced.
+ */
+export function blinkPhaseOn(nowMs = Date.now(), halfPeriodMs = 500): boolean {
+  return Math.floor(nowMs / halfPeriodMs) % 2 === 0;
+}
+
+export function shimmerText(text: string, nowMs = Date.now()): string {
   // Grapheme clusters, so a composed emoji or CJK glyph never splits across
   // two colour codes.
   const chars = [...GRAPHEME_SEGMENTER.segment(text)].map(({ segment }) => segment);
@@ -42,7 +58,7 @@ export function shimmerText(text: string, frame: number): string {
   // width, so the sweep wraps seamlessly with a brief all-base beat between
   // passes.
   const cycle = chars.length + WAVE_HALF_WIDTH * 2;
-  const wavefront = (frame % cycle) - WAVE_HALF_WIDTH;
+  const wavefront = (shimmerFrameAt(nowMs) % cycle) - WAVE_HALF_WIDTH;
   let out = '';
   for (let i = 0; i < chars.length; i++) {
     const char = chars[i]!;

@@ -13,7 +13,6 @@ import { shimmerText } from '#/tui/utils/shimmer';
 export type SpinnerStyle = 'moon' | 'braille';
 
 export class MoonLoader extends Text {
-  private currentFrame = 0;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private ui: TUI;
   private frames: string[];
@@ -50,8 +49,9 @@ export class MoonLoader extends Text {
 
   start(): void {
     this.updateDisplay();
+    // The glyph phase derives from wall-clock inside updateDisplay; the
+    // interval only schedules repaints, so timer drift never bends the rhythm.
     this.intervalId = setInterval(() => {
-      this.currentFrame = (this.currentFrame + 1) % this.frames.length;
       this.updateDisplay();
     }, this.interval);
   }
@@ -108,11 +108,12 @@ export class MoonLoader extends Text {
    * Advances with the spinner's frame tick (no extra timer).
    */
   private shimmerLabel(): string {
-    return this.label.length === 0 ? this.label : shimmerText(this.label, this.currentFrame);
+    return this.label.length === 0 ? this.label : shimmerText(this.label);
   }
 
   private updateDisplay(): void {
-    const frame = this.frames[this.currentFrame]!;
+    const frame =
+      this.frames[Math.floor(Date.now() / this.interval) % this.frames.length]!;
     const warn = (s: string): string => currentTheme.fg('warning', s);
     const coloredFrame = this.stalled
       ? warn(frame)
