@@ -75,7 +75,7 @@ housekeeping() {
   fi
   if [ "$changed" = 1 ] && [ "$DRY_RUN" != 1 ]; then
     git -C "$EXPORT_DIR" add LICENSE "$WELCOME_TS"
-    git -C "$EXPORT_DIR" commit -q -m "chore: public packaging deltas (LICENSE copyright, upstream mascot)"
+    git -C "$EXPORT_DIR" -c commit.gpgsign=false commit -q -m "chore: public packaging deltas (LICENSE copyright, upstream mascot)"
     echo "housekeeping: packaging deltas committed"
   fi
 }
@@ -84,34 +84,46 @@ planned=0
 skipped=0
 for sha in $commits; do
   subject="$(git log -1 --format=%s "$sha")"
-  # Upfront skip: a commit touching only forbidden paths would conflict on
-  # replay (public lacks the files, so a modify looks like delete-vs-edit).
-  touches_public=0
-  while IFS= read -r path; do
+  # Apply the commit's public paths directly (checkout for adds/modifies,
+  # rm for deletions) instead of cherry-pick: a modify-vs-delete conflict on
+  # the forbidden paths (docs/…) would otherwise stop the run.
+  public_paths=()
+  deleted_paths=()
+  while IFS=$'\t' read -r status p1 p2; do
+    if [[ "$status" == R* ]]; then
+      # Rename: remove the old name (if public), add the new one.
+      case "$p1" in
+        docs/*|release-channel/*|.github/workflows/dev-ci.yml|.public-export/*) ;;
+        *) deleted_paths+=("$p1") ;;
+      esac
+      case "$p2" in
+        docs/*|release-channel/*|.github/workflows/dev-ci.yml|.public-export/*) ;;
+        *) public_paths+=("$p2") ;;
+      esac
+      continue
+    fi
+    path="${p2:-$p1}"
     case "$path" in
-      docs/*|release-channel/*|.github/workflows/dev-ci.yml|.public-export/*) ;;
-      *) touches_public=1; break ;;
+      docs/*|release-channel/*|.github/workflows/dev-ci.yml|.public-export/*) continue ;;
     esac
-  done < <(git diff-tree --no-commit-id --name-only -r "$sha")
-  if [ "$touches_public" = 0 ]; then
+    if [[ "$status" == D* ]]; then
+      deleted_paths+=("$path")
+    else
+      public_paths+=("$path")
+    fi
+  done < <(git diff-tree --no-commit-id --name-status -r "$sha")
+  if [ "${#public_paths[@]}" = 0 ] && [ "${#deleted_paths[@]}" = 0 ]; then
     echo "skip  ${sha:0:9}  (forbidden paths only)  $subject"
     skipped=$((skipped + 1))
     continue
   fi
-  # Replay into the export index without committing, strip forbidden paths,
-  # then see what is left. -X theirs: a mixed commit (public + forbidden
-  # paths) conflicts on the forbidden files (public lacks them); taking the
-  # dev side is safe because forbidden paths are stripped right after, and
-  # the two packaging files (LICENSE, mascot) are re-asserted by
-  # housekeeping at the end.
-  if ! git -C "$EXPORT_DIR" cherry-pick -n -X theirs "$sha" >/dev/null 2>&1; then
-    echo "CONFLICT replaying $sha ($subject) — resolve inside $EXPORT_DIR, then re-run; already-replayed commits come out empty and are skipped" >&2
-    exit 1
+  if [ "${#public_paths[@]}" -gt 0 ]; then
+    git -C "$EXPORT_DIR" checkout -q "$sha" -- "${public_paths[@]}"
+    git -C "$EXPORT_DIR" add -- "${public_paths[@]}"
   fi
-  for p in "${FORBIDDEN_PATHS[@]}"; do
-    git -C "$EXPORT_DIR" rm -r -q --cached --ignore-unmatch "$p" 2>/dev/null || true
-    rm -rf "${EXPORT_DIR:?}/$p"
-  done
+  if [ "${#deleted_paths[@]}" -gt 0 ]; then
+    git -C "$EXPORT_DIR" rm -q --ignore-unmatch -- "${deleted_paths[@]}"
+  fi
   if git -C "$EXPORT_DIR" diff --cached --quiet; then
     echo "skip  ${sha:0:9}  (empty after path filter)  $subject"
     skipped=$((skipped + 1))
@@ -135,7 +147,7 @@ for sha in $commits; do
     git -C "$EXPORT_DIR" reset -q --hard
     continue
   fi
-  git -C "$EXPORT_DIR" commit -q -m "$message
+  git -C "$EXPORT_DIR" -c commit.gpgsign=false commit -q -m "$message
 
 Source: dev@${sha}"
 done
