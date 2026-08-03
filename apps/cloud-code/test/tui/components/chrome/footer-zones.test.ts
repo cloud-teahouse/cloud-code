@@ -125,14 +125,38 @@ describe('FooterComponent hit zones', () => {
     expect(covered).toContain('0%');
   });
 
-  it('marks every zone press-only (no hover tracking on the status bar)', () => {
+  it('tracks hover and underlines the hovered segment only', () => {
     const footer = makeFooter(actionMocks());
-    footer.render(80);
-    for (const zone of footer.hitZones()) {
-      expect(zone.semantics?.hover).toBe(false);
-    }
-    // …so pointer-motion hit-tests never match, mirroring the TUI's lookup.
-    expect(hitZoneAt(footer.hitZones(), 0, 1, 'hover')).toBeNull();
+    const plain = footer.render(80);
+    const plainStripped = plain.map(strip);
+
+    // Zones don't opt out of hover: motion hit-tests match, mirroring the
+    // TUI's lookup.
+    expect(hitZoneAt(footer.hitZones(), 0, 1, 'hover')?.id).toBe('model');
+
+    // Hovering the model segment underlines it without shifting the text,
+    // and the change flag flips only on real transitions.
+    expect(footer.setHoveredZone('model')).toBe(true);
+    expect(footer.setHoveredZone('model')).toBe(false);
+    const hovered = footer.render(80);
+    expect(hovered[0]).toContain('\x1b[4m');
+    expect(hovered.map(strip)).toEqual(plainStripped);
+
+    // The hover state is part of the render signature: clearing it restores
+    // the byte-identical no-hover lines.
+    expect(footer.setHoveredZone(null)).toBe(true);
+    expect(footer.render(80)).toEqual(plain);
+  });
+
+  it('underlines the hovered context segment on line 2 only', () => {
+    const footer = makeFooter(actionMocks());
+    const plain = footer.render(80);
+
+    footer.setHoveredZone('context');
+    const hovered = footer.render(80);
+    expect(hovered[0]).toBe(plain[0]);
+    expect(hovered[1]).toContain('\x1b[4m');
+    expect(hovered.map(strip)).toEqual(plain.map(strip));
   });
 
   it('dispatches segment presses to their actions', () => {

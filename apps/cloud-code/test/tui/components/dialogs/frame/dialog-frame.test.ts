@@ -44,7 +44,7 @@ describe('DialogFrame', () => {
       });
       expect(lines).toEqual([
         '─'.repeat(20),
-        'Title',
+        ' Title',
         ' one · two',
         '',
         'c1',
@@ -133,7 +133,7 @@ describe('DialogFrame', () => {
       });
       expect(lines).toEqual([
         '─'.repeat(20),
-        'T',
+        ' T',
         ' h',
         '',
         'c1',

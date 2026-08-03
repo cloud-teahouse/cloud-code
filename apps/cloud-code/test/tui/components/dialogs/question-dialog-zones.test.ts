@@ -257,8 +257,8 @@ describe('QuestionDialogComponent hit zones', () => {
     );
     dialog.render(80);
     dialog.handleMouse({ type: 'wheel', button: 65, col: 1, row: 5, slotRelative: false });
-    expect(strip(dialog.render(80).join('\n'))).toContain('→ [2] B1');
+    expect(strip(dialog.render(80).join('\n'))).toContain('❯ [2] B1');
     dialog.handleMouse({ type: 'wheel', button: 64, col: 1, row: 5, slotRelative: false });
-    expect(strip(dialog.render(80).join('\n'))).toContain('→ [1] A1');
+    expect(strip(dialog.render(80).join('\n'))).toContain('❯ [1] A1');
   });
 });

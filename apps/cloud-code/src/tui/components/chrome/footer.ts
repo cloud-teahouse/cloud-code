@@ -7,10 +7,11 @@
  *           (breakdown only once per-turn usage is known; cache segment
  *           only when the provider reports cache activity)
  *
- * Mouse: the model / cwd / context segments declare hit zones (press-only,
- * no hover affordance) dispatched to {@link FooterActions} — model opens the
- * model picker, cwd copies the full path, context opens /status. Zones only
- * exist once the host wires actions via {@link FooterComponent.setActions}.
+ * Mouse: the model / cwd / context segments declare hit zones (press +
+ * hover) dispatched to {@link FooterActions} — model opens the model picker,
+ * cwd copies the full path, context opens /status; pointer motion underlines
+ * the hovered segment. Zones only exist once the host wires actions via
+ * {@link FooterComponent.setActions}.
  */
 
 import type { Component, HitZone, HitZoneId, MouseEvent } from '@cloud-code/pi-tui';
@@ -24,6 +25,7 @@ import { getActiveLocale, resolveDescription, t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
+import { HoverState, underlineText } from '#/tui/utils/mouse-hover';
 import {
   StatusLineCommandRunner,
   type StatusLinePayload,
@@ -334,6 +336,9 @@ export class FooterComponent implements Component {
    * hit leaves the zones valid.
    */
   private lastZones: HitZone[] = [];
+  /** Hovered segment id (mouse motion, central zone dispatch); null when the
+   * pointer is elsewhere. Part of the render-cache signature. */
+  private readonly hover = new HoverState<FooterZoneId>();
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
@@ -415,9 +420,10 @@ export class FooterComponent implements Component {
   }
 
   /**
-   * Action zones of the actionable segments, cached by render(). Press-only
-   * (hover: false): the footer is dense status text with no hover affordance,
-   * so pointer motion is never tracked and renders stay byte-identical.
+   * Zones of the actionable segments, cached by render(). Press + hover:
+   * pointer motion over a segment is tracked centrally and the segment
+   * renders underlined; with no mouse in use the hover state stays null and
+   * renders stay byte-identical.
    */
   hitZones(): Iterable<HitZone> {
     return this.lastZones;
@@ -438,6 +444,16 @@ export class FooterComponent implements Component {
         return;
     }
     return false;
+  }
+
+  /**
+   * Zone hover (central dispatch): records the hovered segment so render()
+   * underlines it. The changed flag is the TUI's repaint signal; the hover
+   * id is part of the render-cache signature, so a repaint picks up the
+   * underline without touching the cached no-hover lines.
+   */
+  setHoveredZone(id: HitZoneId | null): void | boolean {
+    return this.hover.update(typeof id === 'string' ? (id as FooterZoneId) : null);
   }
 
   invalidate(): void {}
@@ -601,6 +617,15 @@ export class FooterComponent implements Component {
       }
     }
 
+    // Hover affordance: underline the hovered clickable segment only — the
+    // two-cell join gaps and the rest of the bar stay plain.
+    if (modelLeftIndex >= 0 && this.hover.isHovered('model')) {
+      left[modelLeftIndex] = underlineText(left[modelLeftIndex]!, true);
+    }
+    if (cwdLeftIndex >= 0 && this.hover.isHovered('cwd')) {
+      left[cwdLeftIndex] = underlineText(left[cwdLeftIndex]!, true);
+    }
+
     const leftLine = left.join('  ');
     const leftWidth = visibleWidth(leftLine);
 
@@ -643,6 +668,10 @@ export class FooterComponent implements Component {
       state.recentFirstTokenLatencies,
     );
     const contextWidth = visibleWidth(contextText);
+    const renderedContext = underlineText(
+      chalk.hex(colors.text)(contextText),
+      this.hover.isHovered('context'),
+    );
     let line2: string;
     if (this.transientHint) {
       const maxHintWidth = Math.max(0, width - contextWidth - 1);
@@ -652,13 +681,10 @@ export class FooterComponent implements Component {
           : truncateToWidth(this.transientHint, maxHintWidth, '…');
       const hintWidth = visibleWidth(shownHint);
       const pad = Math.max(0, width - hintWidth - contextWidth);
-      line2 =
-        chalk.hex(colors.warning).bold(shownHint) +
-        ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
+      line2 = chalk.hex(colors.warning).bold(shownHint) + ' '.repeat(pad) + renderedContext;
     } else {
       const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+      line2 = ' '.repeat(leftPad) + renderedContext;
     }
 
     const lines = [truncateToWidth(line1, width), truncateToWidth(line2, width)];
@@ -670,12 +696,12 @@ export class FooterComponent implements Component {
   }
 
   /**
-   * Action zones for the rendered segments, in the footer's own frame (row
-   * 0/1 = the two lines, col 1-based). Line-1 zones are skipped when the
-   * segment row overflowed and got truncated — clickable geometry must never
-   * point at cells that scrolled off. The context segment is right-aligned,
-   * so its zone anchors to the row's end. Everything derives from the same
-   * inputs the render signature covers.
+   * Zones for the rendered segments, in the footer's own frame (row 0/1 =
+   * the two lines, col 1-based). Line-1 zones are skipped when the segment
+   * row overflowed and got truncated — clickable geometry must never point
+   * at cells that scrolled off. The context segment is right-aligned, so its
+   * zone anchors to the row's end. Everything derives from the same inputs
+   * the render signature covers.
    */
   private buildZones(
     width: number,
@@ -687,7 +713,6 @@ export class FooterComponent implements Component {
   ): HitZone[] {
     if (this.actions === undefined) return [];
     const zones: HitZone[] = [];
-    const pressOnly = { hover: false } as const;
     if (leftWidth <= width) {
       // Segments join with a two-cell gap; walk to the segment's start col.
       const startCol = (index: number): number => {
@@ -702,7 +727,6 @@ export class FooterComponent implements Component {
           col: startCol(modelLeftIndex),
           width: visibleWidth(left[modelLeftIndex] ?? ''),
           height: 1,
-          semantics: pressOnly,
         });
       }
       if (cwdLeftIndex >= 0) {
@@ -712,7 +736,6 @@ export class FooterComponent implements Component {
           col: startCol(cwdLeftIndex),
           width: visibleWidth(left[cwdLeftIndex] ?? ''),
           height: 1,
-          semantics: pressOnly,
         });
       }
     }
@@ -723,7 +746,6 @@ export class FooterComponent implements Component {
         col: width - contextWidth + 1,
         width: contextWidth,
         height: 1,
-        semantics: pressOnly,
       });
     }
     return zones;
@@ -764,6 +786,9 @@ export class FooterComponent implements Component {
       this.backgroundBashTaskCount,
       this.backgroundAgentCount,
       this.transientHint ?? '',
+      // Hover repaints only the underline of one segment; it must still bust
+      // the cache or the affordance never appears.
+      this.hover.index ?? '',
       JSON.stringify(state.statusLine ?? null),
       this.statusLineRunner?.current() ?? '',
       currentTipIndex(),

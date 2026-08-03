@@ -68,7 +68,8 @@ export function inlineDialogMinSize(): DialogFrameChrome['minSize'] {
 
 /** Static chrome conventions of a dialog (set once, per dialog). */
 export interface DialogFrameChrome {
-  /** Prefix before the title text; defaults to none. */
+  /** Prefix before the title text; defaults to a single space (aligned with
+   * the default hint indent). */
   readonly titleIndent?: string;
   /** Prefix before each hint/notice line; defaults to a single space. */
   readonly hintIndent?: string;
@@ -164,7 +165,7 @@ export class DialogFrame {
     const hintIndent = this.chrome.hintIndent ?? ' ';
     const textWidth = Math.max(1, width - visibleWidth(hintIndent));
 
-    const titleText = `${this.chrome.titleIndent ?? ''}${opts.title}`;
+    const titleText = `${this.chrome.titleIndent ?? ' '}${opts.title}`;
     const lines: string[] = [
       currentTheme.fg(tone, '─'.repeat(width)),
       this.chrome.formatTitleLine === undefined

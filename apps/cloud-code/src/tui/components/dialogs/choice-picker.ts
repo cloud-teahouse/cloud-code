@@ -90,7 +90,6 @@ export class ChoicePickerComponent extends Container implements Focusable {
     super();
     this.opts = opts;
     this.frame = new DialogFrame({
-      titleIndent: ' ',
       minSize: inlineDialogMinSize(),
       ...(opts.formatHint !== undefined ? { formatHintLine: opts.formatHint } : {}),
     });

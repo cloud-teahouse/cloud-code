@@ -67,11 +67,10 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
   private readonly items: readonly PluginsOverviewItem[];
   private selectedIndex = 0;
   /** The dialog skeleton owning the chrome (divider/title/hint) and its row
-   * math. Title and hint are flush-left in this dialog; the hint is
-   * pre-wrapped (segment boundaries) and pre-styled by the dialog, so the
-   * frame leaves the lines untouched. */
+   * math. The hint is flush-left in this dialog; it is pre-wrapped
+   * (segment boundaries) and pre-styled by the dialog, so the frame leaves
+   * the lines untouched. */
   private readonly frame = new DialogFrame({
-    titleIndent: '',
     hintIndent: '',
     minSize: inlineDialogMinSize(),
     formatHintLine: (line) => line,

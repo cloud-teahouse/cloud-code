@@ -46,7 +46,6 @@ export class StartPermissionPromptComponent<TChoice extends StartPermissionChoic
   private readonly hover = new HoverState();
   /** The dialog skeleton owning the chrome (divider/title/hint) and its row math. */
   private readonly frame = new DialogFrame({
-    titleIndent: ' ',
     hintIndent: '',
     minSize: inlineDialogMinSize(),
     // The hint lines arrive pre-wrapped and pre-styled (see render); the

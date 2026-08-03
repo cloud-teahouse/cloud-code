@@ -3,7 +3,7 @@
 exports[`approval/question dialog render parity > ApprovalPanelComponent > choices with descriptions (en) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApprove CreateGoal?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Approve CreateGoal?[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto[0m...[0m
        [38;2;136;136;136mTools are appr[0m...[0m
@@ -17,7 +17,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApprove CreateGoal?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Approve CreateGoal?[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto and start[22m[39m
        [38;2;136;136;136mTools are approved automatically,[39m
@@ -28,7 +28,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApprove CreateGoal?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Approve CreateGoal?[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto and start[22m[39m
        [38;2;136;136;136mTools are approved automatically, and questions are skipped.[39m
@@ -38,7 +38,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApprove CreateGoal?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Approve CreateGoal?[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto and start[22m[39m
        [38;2;136;136;136mTools are approved automatically, and questions are skipped.[39m
@@ -51,7 +51,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 exports[`approval/question dialog render parity > ApprovalPanelComponent > choices with descriptions (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m批准 CreateGoal？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 批准 CreateGoal？[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto[0m...[0m
        [38;2;136;136;136mTools are appr[0m...[0m
@@ -65,7 +65,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m批准 CreateGoal？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 批准 CreateGoal？[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto and start[22m[39m
        [38;2;136;136;136mTools are approved automatically,[39m
@@ -76,7 +76,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m批准 CreateGoal？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 批准 CreateGoal？[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto and start[22m[39m
        [38;2;136;136;136mTools are approved automatically, and questions are skipped.[39m
@@ -86,7 +86,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m批准 CreateGoal？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 批准 CreateGoal？[22m[39m
 
   [38;2;91;192;190m[1m▶[22m[39m [38;2;91;192;190m[1m1. Switch to Auto and start[22m[39m
        [38;2;136;136;136mTools are approved automatically, and questions are skipped.[39m
@@ -99,7 +99,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > choic
 exports[`approval/question dialog render parity > ApprovalPanelComponent > diff block with preview hint (en) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApply these edits?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Apply these edits?[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -119,7 +119,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApply these edits?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Apply these edits?[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -137,7 +137,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApply these edits?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Apply these edits?[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -154,7 +154,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mApply these edits?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Apply these edits?[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -174,7 +174,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 exports[`approval/question dialog render parity > ApprovalPanelComponent > diff block with preview hint (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m应用这些修改？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 应用这些修改？[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -193,7 +193,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m应用这些修改？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 应用这些修改？[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -211,7 +211,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m应用这些修改？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 应用这些修改？[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -228,7 +228,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m应用这些修改？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 应用这些修改？[22m[39m
 
   [1m[38;2;122;217;155m+1 [39m[22m[1m[38;2;240;133;133m-1 [39m[22msrc/index.ts
   [38;2;107;107;107m   1 [39m  const a = 1;
@@ -248,7 +248,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > diff 
 exports[`approval/question dialog render parity > ApprovalPanelComponent > feedback mode armed (en) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md wi[0m...[0m
 
@@ -262,7 +262,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage[0m...[0m
 
@@ -275,7 +275,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -288,7 +288,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -304,7 +304,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 exports[`approval/question dialog render parity > ApprovalPanelComponent > feedback mode armed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md wi[0m...[0m
 
@@ -317,7 +317,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage[0m...[0m
 
@@ -330,7 +330,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -343,7 +343,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -359,7 +359,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > feedb
 exports[`approval/question dialog render parity > ApprovalPanelComponent > hovered choice underlined (en) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md wi[0m...[0m
 
@@ -374,7 +374,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage[0m...[0m
 
@@ -388,7 +388,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -401,7 +401,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mWrite this file?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Write this file?[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -417,7 +417,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 exports[`approval/question dialog render parity > ApprovalPanelComponent > hovered choice underlined (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md wi[0m...[0m
 
@@ -431,7 +431,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage[0m...[0m
 
@@ -444,7 +444,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -457,7 +457,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m写入此文件？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 写入此文件？[22m[39m
 
   [38;2;136;136;136mUpdate README.md with the new usage section.[39m
 
@@ -473,7 +473,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > hover
 exports[`approval/question dialog render parity > ApprovalPanelComponent > shell block with danger and requester badge (en) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mRun this command?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Run this command?[22m[39m
   [38;2;136;136;136mRequested by teamma[0m...[0m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -493,7 +493,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mRun this command?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Run this command?[22m[39m
   [38;2;136;136;136mRequested by teammate researcher (t[0m...[0m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -511,7 +511,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mRun this command?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Run this command?[22m[39m
   [38;2;136;136;136mRequested by teammate researcher (team: core)[39m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -528,7 +528,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1mRun this command?[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m Run this command?[22m[39m
   [38;2;136;136;136mRequested by teammate researcher (team: core)[39m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -548,7 +548,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 exports[`approval/question dialog render parity > ApprovalPanelComponent > shell block with danger and requester badge (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;232;168;56m────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m运行此命令？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 运行此命令？[22m[39m
   [38;2;136;136;136m来自 teammate resea[0m...[0m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -567,7 +567,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 [38;2;232;168;56m────────────────────────[39m
 === width 40 ===
 [38;2;232;168;56m────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m运行此命令？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 运行此命令？[22m[39m
   [38;2;136;136;136m来自 teammate researcher（团队：core）[39m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -584,7 +584,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 [38;2;232;168;56m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m运行此命令？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 运行此命令？[22m[39m
   [38;2;136;136;136m来自 teammate researcher（团队：core）[39m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -601,7 +601,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;232;168;56m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m运行此命令？[22m[39m
+  [38;2;232;168;56m[1m▶[22m[39m [38;2;232;168;56m[1m 运行此命令？[22m[39m
   [38;2;136;136;136m来自 teammate researcher（团队：core）[39m
 
   [38;2;136;136;136mcwd: /tmp/project[39m
@@ -621,7 +621,7 @@ exports[`approval/question dialog render parity > ApprovalPanelComponent > shell
 exports[`approval/question dialog render parity > QuestionDialogComponent > body lines and windowed options (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -644,7 +644,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   showing 1-6 of 10[39m
@@ -656,7 +656,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -679,7 +679,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   showing 1-6 of 10[39m
@@ -689,7 +689,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -712,7 +712,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   showing 1-6 of 10[39m
@@ -721,7 +721,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -744,7 +744,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   showing 1-6 of 10[39m
@@ -756,7 +756,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 exports[`approval/question dialog render parity > QuestionDialogComponent > body lines and windowed options (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -779,7 +779,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   显示 1-6/10 项[39m
@@ -789,7 +789,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -812,7 +812,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   显示 1-6/10 项[39m
@@ -822,7 +822,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -845,7 +845,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   显示 1-6/10 项[39m
@@ -854,7 +854,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -877,7 +877,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 [38;2;136;136;136m    [1] Option 1[39m
 [38;2;136;136;136m    [2] Option 2[39m
 [38;2;136;136;136m    [3] Option 3[39m
-[38;2;79;168;255m  → [4] Option 4[39m
+[38;2;79;168;255m  ❯ [4] Option 4[39m
 [38;2;136;136;136m    [5] Option 5[39m
 [38;2;136;136;136m    [6] Option 6[39m
 [38;2;136;136;136m   显示 1-6/10 项[39m
@@ -889,13 +889,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > body
 exports[`approval/question dialog render parity > QuestionDialogComponent > hovered option underlined (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] Other[39m
 
@@ -906,13 +906,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] Other[39m
 
@@ -921,13 +921,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] Other[39m
 
@@ -935,13 +935,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] Other[39m
 
@@ -952,13 +952,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 exports[`approval/question dialog render parity > QuestionDialogComponent > hovered option underlined (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] 其他[39m
 
@@ -967,13 +967,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] 其他[39m
 
@@ -982,13 +982,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] 其他[39m
 
@@ -996,13 +996,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
 [38;2;79;168;255m ? Pick a color[39m
 
-[38;2;79;168;255m  → [1] Red[39m
+[38;2;79;168;255m  ❯ [1] Red[39m
 [38;2;136;136;136m    [58;2;224;224;224m[4m[2] Blue[24m[59m[39m
 [38;2;136;136;136m    [3] 其他[39m
 
@@ -1013,7 +1013,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > hove
 exports[`approval/question dialog render parity > QuestionDialogComponent > multi-select toggled (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1034,7 +1034,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1051,7 +1051,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1067,7 +1067,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1086,7 +1086,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 exports[`approval/question dialog render parity > QuestionDialogComponent > multi-select toggled (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1105,7 +1105,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1122,7 +1122,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1138,7 +1138,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1157,7 +1157,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > mult
 exports[`approval/question dialog render parity > QuestionDialogComponent > other input armed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1168,14 +1168,14 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] Other: [39map[7m [27m      
+[38;2;79;168;255m  ❯ [3] Other: [39map[7m [27m      
 
 [38;2;136;136;136m  type answer  ↵ save[39m
 [38;2;136;136;136m  tab switch  esc cancel[39m
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1185,14 +1185,14 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] Other: [39map[7m [27m                      
+[38;2;79;168;255m  ❯ [3] Other: [39map[7m [27m                      
 
 [38;2;136;136;136m  type answer  ↵ save  tab switch[39m
 [38;2;136;136;136m  esc cancel[39m
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1201,13 +1201,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] Other: [39map[7m [27m                                                              
+[38;2;79;168;255m  ❯ [3] Other: [39map[7m [27m                                                              
 
 [38;2;136;136;136m  type answer  ↵ save  tab switch  esc cancel[39m
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m Submit [39m
 
@@ -1216,7 +1216,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] Other: [39map[7m [27m                                                                                                      
+[38;2;79;168;255m  ❯ [3] Other: [39map[7m [27m                                                                                                      
 
 [38;2;136;136;136m  type answer  ↵ save  tab switch  esc cancel[39m
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m"
@@ -1225,7 +1225,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 exports[`approval/question dialog render parity > QuestionDialogComponent > other input armed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1235,14 +1235,14 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] 其他: [39map[7m [27m       
+[38;2;79;168;255m  ❯ [3] 其他: [39map[7m [27m       
 
 [38;2;136;136;136m  输入回答  ↵ 保存[39m
 [38;2;136;136;136m  tab 切换  esc 取消[39m
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1251,13 +1251,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] 其他: [39map[7m [27m                       
+[38;2;79;168;255m  ❯ [3] 其他: [39map[7m [27m                       
 
 [38;2;136;136;136m  输入回答  ↵ 保存  tab 切换  esc 取消[39m
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1266,13 +1266,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] 其他: [39map[7m [27m                                                               
+[38;2;79;168;255m  ❯ [3] 其他: [39map[7m [27m                                                               
 
 [38;2;136;136;136m  输入回答  ↵ 保存  tab 切换  esc 取消[39m
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Q1 [22m[39m[49m  [38;2;136;136;136m 提交 [39m
 
@@ -1281,7 +1281,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 
 [38;2;136;136;136m    [1] us-east[39m
 [38;2;136;136;136m    [2] eu-west[39m
-[38;2;79;168;255m  → [3] 其他: [39map[7m [27m                                                                                                       
+[38;2;79;168;255m  ❯ [3] 其他: [39map[7m [27m                                                                                                       
 
 [38;2;136;136;136m  输入回答  ↵ 保存  tab 切换  esc 取消[39m
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m"
@@ -1290,14 +1290,14 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > othe
 exports[`approval/question dialog render parity > QuestionDialogComponent > question tab with descriptions (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[0m...[0m
 
 [38;2;79;168;255m ? Which approach do you[39m
 [38;2;79;168;255m   prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the[39m
+[38;2;79;168;255m  ❯ [1] Refactor the[39m
 [38;2;79;168;255m        module[39m
 [38;2;136;136;136m        Keeps the public[39m
 [38;2;136;136;136m        API stable.[39m
@@ -1314,13 +1314,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[39m  [38;2;136;136;136m Submit [39m
 
 [38;2;79;168;255m ? Which approach do you prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the module[39m
+[38;2;79;168;255m  ❯ [1] Refactor the module[39m
 [38;2;136;136;136m        Keeps the public API stable.[39m
 [38;2;136;136;136m    [2] Rewrite from scratch[39m
 [38;2;136;136;136m        Drops every legacy caller.[39m
@@ -1331,13 +1331,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[39m  [38;2;136;136;136m Submit [39m
 
 [38;2;79;168;255m ? Which approach do you prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the module[39m
+[38;2;79;168;255m  ❯ [1] Refactor the module[39m
 [38;2;136;136;136m        Keeps the public API stable.[39m
 [38;2;136;136;136m    [2] Rewrite from scratch[39m
 [38;2;136;136;136m        Drops every legacy caller.[39m
@@ -1347,13 +1347,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[39m  [38;2;136;136;136m Submit [39m
 
 [38;2;79;168;255m ? Which approach do you prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the module[39m
+[38;2;79;168;255m  ❯ [1] Refactor the module[39m
 [38;2;136;136;136m        Keeps the public API stable.[39m
 [38;2;136;136;136m    [2] Rewrite from scratch[39m
 [38;2;136;136;136m        Drops every legacy caller.[39m
@@ -1366,14 +1366,14 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 exports[`approval/question dialog render parity > QuestionDialogComponent > question tab with descriptions (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[0m...[0m
 
 [38;2;79;168;255m ? Which approach do you[39m
 [38;2;79;168;255m   prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the[39m
+[38;2;79;168;255m  ❯ [1] Refactor the[39m
 [38;2;79;168;255m        module[39m
 [38;2;136;136;136m        Keeps the public[39m
 [38;2;136;136;136m        API stable.[39m
@@ -1388,13 +1388,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[39m  [38;2;136;136;136m 提交 [39m
 
 [38;2;79;168;255m ? Which approach do you prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the module[39m
+[38;2;79;168;255m  ❯ [1] Refactor the module[39m
 [38;2;136;136;136m        Keeps the public API stable.[39m
 [38;2;136;136;136m    [2] Rewrite from scratch[39m
 [38;2;136;136;136m        Drops every legacy caller.[39m
@@ -1405,13 +1405,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[39m  [38;2;136;136;136m 提交 [39m
 
 [38;2;79;168;255m ? Which approach do you prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the module[39m
+[38;2;79;168;255m  ❯ [1] Refactor the module[39m
 [38;2;136;136;136m        Keeps the public API stable.[39m
 [38;2;136;136;136m    [2] Rewrite from scratch[39m
 [38;2;136;136;136m        Drops every legacy caller.[39m
@@ -1421,13 +1421,13 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Approach [22m[39m[49m  [38;2;136;136;136m(○) Flag[39m  [38;2;136;136;136m 提交 [39m
 
 [38;2;79;168;255m ? Which approach do you prefer?[39m
 
-[38;2;79;168;255m  → [1] Refactor the module[39m
+[38;2;79;168;255m  ❯ [1] Refactor the module[39m
 [38;2;136;136;136m        Keeps the public API stable.[39m
 [38;2;136;136;136m    [2] Rewrite from scratch[39m
 [38;2;136;136;136m        Drops every legacy caller.[39m
@@ -1440,7 +1440,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > ques
 exports[`approval/question dialog render parity > QuestionDialogComponent > submit tab with an unanswered question (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m Sub[0m...[0m
 
@@ -1454,7 +1454,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m Ready to submit your[0m...[0m
 
-[38;2;79;168;255m  → [1] Submit[39m
+[38;2;79;168;255m  ❯ [1] Submit[39m
 [38;2;136;136;136m    [2] Cancel[39m
 
 [38;2;136;136;136m  ↑↓ select  1/2 choose[39m
@@ -1464,7 +1464,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m Submit [22m[39m[49m
 
@@ -1478,7 +1478,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m Ready to submit your answers?[39m
 
-[38;2;79;168;255m  → [1] Submit[39m
+[38;2;79;168;255m  ❯ [1] Submit[39m
 [38;2;136;136;136m    [2] Cancel[39m
 
 [38;2;136;136;136m  ↑↓ select  1/2 choose  ↵ confirm[39m
@@ -1486,7 +1486,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m Submit [22m[39m[49m
 
@@ -1500,14 +1500,14 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m Ready to submit your answers?[39m
 
-[38;2;79;168;255m  → [1] Submit[39m
+[38;2;79;168;255m  ❯ [1] Submit[39m
 [38;2;136;136;136m    [2] Cancel[39m
 
 [38;2;136;136;136m  ↑↓ select  1/2 choose  ↵ confirm  ←/→/tab switch  esc cancel[39m
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m question[22m[39m
+[38;2;90;90;90m[1m  question[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m Submit [22m[39m[49m
 
@@ -1521,7 +1521,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m Ready to submit your answers?[39m
 
-[38;2;79;168;255m  → [1] Submit[39m
+[38;2;79;168;255m  ❯ [1] Submit[39m
 [38;2;136;136;136m    [2] Cancel[39m
 
 [38;2;136;136;136m  ↑↓ select  1/2 choose  ↵ confirm  ←/→/tab switch  esc cancel[39m
@@ -1531,7 +1531,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 exports[`approval/question dialog render parity > QuestionDialogComponent > submit tab with an unanswered question (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m 提交 [22m[39m[49m
 
@@ -1545,7 +1545,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m 准备好提交回答了吗？[39m
 
-[38;2;79;168;255m  → [1] 提交[39m
+[38;2;79;168;255m  ❯ [1] 提交[39m
 [38;2;136;136;136m    [2] 取消[39m
 
 [38;2;136;136;136m  ↑↓ 选择  1/2 选择[39m
@@ -1554,7 +1554,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m 提交 [22m[39m[49m
 
@@ -1568,7 +1568,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m 准备好提交回答了吗？[39m
 
-[38;2;79;168;255m  → [1] 提交[39m
+[38;2;79;168;255m  ❯ [1] 提交[39m
 [38;2;136;136;136m    [2] 取消[39m
 
 [38;2;136;136;136m  ↑↓ 选择  1/2 选择  ↵ 确认[39m
@@ -1576,7 +1576,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m 提交 [22m[39m[49m
 
@@ -1590,14 +1590,14 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m 准备好提交回答了吗？[39m
 
-[38;2;79;168;255m  → [1] 提交[39m
+[38;2;79;168;255m  ❯ [1] 提交[39m
 [38;2;136;136;136m    [2] 取消[39m
 
 [38;2;136;136;136m  ↑↓ 选择  1/2 选择  ↵ 确认  ←/→/tab 切换  esc 取消[39m
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 问题[22m[39m
+[38;2;90;90;90m[1m  问题[22m[39m
 
  [38;2;78;200;126m(✓) Q1[39m  [38;2;136;136;136m(○) Q2[39m  [48;2;79;168;255m[38;2;224;224;224m[1m 提交 [22m[39m[49m
 
@@ -1611,7 +1611,7 @@ exports[`approval/question dialog render parity > QuestionDialogComponent > subm
 
 [38;2;224;224;224m 准备好提交回答了吗？[39m
 
-[38;2;79;168;255m  → [1] 提交[39m
+[38;2;79;168;255m  ❯ [1] 提交[39m
 [38;2;136;136;136m    [2] 取消[39m
 
 [38;2;136;136;136m  ↑↓ 选择  1/2 选择  ↵ 确认  ←/→/tab 切换  esc 取消[39m
@@ -3323,7 +3323,7 @@ exports[`plugins-family dialog render parity > ExperimentsSelectorComponent > qu
 exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > server hint (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Dat[0m…[0m
+[38;2;90;90;90m[1m  MCP servers · Kimi Da[0m…[0m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107mEnter/Space enable/disa[0m…[0m[39m
 [38;2;107;107;107mEsc cancel[39m
@@ -3348,7 +3348,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP servers · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107mEnter/Space enable/disable · Esc cancel[39m
 
@@ -3368,7 +3368,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP servers · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter/Space enable/disable · Esc cancel[39m
 
 [38;2;136;136;136m[1m MCP servers (1/2 enabled)[22m[39m
@@ -3385,7 +3385,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP servers · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter/Space enable/disable · Esc cancel[39m
 
 [38;2;136;136;136m[1m MCP servers (1/2 enabled)[22m[39m
@@ -3404,7 +3404,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > server hint (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Data[0m…[0m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Dat[0m…[0m
 [38;2;107;107;107m ↑↓ 导航[39m
 [38;2;107;107;107mEnter/Space 启用/禁用[39m
 [38;2;107;107;107mEsc 取消[39m
@@ -3428,7 +3428,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ 导航 · Enter/Space 启用/禁用[39m
 [38;2;107;107;107mEsc 取消[39m
 
@@ -3448,7 +3448,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ 导航 · Enter/Space 启用/禁用 · Esc 取消[39m
 
 [38;2;136;136;136m[1m MCP 服务器（1/2 已启用）[22m[39m
@@ -3465,7 +3465,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ 导航 · Enter/Space 启用/禁用 · Esc 取消[39m
 
 [38;2;136;136;136m[1m MCP 服务器（1/2 已启用）[22m[39m
@@ -3484,7 +3484,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > server list (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Dat[0m…[0m
+[38;2;90;90;90m[1m  MCP servers · Kimi Da[0m…[0m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107mEnter/Space enable/disa[0m…[0m[39m
 [38;2;107;107;107mEsc cancel[39m
@@ -3509,7 +3509,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP servers · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107mEnter/Space enable/disable · Esc cancel[39m
 
@@ -3529,7 +3529,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP servers · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter/Space enable/disable · Esc cancel[39m
 
 [38;2;136;136;136m[1m MCP servers (1/2 enabled)[22m[39m
@@ -3546,7 +3546,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP servers · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP servers · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter/Space enable/disable · Esc cancel[39m
 
 [38;2;136;136;136m[1m MCP servers (1/2 enabled)[22m[39m
@@ -3565,7 +3565,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > server list (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Data[0m…[0m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Dat[0m…[0m
 [38;2;107;107;107m ↑↓ 导航[39m
 [38;2;107;107;107mEnter/Space 启用/禁用[39m
 [38;2;107;107;107mEsc 取消[39m
@@ -3589,7 +3589,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ 导航 · Enter/Space 启用/禁用[39m
 [38;2;107;107;107mEsc 取消[39m
 
@@ -3609,7 +3609,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ 导航 · Enter/Space 启用/禁用 · Esc 取消[39m
 
 [38;2;136;136;136m[1m MCP 服务器（1/2 已启用）[22m[39m
@@ -3626,7 +3626,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m MCP 服务器 · Kimi Datasource[22m[39m
+[38;2;90;90;90m[1m  MCP 服务器 · Kimi Datasource[22m[39m
 [38;2;107;107;107m ↑↓ 导航 · Enter/Space 启用/禁用 · Esc 取消[39m
 
 [38;2;136;136;136m[1m MCP 服务器（1/2 已启用）[22m[39m
@@ -3645,7 +3645,7 @@ exports[`plugins-family dialog render parity > PluginMcpSelectorComponent > serv
 exports[`plugins-family dialog render parity > PluginsPanelComponent > custom tab (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch[39m
 [38;2;107;107;107mEnter install[39m
 [38;2;107;107;107mEsc cancel[39m
@@ -3660,7 +3660,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Enter install · Esc cancel[39m
 
 [38;2;107;107;107m< [39m[38;2;107;107;107m Official [39m [38;2;107;107;107m Third-party [39m [48;2;79;168;255m[38;2;224;224;224m[1m Custom [22m[39m[49m
@@ -3673,7 +3673,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Enter install · Esc cancel[39m
 
  [38;2;107;107;107m Installed [39m [38;2;107;107;107m Official [39m [38;2;107;107;107m Third-party [39m [48;2;79;168;255m[38;2;224;224;224m[1m Custom [22m[39m[49m
@@ -3686,7 +3686,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Enter install · Esc cancel[39m
 
  [38;2;107;107;107m Installed [39m [38;2;107;107;107m Official [39m [38;2;107;107;107m Third-party [39m [48;2;79;168;255m[38;2;224;224;224m[1m Custom [22m[39m[49m
@@ -3702,7 +3702,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 exports[`plugins-family dialog render parity > PluginsPanelComponent > custom tab (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Enter 安装[39m
 [38;2;107;107;107mEsc 取消[39m
 
@@ -3716,7 +3716,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Enter 安装 · Esc 取消[39m
 
  [38;2;107;107;107m 已安装 [39m [38;2;107;107;107m 官方 [39m [38;2;107;107;107m 第三方 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 自定义 [22m[39m[49m
@@ -3729,7 +3729,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Enter 安装 · Esc 取消[39m
 
  [38;2;107;107;107m 已安装 [39m [38;2;107;107;107m 官方 [39m [38;2;107;107;107m 第三方 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 自定义 [22m[39m[49m
@@ -3742,7 +3742,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Enter 安装 · Esc 取消[39m
 
  [38;2;107;107;107m 已安装 [39m [38;2;107;107;107m 官方 [39m [38;2;107;107;107m 第三方 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 自定义 [22m[39m[49m
@@ -3758,7 +3758,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > custom ta
 exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered row underlined (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch[39m
 [38;2;107;107;107mSpace toggle[39m
 [38;2;107;107;107mAlt+D remove · Alt+M MCP[39m
@@ -3780,7 +3780,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle[39m
 [38;2;107;107;107mAlt+D remove · Alt+M MCP · Enter details[39m
 [38;2;107;107;107mAlt+R reload · / ↑ search · Esc cancel[39m
@@ -3798,7 +3798,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle · Alt+D remove · Alt+M MCP · Enter details[39m
 [38;2;107;107;107mAlt+R reload · / ↑ search · Esc cancel[39m
 
@@ -3814,7 +3814,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle · Alt+D remove · Alt+M MCP · Enter details · Alt+R reload · / ↑ search · Esc cancel[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Installed [22m[39m[49m [38;2;107;107;107m Official [39m [38;2;107;107;107m Third-party [39m [38;2;107;107;107m Custom [39m
@@ -3832,7 +3832,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered row underlined (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换[39m
 [38;2;107;107;107mAlt+D 移除 · Alt+M MCP[39m
 [38;2;107;107;107mEnter 详情 · Alt+R 重载[39m
@@ -3852,7 +3852,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除[39m
 [38;2;107;107;107mAlt+M MCP · Enter 详情 · Alt+R 重载[39m
 [38;2;107;107;107m/ ↑ 搜索 · Esc 取消[39m
@@ -3870,7 +3870,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除 · Alt+M MCP · Enter 详情 · Alt+R 重载[39m
 [38;2;107;107;107m/ ↑ 搜索 · Esc 取消[39m
 
@@ -3886,7 +3886,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除 · Alt+M MCP · Enter 详情 · Alt+R 重载 · / ↑ 搜索 · Esc 取消[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m 已安装 [22m[39m[49m [38;2;107;107;107m 官方 [39m [38;2;107;107;107m 第三方 [39m [38;2;107;107;107m 自定义 [39m
@@ -3904,7 +3904,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > hovered r
 exports[`plugins-family dialog render parity > PluginsPanelComponent > installed tab with query typed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch[39m
 [38;2;107;107;107mSpace toggle[39m
 [38;2;107;107;107mAlt+D remove · Alt+M MCP[39m
@@ -3926,7 +3926,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle[39m
 [38;2;107;107;107mAlt+D remove · Alt+M MCP · Enter details[39m
 [38;2;107;107;107mAlt+R reload · Esc back to list[39m
@@ -3944,7 +3944,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle · Alt+D remove · Alt+M MCP · Enter details[39m
 [38;2;107;107;107mAlt+R reload · Esc back to list[39m
 
@@ -3960,7 +3960,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle · Alt+D remove · Alt+M MCP · Enter details · Alt+R reload · Esc back to list[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m Installed [22m[39m[49m [38;2;107;107;107m Official [39m [38;2;107;107;107m Third-party [39m [38;2;107;107;107m Custom [39m
@@ -3978,7 +3978,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 exports[`plugins-family dialog render parity > PluginsPanelComponent > installed tab with query typed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换[39m
 [38;2;107;107;107mAlt+D 移除 · Alt+M MCP[39m
 [38;2;107;107;107mEnter 详情 · Alt+R 重载[39m
@@ -3998,7 +3998,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除[39m
 [38;2;107;107;107mAlt+M MCP · Enter 详情 · Alt+R 重载[39m
 [38;2;107;107;107mEsc 返回列表[39m
@@ -4016,7 +4016,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除 · Alt+M MCP · Enter 详情 · Alt+R 重载[39m
 [38;2;107;107;107mEsc 返回列表[39m
 
@@ -4032,7 +4032,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除 · Alt+M MCP · Enter 详情 · Alt+R 重载 · Esc 返回列表[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m 已安装 [22m[39m[49m [38;2;107;107;107m 官方 [39m [38;2;107;107;107m 第三方 [39m [38;2;107;107;107m 自定义 [39m
@@ -4050,7 +4050,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 exports[`plugins-family dialog render parity > PluginsPanelComponent > installed tab with update badge (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch[39m
 [38;2;107;107;107mSpace toggle[39m
 [38;2;107;107;107mAlt+D remove · Alt+M MCP[39m
@@ -4073,7 +4073,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle[39m
 [38;2;107;107;107mAlt+D remove · Alt+M MCP · Enter update[39m
 [38;2;107;107;107mAlt+I details · Alt+R reload[39m
@@ -4092,7 +4092,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle · Alt+D remove · Alt+M MCP · Enter update[39m
 [38;2;107;107;107mAlt+I details · Alt+R reload · / ↑ search · Esc cancel[39m
 
@@ -4108,7 +4108,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · Space toggle · Alt+D remove · Alt+M MCP · Enter update · Alt+I details · Alt+R reload · / ↑ search[39m
 [38;2;107;107;107mEsc cancel[39m
 
@@ -4127,7 +4127,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 exports[`plugins-family dialog render parity > PluginsPanelComponent > installed tab with update badge (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换[39m
 [38;2;107;107;107mAlt+D 移除 · Alt+M MCP[39m
 [38;2;107;107;107mEnter 更新 · Alt+I 详情[39m
@@ -4148,7 +4148,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除[39m
 [38;2;107;107;107mAlt+M MCP · Enter 更新 · Alt+I 详情[39m
 [38;2;107;107;107mAlt+R 重载 · / ↑ 搜索 · Esc 取消[39m
@@ -4166,7 +4166,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除 · Alt+M MCP · Enter 更新 · Alt+I 详情[39m
 [38;2;107;107;107mAlt+R 重载 · / ↑ 搜索 · Esc 取消[39m
 
@@ -4182,7 +4182,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installed
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · Space 切换 · Alt+D 移除 · Alt+M MCP · Enter 更新 · Alt+I 详情 · Alt+R 重载 · / ↑ 搜索 · Esc 取消[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m 已安装 [22m[39m[49m [38;2;107;107;107m 官方 [39m [38;2;107;107;107m 第三方 [39m [38;2;107;107;107m 自定义 [39m
@@ -4262,7 +4262,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > installin
 exports[`plugins-family dialog render parity > PluginsPanelComponent > marketplace tab with no matches (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch[39m
 [38;2;107;107;107m↑↓ navigate[39m
 [38;2;107;107;107mEnter open/install[39m
@@ -4280,7 +4280,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate[39m
 [38;2;107;107;107mEnter open/install · Esc back to list[39m
 
@@ -4296,7 +4296,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate · Enter open/install · Esc back to list[39m
 
  [38;2;107;107;107m Installed [39m [38;2;107;107;107m Official [39m [48;2;79;168;255m[38;2;224;224;224m[1m Third-party [22m[39m[49m [38;2;107;107;107m Custom [39m
@@ -4311,7 +4311,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate · Enter open/install · Esc back to list[39m
 
  [38;2;107;107;107m Installed [39m [38;2;107;107;107m Official [39m [48;2;79;168;255m[38;2;224;224;224m[1m Third-party [22m[39m[49m [38;2;107;107;107m Custom [39m
@@ -4329,7 +4329,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 exports[`plugins-family dialog render parity > PluginsPanelComponent > marketplace tab with no matches (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航[39m
 [38;2;107;107;107mEnter 打开/安装[39m
 [38;2;107;107;107mEsc 返回列表[39m
@@ -4346,7 +4346,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装[39m
 [38;2;107;107;107mEsc 返回列表[39m
 
@@ -4362,7 +4362,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装 · Esc 返回列表[39m
 
  [38;2;107;107;107m 已安装 [39m [38;2;107;107;107m 官方 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 第三方 [22m[39m[49m [38;2;107;107;107m 自定义 [39m
@@ -4377,7 +4377,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装 · Esc 返回列表[39m
 
  [38;2;107;107;107m 已安装 [39m [38;2;107;107;107m 官方 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 第三方 [22m[39m[49m [38;2;107;107;107m 自定义 [39m
@@ -4395,7 +4395,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > marketpla
 exports[`plugins-family dialog render parity > PluginsPanelComponent > official tab with catalog (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch[39m
 [38;2;107;107;107m↑↓ navigate[39m
 [38;2;107;107;107mEnter open/install[39m
@@ -4424,7 +4424,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate[39m
 [38;2;107;107;107mEnter open/install · / ↑ search[39m
 [38;2;107;107;107mEsc cancel[39m
@@ -4448,7 +4448,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate · Enter open/install · / ↑ search · Esc cancel[39m
 
  [38;2;107;107;107m Installed [39m [48;2;79;168;255m[38;2;224;224;224m[1m Official [22m[39m[49m [38;2;107;107;107m Third-party [39m [38;2;107;107;107m Custom [39m
@@ -4467,7 +4467,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate · Enter open/install · / ↑ search · Esc cancel[39m
 
  [38;2;107;107;107m Installed [39m [48;2;79;168;255m[38;2;224;224;224m[1m Official [22m[39m[49m [38;2;107;107;107m Third-party [39m [38;2;107;107;107m Custom [39m
@@ -4489,7 +4489,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 exports[`plugins-family dialog render parity > PluginsPanelComponent > official tab with catalog (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航[39m
 [38;2;107;107;107mEnter 打开/安装[39m
 [38;2;107;107;107m/ ↑ 搜索 · Esc 取消[39m
@@ -4514,7 +4514,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装[39m
 [38;2;107;107;107m/ ↑ 搜索 · Esc 取消[39m
 
@@ -4536,7 +4536,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装 · / ↑ 搜索 · Esc 取消[39m
 
  [38;2;107;107;107m 已安装 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 官方 [22m[39m[49m [38;2;107;107;107m 第三方 [39m [38;2;107;107;107m 自定义 [39m
@@ -4555,7 +4555,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装 · / ↑ 搜索 · Esc 取消[39m
 
  [38;2;107;107;107m 已安装 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 官方 [22m[39m[49m [38;2;107;107;107m 第三方 [39m [38;2;107;107;107m 自定义 [39m
@@ -4576,7 +4576,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 exports[`plugins-family dialog render parity > PluginsPanelComponent > official tab with query typed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch[39m
 [38;2;107;107;107m↑↓ navigate[39m
 [38;2;107;107;107mEnter open/install[39m
@@ -4597,7 +4597,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate[39m
 [38;2;107;107;107mEnter open/install · Esc back to list[39m
 
@@ -4615,7 +4615,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate · Enter open/install · Esc back to list[39m
 
  [38;2;107;107;107m Installed [39m [48;2;79;168;255m[38;2;224;224;224m[1m Official [22m[39m[49m [38;2;107;107;107m Third-party [39m [38;2;107;107;107m Custom [39m
@@ -4631,7 +4631,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Plugins[22m[39m
+[38;2;90;90;90m[1m  Plugins[22m[39m
 [38;2;107;107;107m Tab switch · ↑↓ navigate · Enter open/install · Esc back to list[39m
 
  [38;2;107;107;107m Installed [39m [48;2;79;168;255m[38;2;224;224;224m[1m Official [22m[39m[49m [38;2;107;107;107m Third-party [39m [38;2;107;107;107m Custom [39m
@@ -4650,7 +4650,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 exports[`plugins-family dialog render parity > PluginsPanelComponent > official tab with query typed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航[39m
 [38;2;107;107;107mEnter 打开/安装[39m
 [38;2;107;107;107mEsc 返回列表[39m
@@ -4670,7 +4670,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装[39m
 [38;2;107;107;107mEsc 返回列表[39m
 
@@ -4688,7 +4688,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装 · Esc 返回列表[39m
 
  [38;2;107;107;107m 已安装 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 官方 [22m[39m[49m [38;2;107;107;107m 第三方 [39m [38;2;107;107;107m 自定义 [39m
@@ -4704,7 +4704,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 插件[22m[39m
+[38;2;90;90;90m[1m  插件[22m[39m
 [38;2;107;107;107m Tab 切换 · ↑↓ 导航 · Enter 打开/安装 · Esc 返回列表[39m
 
  [38;2;107;107;107m 已安装 [39m [48;2;79;168;255m[38;2;224;224;224m[1m 官方 [22m[39m[49m [38;2;107;107;107m 第三方 [39m [38;2;107;107;107m 自定义 [39m
@@ -4723,7 +4723,7 @@ exports[`plugins-family dialog render parity > PluginsPanelComponent > official 
 exports[`plugins-family dialog render parity > ProviderManagerComponent > delete confirmation armed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Alt+D delete[39m
 [38;2;107;107;107m Esc cancel[39m
@@ -4737,7 +4737,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [custom][39m
@@ -4749,7 +4749,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [custom][39m
@@ -4761,7 +4761,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [custom][39m
@@ -4776,7 +4776,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 exports[`plugins-family dialog render parity > ProviderManagerComponent > delete confirmation armed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除[39m
 [38;2;107;107;107m Esc 取消[39m
 
@@ -4789,7 +4789,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [自定义][39m
@@ -4801,7 +4801,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [自定义][39m
@@ -4813,7 +4813,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [自定义][39m
@@ -4828,7 +4828,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > delete
 exports[`plugins-family dialog render parity > ProviderManagerComponent > paged list (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Alt+D delete[39m
 [38;2;107;107;107m Esc cancel[39m
@@ -4846,7 +4846,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1mp0[22m[39m[38;2;107;107;107m [custom][39m
@@ -4862,7 +4862,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1mp0[22m[39m[38;2;107;107;107m [custom][39m
@@ -4878,7 +4878,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1mp0[22m[39m[38;2;107;107;107m [custom][39m
@@ -4897,7 +4897,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 exports[`plugins-family dialog render parity > ProviderManagerComponent > paged list (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除[39m
 [38;2;107;107;107m Esc 取消[39m
 
@@ -4914,7 +4914,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1mp0[22m[39m[38;2;107;107;107m [自定义][39m
@@ -4930,7 +4930,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1mp0[22m[39m[38;2;107;107;107m [自定义][39m
@@ -4946,7 +4946,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1mp0[22m[39m[38;2;107;107;107m [自定义][39m
@@ -4965,7 +4965,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > paged 
 exports[`plugins-family dialog render parity > ProviderManagerComponent > provider list (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Alt+D delete[39m
 [38;2;107;107;107m Esc cancel[39m
@@ -4979,7 +4979,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > provid
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [custom][39m[38;2;78;200;126m ← current[39m
@@ -4991,7 +4991,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > provid
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [custom][39m[38;2;78;200;126m ← current[39m
@@ -5003,7 +5003,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > provid
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Providers[22m[39m
+[38;2;90;90;90m[1m  Providers[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Alt+D delete · Esc cancel[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [custom][39m[38;2;78;200;126m ← current[39m
@@ -5018,7 +5018,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > provid
 exports[`plugins-family dialog render parity > ProviderManagerComponent > provider list (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除[39m
 [38;2;107;107;107m Esc 取消[39m
 
@@ -5031,7 +5031,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > provid
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [自定义][39m[38;2;78;200;126m ← 当前[39m
@@ -5043,7 +5043,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > provid
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [自定义][39m[38;2;78;200;126m ← 当前[39m
@@ -5055,7 +5055,7 @@ exports[`plugins-family dialog render parity > ProviderManagerComponent > provid
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 服务商[22m[39m
+[38;2;90;90;90m[1m  服务商[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Alt+D 删除 · Esc 取消[39m
 
   [38;2;79;168;255m❯ [39m[38;2;79;168;255m[1macme[22m[39m[38;2;107;107;107m [自定义][39m[38;2;78;200;126m ← 当前[39m
@@ -5491,7 +5491,7 @@ exports[`search-dialog render parity > ChoicePickerComponent > searchable with n
 exports[`search-dialog render parity > ModelSelectorComponent > basic list (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Enter select[39m
 [38;2;107;107;107m Esc cancel[39m
@@ -5506,7 +5506,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (en) 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Esc cancel[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mAlpha[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← current[39m
@@ -5519,7 +5519,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (en) 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Esc cancel[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mAlpha[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← current[39m
@@ -5532,7 +5532,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (en) 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Esc cancel[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mAlpha[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← current[39m
@@ -5548,7 +5548,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (en) 
 exports[`search-dialog render parity > ModelSelectorComponent > basic list (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m Esc 取消[39m
 
@@ -5562,7 +5562,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (zh-C
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Esc 取消[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mAlpha[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← 当前[39m
@@ -5575,7 +5575,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (zh-C
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Esc 取消[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mAlpha[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← 当前[39m
@@ -5588,7 +5588,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (zh-C
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Esc 取消[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mAlpha[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← 当前[39m
@@ -5604,7 +5604,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > basic list (zh-C
 exports[`search-dialog render parity > ModelSelectorComponent > delete confirmation armed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Enter select[39m
 [38;2;107;107;107m Alt+E edit[39m
@@ -5620,7 +5620,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Alt+E edit[39m
 [38;2;107;107;107m Alt+D delete · Esc cancel[39m
 
@@ -5633,7 +5633,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Alt+E edit · Alt+D delete · Esc cancel[39m
 
 [38;2;136;136;136m    [39m[38;2;224;224;224mKimi K2[39m      [38;2;107;107;107mKimi Code[39m [38;2;107;107;107m[custom][39m [38;2;78;200;126m← current[39m
@@ -5645,7 +5645,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Alt+E edit · Alt+D delete · Esc cancel[39m
 
 [38;2;136;136;136m    [39m[38;2;224;224;224mKimi K2[39m      [38;2;107;107;107mKimi Code[39m [38;2;107;107;107m[custom][39m [38;2;78;200;126m← current[39m
@@ -5660,7 +5660,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 exports[`search-dialog render parity > ModelSelectorComponent > delete confirmation armed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m Alt+E 编辑 · Alt+D 删除[39m
 [38;2;107;107;107m Esc 取消[39m
@@ -5674,7 +5674,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Alt+E 编辑[39m
 [38;2;107;107;107m Alt+D 删除 · Esc 取消[39m
 
@@ -5687,7 +5687,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Alt+E 编辑 · Alt+D 删除 · Esc 取消[39m
 
 [38;2;136;136;136m    [39m[38;2;224;224;224mKimi K2[39m      [38;2;107;107;107mKimi Code[39m [38;2;107;107;107m[自定义][39m [38;2;78;200;126m← 当前[39m
@@ -5699,7 +5699,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Alt+E 编辑 · Alt+D 删除 · Esc 取消[39m
 
 [38;2;136;136;136m    [39m[38;2;224;224;224mKimi K2[39m      [38;2;107;107;107mKimi Code[39m [38;2;107;107;107m[自定义][39m [38;2;78;200;126m← 当前[39m
@@ -5714,7 +5714,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > delete confirmat
 exports[`search-dialog render parity > ModelSelectorComponent > effort segments (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Enter select[39m
 [38;2;107;107;107m Esc cancel[39m
@@ -5728,7 +5728,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Esc cancel[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mKimi K2[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← current[39m
@@ -5740,7 +5740,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Esc cancel[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mKimi K2[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← current[39m
@@ -5752,7 +5752,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Enter select · Esc cancel[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mKimi K2[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← current[39m
@@ -5767,7 +5767,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 exports[`search-dialog render parity > ModelSelectorComponent > effort segments (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m Esc 取消[39m
 
@@ -5780,7 +5780,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Esc 取消[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mKimi K2[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← 当前[39m
@@ -5792,7 +5792,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Esc 取消[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mKimi K2[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← 当前[39m
@@ -5804,7 +5804,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择 · Esc 取消[39m
 
 [38;2;79;168;255m  ❯ [39m[38;2;79;168;255m[1mKimi K2[22m[39m  [38;2;107;107;107mKimi Code[39m [38;2;78;200;126m← 当前[39m
@@ -5819,7 +5819,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > effort segments 
 exports[`search-dialog render parity > ModelSelectorComponent > searchable with warning, query typed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Backspace clear[39m
 [38;2;107;107;107m Enter select[39m
@@ -5845,7 +5845,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Backspace clear[39m
 [38;2;107;107;107m Enter select · Alt+S session-only[39m
 [38;2;107;107;107m Alt+E edit · Alt+D delete[39m
@@ -5867,7 +5867,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Backspace clear · Enter select · Alt+S session-only · Alt+E edit[39m
 [38;2;107;107;107m Alt+D delete · Esc back to list[39m
 [38;2;232;168;56m Switching models mid-conversation re-reads the context.[39m
@@ -5886,7 +5886,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m ↑↓ navigate · Backspace clear · Enter select · Alt+S session-only · Alt+E edit · Alt+D delete · Esc back to list[39m
 [38;2;232;168;56m Switching models mid-conversation re-reads the context.[39m
 
@@ -5907,7 +5907,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 exports[`search-dialog render parity > ModelSelectorComponent > searchable with warning, query typed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动[39m
 [38;2;107;107;107m Backspace 清除[39m
 [38;2;107;107;107m Enter 选择[39m
@@ -5932,7 +5932,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Backspace 清除 · Enter 选择[39m
 [38;2;107;107;107m Alt+S 仅本会话 · Alt+E 编辑[39m
 [38;2;107;107;107m Alt+D 删除 · Esc 返回列表[39m
@@ -5953,7 +5953,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Backspace 清除 · Enter 选择 · Alt+S 仅本会话 · Alt+E 编辑[39m
 [38;2;107;107;107m Alt+D 删除 · Esc 返回列表[39m
 [38;2;232;168;56m Switching models mid-conversation re-reads the context.[39m
@@ -5972,7 +5972,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m ↑↓ 移动 · Backspace 清除 · Enter 选择 · Alt+S 仅本会话 · Alt+E 编辑 · Alt+D 删除 · Esc 返回列表[39m
 [38;2;232;168;56m Switching models mid-conversation re-reads the context.[39m
 
@@ -5993,7 +5993,7 @@ exports[`search-dialog render parity > ModelSelectorComponent > searchable with 
 exports[`search-dialog render parity > SessionPickerComponent > all-scope with query typed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1mAll sessions[22m[39m
+[38;2;90;90;90m[1m All sessions[22m[39m
 [38;2;107;107;107mBackspace clear[39m
 [38;2;107;107;107m↑↓ navigate[39m
 [38;2;107;107;107mCtrl+A current cwd[39m
@@ -6020,7 +6020,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1mAll sessions[22m[39m
+[38;2;90;90;90m[1m All sessions[22m[39m
 [38;2;107;107;107mBackspace clear · ↑↓ navigate[39m
 [38;2;107;107;107mCtrl+A current cwd · Enter select[39m
 [38;2;107;107;107mEsc back to list[39m
@@ -6042,7 +6042,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1mAll sessions[22m[39m
+[38;2;90;90;90m[1m All sessions[22m[39m
 [38;2;107;107;107mBackspace clear · ↑↓ navigate · Ctrl+A current cwd · Enter select[39m
 [38;2;107;107;107mEsc back to list[39m
 
@@ -6063,7 +6063,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1mAll sessions[22m[39m
+[38;2;90;90;90m[1m All sessions[22m[39m
 [38;2;107;107;107mBackspace clear · ↑↓ navigate · Ctrl+A current cwd · Enter select · Esc back to list[39m
 
 [38;2;232;168;56m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6086,7 +6086,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 exports[`search-dialog render parity > SessionPickerComponent > all-scope with query typed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m全部会话[22m[39m
+[38;2;90;90;90m[1m 全部会话[22m[39m
 [38;2;107;107;107mBackspace 清除 · ↑↓ 移动[39m
 [38;2;107;107;107mCtrl+A 当前目录[39m
 [38;2;107;107;107mEnter 选择[39m
@@ -6112,7 +6112,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m全部会话[22m[39m
+[38;2;90;90;90m[1m 全部会话[22m[39m
 [38;2;107;107;107mBackspace 清除 · ↑↓ 移动[39m
 [38;2;107;107;107mCtrl+A 当前目录 · Enter 选择[39m
 [38;2;107;107;107mEsc 返回列表[39m
@@ -6134,7 +6134,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m全部会话[22m[39m
+[38;2;90;90;90m[1m 全部会话[22m[39m
 [38;2;107;107;107mBackspace 清除 · ↑↓ 移动 · Ctrl+A 当前目录 · Enter 选择 · Esc 返回列表[39m
 
 [38;2;232;168;56m╭──────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6154,7 +6154,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m全部会话[22m[39m
+[38;2;90;90;90m[1m 全部会话[22m[39m
 [38;2;107;107;107mBackspace 清除 · ↑↓ 移动 · Ctrl+A 当前目录 · Enter 选择 · Esc 返回列表[39m
 
 [38;2;232;168;56m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6177,7 +6177,7 @@ exports[`search-dialog render parity > SessionPickerComponent > all-scope with q
 exports[`search-dialog render parity > SessionPickerComponent > cards with current mark and scope toggle (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1mSessions[22m[39m
+[38;2;90;90;90m[1m Sessions[22m[39m
 [38;2;107;107;107m↑↓ navigate · Ctrl+A all[39m
 [38;2;107;107;107mEnter select[39m
 [38;2;107;107;107m/ ↑ search · Esc cancel[39m
@@ -6200,7 +6200,7 @@ exports[`search-dialog render parity > SessionPickerComponent > cards with curre
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1mSessions[22m[39m
+[38;2;90;90;90m[1m Sessions[22m[39m
 [38;2;107;107;107m↑↓ navigate · Ctrl+A all · Enter select[39m
 [38;2;107;107;107m/ ↑ search · Esc cancel[39m
 
@@ -6219,7 +6219,7 @@ exports[`search-dialog render parity > SessionPickerComponent > cards with curre
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1mSessions[22m[39m
+[38;2;90;90;90m[1m Sessions[22m[39m
 [38;2;107;107;107m↑↓ navigate · Ctrl+A all · Enter select · / ↑ search · Esc cancel[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6237,7 +6237,7 @@ exports[`search-dialog render parity > SessionPickerComponent > cards with curre
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1mSessions[22m[39m
+[38;2;90;90;90m[1m Sessions[22m[39m
 [38;2;107;107;107m↑↓ navigate · Ctrl+A all · Enter select · / ↑ search · Esc cancel[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6258,7 +6258,7 @@ exports[`search-dialog render parity > SessionPickerComponent > cards with curre
 exports[`search-dialog render parity > SessionPickerComponent > cards with current mark and scope toggle (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m会话[22m[39m
+[38;2;90;90;90m[1m 会话[22m[39m
 [38;2;107;107;107m↑↓ 移动 · Ctrl+A 全部[39m
 [38;2;107;107;107mEnter 选择 · / ↑ 搜索[39m
 [38;2;107;107;107mEsc 取消[39m
@@ -6281,7 +6281,7 @@ exports[`search-dialog render parity > SessionPickerComponent > cards with curre
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m会话[22m[39m
+[38;2;90;90;90m[1m 会话[22m[39m
 [38;2;107;107;107m↑↓ 移动 · Ctrl+A 全部 · Enter 选择[39m
 [38;2;107;107;107m/ ↑ 搜索 · Esc 取消[39m
 
@@ -6300,7 +6300,7 @@ exports[`search-dialog render parity > SessionPickerComponent > cards with curre
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m会话[22m[39m
+[38;2;90;90;90m[1m 会话[22m[39m
 [38;2;107;107;107m↑↓ 移动 · Ctrl+A 全部 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6318,7 +6318,7 @@ exports[`search-dialog render parity > SessionPickerComponent > cards with curre
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m会话[22m[39m
+[38;2;90;90;90m[1m 会话[22m[39m
 [38;2;107;107;107m↑↓ 移动 · Ctrl+A 全部 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6447,7 +6447,7 @@ exports[`search-dialog render parity > SessionPickerComponent > loading (zh-CN) 
 exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Enter select[39m
@@ -6467,7 +6467,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (e
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate[39m
 [38;2;107;107;107m Enter select · / ↑ search · Esc cancel[39m
 
@@ -6485,7 +6485,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (e
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Enter select · / ↑ search · Esc cancel[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m All [22m[39m[49m [38;2;107;107;107m Kimi Code [39m [38;2;107;107;107m openai [39m
@@ -6502,7 +6502,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (e
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Enter select · / ↑ search · Esc cancel[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m All [22m[39m[49m [38;2;107;107;107m Kimi Code [39m [38;2;107;107;107m openai [39m
@@ -6522,7 +6522,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (e
 exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m / ↑ 搜索 · Esc 取消[39m
@@ -6541,7 +6541,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (z
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m / ↑ 搜索 · Esc 取消[39m
 
@@ -6559,7 +6559,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (z
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m 全 [22m[39m[49m [38;2;107;107;107m Kimi Code [39m [38;2;107;107;107m openai [39m
@@ -6576,7 +6576,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (z
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
  [48;2;79;168;255m[38;2;224;224;224m[1m 全 [22m[39m[49m [38;2;107;107;107m Kimi Code [39m [38;2;107;107;107m openai [39m
@@ -6596,7 +6596,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > all tab (z
 exports[`search-dialog render parity > TabbedModelSelectorComponent > provider tab active (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Enter select[39m
@@ -6615,7 +6615,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate[39m
 [38;2;107;107;107m Enter select · / ↑ search · Esc cancel[39m
 
@@ -6632,7 +6632,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Enter select · / ↑ search · Esc cancel[39m
 
  [38;2;107;107;107m All [39m [48;2;79;168;255m[38;2;224;224;224m[1m Kimi Code [22m[39m[49m [38;2;107;107;107m openai [39m
@@ -6648,7 +6648,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Enter select · / ↑ search · Esc cancel[39m
 
  [38;2;107;107;107m All [39m [48;2;79;168;255m[38;2;224;224;224m[1m Kimi Code [22m[39m[49m [38;2;107;107;107m openai [39m
@@ -6667,7 +6667,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 exports[`search-dialog render parity > TabbedModelSelectorComponent > provider tab active (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m / ↑ 搜索 · Esc 取消[39m
@@ -6685,7 +6685,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m / ↑ 搜索 · Esc 取消[39m
 
@@ -6702,7 +6702,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
  [38;2;107;107;107m 全 [39m [48;2;79;168;255m[38;2;224;224;224m[1m Kimi Code [22m[39m[49m [38;2;107;107;107m openai [39m
@@ -6718,7 +6718,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
  [38;2;107;107;107m 全 [39m [48;2;79;168;255m[38;2;224;224;224m[1m Kimi Code [22m[39m[49m [38;2;107;107;107m openai [39m
@@ -6737,7 +6737,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > provider t
 exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Enter select[39m
@@ -6752,7 +6752,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate[39m
 [38;2;107;107;107m Enter select · / ↑ search · Esc cancel[39m
 
@@ -6765,7 +6765,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Enter select · / ↑ search · Esc cancel[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6777,7 +6777,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Enter select · / ↑ search · Esc cancel[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6792,7 +6792,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商[39m
 [38;2;107;107;107m ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m / ↑ 搜索 · Esc 取消[39m
@@ -6806,7 +6806,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择[39m
 [38;2;107;107;107m / ↑ 搜索 · Esc 取消[39m
 
@@ -6819,7 +6819,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6831,7 +6831,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Enter 选择 · / ↑ 搜索 · Esc 取消[39m
 
 [38;2;90;90;90m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[39m
@@ -6846,7 +6846,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > single tab
 exports[`search-dialog render parity > TabbedModelSelectorComponent > warning with query typed (en) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider[39m
 [38;2;107;107;107m ↑↓ navigate[39m
 [38;2;107;107;107m Backspace clear[39m
@@ -6870,7 +6870,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > warning wi
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate[39m
 [38;2;107;107;107m Backspace clear · Enter select[39m
 [38;2;107;107;107m Esc back to list[39m
@@ -6891,7 +6891,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > warning wi
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Backspace clear · Enter select[39m
 [38;2;107;107;107m Esc back to list[39m
 [38;2;232;168;56m Switching may increase token usage.[39m
@@ -6911,7 +6911,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > warning wi
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m Select a model[22m[39m
+[38;2;90;90;90m[1m  Select a model[22m[39m
 [38;2;107;107;107m Tab toggle provider · ↑↓ navigate · Backspace clear · Enter select · Esc back to list[39m
 [38;2;232;168;56m Switching may increase token usage.[39m
 
@@ -6933,7 +6933,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > warning wi
 exports[`search-dialog render parity > TabbedModelSelectorComponent > warning with query typed (zh-CN) 1`] = `
 "=== width 24 ===
 [38;2;90;90;90m────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商[39m
 [38;2;107;107;107m ↑↓ 移动[39m
 [38;2;107;107;107m Backspace 清除[39m
@@ -6957,7 +6957,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > warning wi
 [38;2;90;90;90m────────────────────────[39m
 === width 40 ===
 [38;2;90;90;90m────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动[39m
 [38;2;107;107;107m Backspace 清除 · Enter 选择[39m
 [38;2;107;107;107m Esc 返回列表[39m
@@ -6978,7 +6978,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > warning wi
 [38;2;90;90;90m────────────────────────────────────────[39m
 === width 80 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Backspace 清除 · Enter 选择 · Esc 返回列表[39m
 [38;2;232;168;56m Switching may increase token usage.[39m
 
@@ -6997,7 +6997,7 @@ exports[`search-dialog render parity > TabbedModelSelectorComponent > warning wi
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────[39m
 === width 120 ===
 [38;2;90;90;90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
-[38;2;90;90;90m[1m 选择模型[22m[39m
+[38;2;90;90;90m[1m  选择模型[22m[39m
 [38;2;107;107;107m Tab 切换服务商 · ↑↓ 移动 · Backspace 清除 · Enter 选择 · Esc 返回列表[39m
 [38;2;232;168;56m Switching may increase token usage.[39m
 

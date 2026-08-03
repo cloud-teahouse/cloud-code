@@ -45,7 +45,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
   private readonly draft = new Map<ExperimentalFeatureState['id'], boolean>();
   /** The dialog skeleton owning the chrome (divider/title/hint/search box)
    * and its row math. */
-  private readonly frame = new DialogFrame({ titleIndent: ' ', minSize: inlineDialogMinSize() });
+  private readonly frame = new DialogFrame({ minSize: inlineDialogMinSize() });
   /** Frame-relative hit zones of the last render (search box, feature rows,
    * Apply button) — served from hitZones(). */
   private frameZones: HitZone[] = [];

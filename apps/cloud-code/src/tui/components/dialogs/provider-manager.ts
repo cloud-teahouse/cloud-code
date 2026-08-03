@@ -252,11 +252,9 @@ export class ProviderManagerComponent extends Container implements Focusable {
   private selectedIndex: number;
   private confirm: ConfirmState | undefined;
   /** The dialog skeleton owning the chrome (divider/title/hint) and its row
-   * math. Title is flush-left in this dialog; the hint goes in as raw
-   * segments, so the frame wraps it at segment boundaries and applies the
-   * default muted styling. */
+   * math. The hint goes in as raw segments, so the frame wraps it at
+   * segment boundaries and applies the default muted styling. */
   private readonly frame = new DialogFrame({
-    titleIndent: '',
     minSize: inlineDialogMinSize(),
   });
   /** Frame-relative hit zones of the last render (source + add rows) —

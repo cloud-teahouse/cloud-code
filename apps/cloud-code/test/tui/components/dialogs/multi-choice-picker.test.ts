@@ -40,7 +40,7 @@ describe('MultiChoicePickerComponent', () => {
     const { text } = makePicker({ initialSelected: ['low', 'bogus'] });
     const out = text();
     expect(out).toContain('[ ] none');
-    expect(out).toContain('[x] low');
+    expect(out).toContain('[✓] low');
     expect(out).toContain('[ ] high');
   });
 
@@ -93,8 +93,8 @@ describe('MultiChoicePickerComponent mouse support', () => {
     const { picker, onSubmit, text } = makePicker({ initialSelected: ['high'] });
 
     picker.handleMouse({ type: 'press', button: 0, col: 1, row: 4, slotRelative: false });
-    expect(text()).toContain('[x] none');
-    expect(text()).toContain('❯ [x] none');
+    expect(text()).toContain('[✓] none');
+    expect(text()).toContain('❯ [✓] none');
 
     picker.handleMouse({ type: 'press', button: 0, col: 1, row: 6, slotRelative: false });
     expect(text()).toContain('[ ] high');

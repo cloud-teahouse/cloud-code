@@ -65,7 +65,7 @@ export class RewindModeSelectorComponent extends Container implements Focusable 
   private readonly hover = new HoverState();
   /** The dialog skeleton owning the chrome (divider/title/hint) and its row
    * math. */
-  private readonly frame = new DialogFrame({ titleIndent: ' ', minSize: inlineDialogMinSize() });
+  private readonly frame = new DialogFrame({ minSize: inlineDialogMinSize() });
   /** Frame-relative hit zones of the last render (the choice rows) — served
    * from hitZones(). */
   private frameZones: HitZone[] = [];

@@ -216,7 +216,7 @@ export class MultiChoicePickerComponent extends Container implements Focusable {
       const option = this.opts.options[i]!;
       const isSelected = i === this.selectedIndex;
       const pointer = isSelected ? SELECT_POINTER : ' ';
-      const checkbox = this.checked.has(option.value) ? '[x]' : '[ ]';
+      const checkbox = this.checked.has(option.value) ? '[✓]' : '[ ]';
       let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
       line += currentTheme.fg(this.checked.has(option.value) ? 'success' : 'textDim', checkbox);
       line += ' ';

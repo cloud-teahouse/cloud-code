@@ -23,6 +23,7 @@ import {
 
 import { currentTheme } from '#/tui/theme';
 import { t } from '#/tui/i18n';
+import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { HoverState, underlineText } from '#/tui/utils/mouse-hover';
 import { wrapHint } from '#/tui/utils/hint';
 import type {
@@ -686,10 +687,10 @@ export class QuestionDialogComponent extends Container implements Focusable {
         else if (isCursor) tone = accent;
         else tone = dim;
       } else if (isSelected && this.isAnswered(questionIdx)) {
-        prefix = isCursor ? `  → [${String(num)}] ` : `    [${String(num)}] `;
+        prefix = isCursor ? `  ${SELECT_POINTER} [${String(num)}] ` : `    [${String(num)}] `;
         tone = isCursor ? (s) => currentTheme.boldFg('success', s) : success;
       } else if (isCursor) {
-        prefix = `  → [${String(num)}] `;
+        prefix = `  ${SELECT_POINTER} [${String(num)}] `;
         tone = accent;
       } else {
         prefix = `    [${String(num)}] `;
@@ -811,7 +812,9 @@ export class QuestionDialogComponent extends Container implements Focusable {
       const num = i + 1;
       zones.push({ id: `submit:${String(i)}`, row: lines.length, col: 1, width, height: 1 });
       if (i === this.submitActionIdx) {
-        lines.push(underlineText(accent(`  → [${String(num)}] ${label}`), i === hoveredAction));
+        lines.push(
+          underlineText(accent(`  ${SELECT_POINTER} [${String(num)}] ${label}`), i === hoveredAction),
+        );
       } else {
         lines.push(underlineText(dim(`    [${String(num)}] ${label}`), i === hoveredAction));
       }
@@ -1008,7 +1011,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
         ? currentTheme.boldFg('success', body)
         : currentTheme.fg('primary', body);
     } else {
-      const body = `  → [${String(num)}] ${option.label}: `;
+      const body = `  ${SELECT_POINTER} [${String(num)}] ${option.label}: `;
       prefix =
         isSelected && this.isAnswered(questionIdx)
           ? currentTheme.boldFg('success', body)

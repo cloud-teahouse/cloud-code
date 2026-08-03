@@ -221,7 +221,7 @@ describe('QuestionDialogComponent', () => {
 
     dialog.handleInput('3');
     let out = strip(dialog.render(80).join('\n'));
-    expect(out).toContain('→ [3] Custom:');
+    expect(out).toContain('❯ [3] Custom:');
     expect(out).not.toContain('Type your own answer');
 
     dialog.handleInput('H');
@@ -294,8 +294,8 @@ describe('QuestionDialogComponent', () => {
     dialog.handleInput('\u001B[D');
 
     const out = dialog.render(80).join('\n');
-    expect(out).toContain(currentTheme.boldFg('success', '  → [1] A'));
-    expect(out).not.toContain(currentTheme.fg('primary', '  → [1] A'));
+    expect(out).toContain(currentTheme.boldFg('success', '  ❯ [1] A'));
+    expect(out).not.toContain(currentTheme.fg('primary', '  ❯ [1] A'));
   });
 
   it('stretches the border to the full available width', () => {
