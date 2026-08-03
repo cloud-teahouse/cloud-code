@@ -6,6 +6,9 @@ import { syncDir } from '../../utils/fs';
 import type { BlobStore } from './blobref';
 import { type AgentRecord, type AgentRecordPersistence } from './types';
 
+const FLUSH_DELAY_MS = 75;
+const MAX_PENDING_RECORDS = 100;
+
 export interface FileSystemAgentRecordPersistenceOptions {
   readonly onError?: ((error: unknown) => void) | undefined;
   readonly blobStore?: BlobStore | undefined;
@@ -50,6 +53,7 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
   private shouldClear = false;
   private directorySynced = false;
   private flushPromise: Promise<void> | undefined;
+  private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private error: unknown;
 
   constructor(
@@ -99,24 +103,25 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
   append(input: AgentRecord): void {
     this.throwIfError();
     this.pendingRecords.push(input);
-    this.scheduleFlush();
+    this.scheduleFlush(this.pendingRecords.length >= MAX_PENDING_RECORDS);
   }
 
   rewrite(records: readonly AgentRecord[]): void {
     this.throwIfError();
     this.shouldClear = true;
     this.pendingRecords.splice(0, this.pendingRecords.length, ...records);
-    this.scheduleFlush();
+    this.scheduleFlush(this.pendingRecords.length >= MAX_PENDING_RECORDS);
   }
 
   async flush(): Promise<void> {
     this.throwIfError();
+    this.cancelScheduledFlush();
     while (
       this.flushPromise !== undefined ||
       this.shouldClear ||
       this.pendingRecords.length > 0
     ) {
-      await this.ensureFlush();
+      await this.ensureFlush(true);
       this.throwIfError();
     }
   }
@@ -125,16 +130,31 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
     await this.flush();
   }
 
-  private scheduleFlush(): void {
-    void this.ensureFlush().catch((error) => {
-      this.options.onError?.(error);
-    });
+  private scheduleFlush(immediate = false): void {
+    if (immediate) {
+      this.cancelScheduledFlush();
+      void this.ensureFlush(true).catch((error) => {
+        this.options.onError?.(error);
+      });
+      return;
+    }
+    if (this.flushPromise !== undefined || this.flushTimer !== undefined) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
+      void this.ensureFlush().catch((error) => {
+        this.options.onError?.(error);
+      });
+    }, FLUSH_DELAY_MS);
   }
 
-  private ensureFlush(): Promise<void> {
+  private ensureFlush(force = false): Promise<void> {
     if (this.flushPromise !== undefined) return this.flushPromise;
+    this.cancelScheduledFlush();
+    if (!this.shouldClear && this.pendingRecords.length === 0) {
+      return Promise.resolve();
+    }
 
-    const promise = this.drainPendingRecords()
+    const promise = this.drainPendingRecords(force)
       .catch((error: unknown) => {
         this.error = error;
         // oxlint-disable-next-line typescript-eslint/only-throw-error
@@ -148,11 +168,17 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
           this.error === undefined &&
           (this.shouldClear || this.pendingRecords.length > 0)
         ) {
-          this.scheduleFlush();
+          this.scheduleFlush(this.pendingRecords.length >= MAX_PENDING_RECORDS);
         }
       });
     this.flushPromise = promise;
     return promise;
+  }
+
+  private cancelScheduledFlush(): void {
+    if (this.flushTimer === undefined) return;
+    clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
   }
 
   private throwIfError(): void {
@@ -160,7 +186,9 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
     if (this.error !== undefined) throw this.error;
   }
 
-  private async drainPendingRecords(): Promise<void> {
+  private async drainPendingRecords(force: boolean): Promise<void> {
+    await this.drainBatch();
+    if (!force) return;
     while (this.shouldClear || this.pendingRecords.length > 0) {
       await this.drainBatch();
     }

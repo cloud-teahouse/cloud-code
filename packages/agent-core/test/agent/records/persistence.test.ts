@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
@@ -12,6 +13,11 @@ import {
   InMemoryAgentRecordPersistence,
   type AgentRecord,
 } from '../../../src/agent/records';
+
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  return { ...actual, open: vi.fn(actual.open) };
+});
 
 const cleanups: string[] = [];
 
@@ -186,6 +192,58 @@ describe('FileSystemAgentRecordPersistence', () => {
     const lines = await readLines(wirePath);
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
+  });
+
+  it('coalesces 100 records into a few durable writes and restores them after close', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const openSpy = vi.mocked(fsPromises.open);
+    const originalOpen = openSpy.getMockImplementation();
+    if (originalOpen === undefined) throw new Error('open mock implementation is missing');
+    let syncCalls = 0;
+    openSpy.mockClear();
+    openSpy.mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args);
+      const originalSync = handle.sync.bind(handle);
+      handle.sync = async () => {
+        syncCalls += 1;
+        return originalSync();
+      };
+      return handle;
+    });
+    try {
+      const wirePath = await makeWirePath();
+      const persistence = new FileSystemAgentRecordPersistence(wirePath);
+      const appendRecord = (index: number): void => {
+        persistence.append({
+          type: 'turn.prompt',
+          input: [{ type: 'text', text: `record-${String(index)}` }],
+          origin: { kind: 'user' },
+        });
+      };
+
+      for (let index = 0; index < 99; index++) appendRecord(index);
+      for (let turn = 0; turn < 5; turn++) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(syncCalls).toBe(0);
+
+      appendRecord(99);
+      await persistence.close();
+
+      expect(syncCalls).toBeGreaterThan(0);
+      expect(syncCalls).toBeLessThan(10);
+      const restored: AgentRecord[] = [];
+      const reader = new FileSystemAgentRecordPersistence(wirePath);
+      for await (const record of reader.read()) restored.push(record);
+      expect(restored).toHaveLength(100);
+      expect(restored.map((record) => (record as unknown as { input: [{ text: string }] }).input[0].text)).toEqual(
+        Array.from({ length: 100 }, (_item, index) => `record-${String(index)}`),
+      );
+    } finally {
+      openSpy.mockImplementation(originalOpen);
+      vi.useRealTimers();
+    }
   });
 
   it('enters error state after a write failure', async () => {
