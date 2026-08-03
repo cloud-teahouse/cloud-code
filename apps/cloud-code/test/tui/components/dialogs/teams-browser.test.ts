@@ -5,10 +5,12 @@
 
 import type { TeamWire } from '@cloud-code/sdk';
 import type { Terminal } from '@cloud-code/pi-tui';
+import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { TeamsBrowserApp, type TeamsBrowserProps } from '#/tui/components/dialogs/teams-browser';
 import { setLocalePreference } from '#/tui/i18n';
+import { currentTheme } from '#/tui/theme';
 
 const ESC = String.fromCodePoint(27);
 /** Fixed clock so the relative-time cells render deterministically. */
@@ -66,5 +68,18 @@ describe('TeamsBrowserApp keyboard', () => {
 
     browser.handleInput(`${ESC}[H`); // Home → first team
     expect(onSelect).toHaveBeenCalledWith('core');
+  });
+
+  it('paints a completed member ✓ in success green', () => {
+    const previousChalkLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const { browser } = makeBrowser({
+        memberLiveness: new Map([['core-lead', 'completed']]),
+      });
+      expect(browser.render(80).join('\n')).toContain(currentTheme.fg('success', '✓'));
+    } finally {
+      chalk.level = previousChalkLevel;
+    }
   });
 });

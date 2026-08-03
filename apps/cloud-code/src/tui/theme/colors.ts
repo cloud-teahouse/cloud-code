@@ -20,6 +20,12 @@ export interface ColorPalette {
    *  in nearly every dialog, the focused editor border, plan/"running" badges,
    *  spinners. The most widely used token. */
   primary: string;
+  /** Foreground that sits *on* a `primary` fill (the active tab cell in
+   *  utils/tab-strip.ts and the question dialog): dark in dark themes where
+   *  `primary` is a bright blue, white in light themes where `primary` is a
+   *  deep blue. Pairing `primary` with the plain `text` token fails WCAG AA
+   *  in both themes. */
+  onPrimary: string;
   /** Secondary highlight: approval "▶" prefix, device-code box, image
    *  placeholder, BTW / queue panes, custom-registry import. */
   accent: string;
@@ -101,6 +107,7 @@ export interface ColorPalette {
 
 export const darkColors: ColorPalette = {
   primary: '#4FA8FF',
+  onPrimary: '#1A1A1A',
   accent: '#5BC0BE',
 
   text: '#E0E0E0',
@@ -131,6 +138,7 @@ export const darkColors: ColorPalette = {
 
 export const lightColors: ColorPalette = {
   primary: '#1565C0',
+  onPrimary: '#FFFFFF',
   accent: '#00838F',
 
   text: '#1A1A1A',

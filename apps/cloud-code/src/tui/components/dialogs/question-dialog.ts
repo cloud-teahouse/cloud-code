@@ -837,7 +837,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
   private pushTabs(lines: string[], zones: HitZone[]): void {
     const dim = (text: string) => currentTheme.fg('textDim', text);
     const active = (text: string) =>
-      currentTheme.bg('primary', currentTheme.boldFg('text', text));
+      currentTheme.bg('primary', currentTheme.boldFg('onPrimary', text));
 
     const cells: { plain: string; tabIndex: number }[] = [];
     for (let i = 0; i < this.request.data.questions.length; i++) {

@@ -110,6 +110,7 @@ function livenessColor(status: MemberLiveness): 'success' | 'textMuted' | 'error
     case 'killed':
       return 'error';
     case 'completed':
+      return 'success';
     case 'idle':
       return 'textMuted';
   }

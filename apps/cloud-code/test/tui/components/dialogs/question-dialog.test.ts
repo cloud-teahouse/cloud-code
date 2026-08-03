@@ -356,7 +356,7 @@ describe('QuestionDialogComponent', () => {
 
     const out = dialog.render(80).join('\n');
     expect(out).toContain(
-      chalk.bgHex(currentTheme.color('primary')).hex(currentTheme.color('text')).bold(' First '),
+      chalk.bgHex(currentTheme.color('primary')).hex(currentTheme.color('onPrimary')).bold(' First '),
     );
     expect(out).not.toContain('(●) First');
   });
@@ -462,13 +462,13 @@ describe('QuestionDialogComponent', () => {
     dialog.handleInput('\t'); // → Second
     let out = dialog.render(80).join('\n');
     expect(out).toContain(
-      chalk.bgHex(currentTheme.color('primary')).hex(currentTheme.color('text')).bold(' Second '),
+      chalk.bgHex(currentTheme.color('primary')).hex(currentTheme.color('onPrimary')).bold(' Second '),
     );
 
     dialog.handleInput(`${ESC}[Z`); // Shift+Tab → back to First
     out = dialog.render(80).join('\n');
     expect(out).toContain(
-      chalk.bgHex(currentTheme.color('primary')).hex(currentTheme.color('text')).bold(' First '),
+      chalk.bgHex(currentTheme.color('primary')).hex(currentTheme.color('onPrimary')).bold(' First '),
     );
   });
 

@@ -80,14 +80,18 @@ export function createEditorTheme(): EditorTheme {
  * Scroll-badge style adapter for `TUI.setScrollIndicatorStyle`. The badge is
  * chrome, so it fills with the neutral `userMessageBackground` gray — the
  * same surface the user-input echo sits on; the hover state lifts the fill a
- * step toward white. Reads the palette through `currentTheme` at call time,
- * so a theme switch repaints the badge on the next frame.
+ * step toward white. The foreground follows the fill's brightness: dark text
+ * on a light fill, white on a dark one — the fill is near-white in light
+ * themes, where a hard-coded white foreground would be invisible. Reads the
+ * palette through `currentTheme` at call time, so a theme switch repaints
+ * the badge on the next frame.
  */
 export function createScrollIndicatorStyle(): (text: string, hovered: boolean) => string {
   return (text, hovered) => {
     const base = currentTheme.color('userMessageBackground');
     const background = hovered ? mixHexColors(base, '#FFFFFF', 0.18) : base;
-    return chalk.bgHex(background).hex('#FFFFFF')(text);
+    const foreground = relativeLuminance(background) > 0.5 ? '#1A1A1A' : '#FFFFFF';
+    return chalk.bgHex(background).hex(foreground)(text);
   };
 }
 
@@ -112,6 +116,12 @@ function mixHexColors(a: string, b: string, amount: number): string {
   return `#${[channel(0), channel(1), channel(2)]
     .map((v) => v.toString(16).padStart(2, '0'))
     .join('')}`;
+}
+
+/** sRGB-weighted luminance of a `#RRGGBB` colour in [0,1]; >0.5 reads as light. */
+function relativeLuminance(hex: string): number {
+  const [r, g, b] = parseHexColor(hex);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
 
 function parseHexColor(hex: string): [number, number, number] {

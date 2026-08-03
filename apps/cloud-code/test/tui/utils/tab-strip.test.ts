@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import chalk from 'chalk';
 import { hitZoneAt } from '@cloud-code/pi-tui';
 
-import { darkColors } from '#/tui/theme/colors';
+import { darkColors, lightColors } from '#/tui/theme/colors';
 import { renderTabStrip, tabStripHitZones, tabStripIndexAtCol } from '#/tui/utils/tab-strip';
 
 const ANSI_SGR = /\u001b\[[0-9;]*m/g;
@@ -47,6 +47,19 @@ describe('renderTabStrip', () => {
     // joined line was wider and the trailing tab got truncated.
     const out = render(labels, FULL_WIDTH);
     expect(out.endsWith(' Custom ')).toBe(true);
+  });
+
+  it('fills the active tab with primary and paints it onPrimary', () => {
+    const previousChalkLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      for (const colors of [darkColors, lightColors]) {
+        const out = renderTabStrip({ labels, activeIndex: 0, width: FULL_WIDTH, colors });
+        expect(out).toContain(chalk.bgHex(colors.primary).hex(colors.onPrimary).bold(' Installed '));
+      }
+    } finally {
+      chalk.level = previousChalkLevel;
+    }
   });
 });
 

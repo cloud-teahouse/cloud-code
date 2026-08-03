@@ -36,8 +36,11 @@ describe('createScrollIndicatorStyle', () => {
     chalk.level = 3;
     currentTheme.setPalette(lightColors);
     const style = createScrollIndicatorStyle();
+    // Light-theme fill is near-white, so the foreground flips to dark.
     expect(style(' ↓ 3 ', false)).toBe(
-      chalk.bgHex(lightColors.userMessageBackground).hex('#FFFFFF')(' ↓ 3 '),
+      chalk.bgHex(lightColors.userMessageBackground).hex('#1A1A1A')(' ↓ 3 '),
     );
+    // #E9E9E9 blended 18% toward white lands on #EDEDED — still a light fill.
+    expect(style(' ↓ 3 ', true)).toBe(chalk.bgHex('#EDEDED').hex('#1A1A1A')(' ↓ 3 '));
   });
 });

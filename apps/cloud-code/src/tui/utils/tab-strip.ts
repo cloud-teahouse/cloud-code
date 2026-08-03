@@ -34,7 +34,7 @@ export interface RenderTabStripOptions {
 function styleTab(label: string, isActive: boolean, hovered: boolean, colors: ColorPalette): string {
   const cell = ` ${label} `;
   const styled = isActive
-    ? chalk.bgHex(colors.primary).hex(colors.text).bold(cell)
+    ? chalk.bgHex(colors.primary).hex(colors.onPrimary).bold(cell)
     : chalk.hex(colors.textMuted)(cell);
   return hovered ? chalk.underline(styled) : styled;
 }

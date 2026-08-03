@@ -69,9 +69,10 @@ export function statusColor(
     case 'failed':
     case 'killed':
       return 'error';
+    case 'done':
+      return 'success';
     case 'idle':
     case 'waiting':
-    case 'done':
       return 'textMuted';
   }
 }
