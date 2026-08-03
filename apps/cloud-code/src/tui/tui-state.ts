@@ -125,6 +125,9 @@ export function createTUIState(options: CloudCodeTUIOptions): TUIState {
   ui.setScrollIndicatorLabel((hidden) => t('status.scrollIndicator', { count: hidden }));
   ui.setScrollIndicatorStyle(createScrollIndicatorStyle());
   ui.setScrollbarStyle(createScrollbarStyle());
+  // Zone-less transcript children (assistant/user text) hover with a plain
+  // hoverBackground wash; zone owners keep their custom tone.
+  ui.setTranscriptChildHoverStyle((row) => currentTheme.bg('hoverBackground', row));
 
   const state: TUIState = {
     ui,

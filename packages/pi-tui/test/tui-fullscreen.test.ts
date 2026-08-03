@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { Editor } from "../src/components/editor.ts";
+import type { HitZone } from "../src/hit-zones.ts";
 import { type Component, Container, CURSOR_MARKER, TUI } from "../src/tui.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -1596,5 +1597,78 @@ describe("TUI inline mode (fullscreen off)", () => {
 		const viewport = terminal.getViewport();
 		assert.strictEqual(viewport[8], "msg-30");
 		assert.strictEqual(viewport[9], "slot");
+	});
+});
+
+describe("TUI zone-less transcript child hover", () => {
+	async function setupZonelessHover(): Promise<{
+		tui: TUI;
+		terminal: VirtualTerminal;
+		scroll: Container;
+	}> {
+		const terminal = new VirtualTerminal(80, 10);
+		const tui = new TUI(terminal);
+		const scroll = new Container();
+		const slot = new TestComponent();
+		slot.lines = ["slot"];
+		const root = new Container();
+		root.addChild(scroll);
+		root.addChild(slot);
+		tui.addChild(root);
+		tui.setFullscreen(true);
+		tui.setLayoutRegions({ scroll, slot });
+		tui.setTranscriptChildHoverStyle((row) => `\x1b[7m${row}\x1b[27m`);
+		tui.start();
+		await terminal.waitForRender();
+		return { tui, terminal, scroll };
+	}
+
+	it("paints the hovered zone-less child's rows and clears on leave", async () => {
+		const { tui, terminal, scroll } = await setupZonelessHover();
+		const plain = new TestComponent();
+		plain.lines = ["alpha", "beta"];
+		scroll.addChild(plain);
+		const other = new TestComponent();
+		other.lines = ["gamma"];
+		scroll.addChild(other);
+		await render(tui, terminal);
+
+		// Hover the second row of the first child (terminal row 2, 1-based).
+		terminal.sendInput("\x1b[<35;5;2M");
+		await terminal.waitForRender();
+		const buffer = (terminal as unknown as { xterm: { buffer: { active: { getLine: (n: number) => { getCell: (c: number) => { isInverse: () => number } } | undefined } } } }).xterm.buffer.active;
+		const inverseAt = (row: number): boolean => (buffer.getLine(row)?.getCell(0)?.isInverse() ?? 0) !== 0;
+		assert.strictEqual(inverseAt(0), true);
+		assert.strictEqual(inverseAt(1), true);
+		assert.strictEqual(inverseAt(2), false);
+
+		// Leaving the transcript clears the paint.
+		terminal.sendInput("\x1b[<35;5;10M");
+		await terminal.waitForRender();
+		assert.strictEqual(inverseAt(0), false);
+		assert.strictEqual(inverseAt(1), false);
+	});
+
+	it("does not paint when no style is registered", async () => {
+		const terminal = new VirtualTerminal(80, 10);
+		const tui = new TUI(terminal);
+		const scroll = new Container();
+		const slot = new TestComponent();
+		slot.lines = ["slot"];
+		const root = new Container();
+		root.addChild(scroll);
+		root.addChild(slot);
+		tui.addChild(root);
+		tui.setFullscreen(true);
+		tui.setLayoutRegions({ scroll, slot });
+		tui.start();
+		const plain = new TestComponent();
+		plain.lines = ["alpha"];
+		scroll.addChild(plain);
+		await render(tui, terminal);
+
+		terminal.sendInput("\x1b[<35;5;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(terminal.getViewport()[0], "alpha");
 	});
 });

@@ -25,7 +25,7 @@ import {
 	type TerminalColorScheme,
 } from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
-import { TranscriptRowIndex } from "./transcript-index.ts";
+import { TranscriptRowIndex, type TranscriptIndexEntry } from "./transcript-index.ts";
 import {
 	asciiVisibleWidth,
 	extractSegments,
@@ -508,6 +508,17 @@ export class TUI extends Container {
 	 * routing rather than the focused-component path.
 	 */
 	private lastTranscriptHoveredZone: { owner: Component; id: HitZoneId } | null = null;
+	/**
+	 * The zone-less transcript child under the pointer, painted with
+	 * {@link transcriptChildHoverStyle} at compose time. Children with their own
+	 * hit zones keep their custom hover; this only covers children without one.
+	 */
+	private hoveredTranscriptChild: Component | null = null;
+	/**
+	 * App-injected painter for the zone-less child hover (pi-tui owns no
+	 * theme). Rows are padded to the terminal width before styling.
+	 */
+	private transcriptChildHoverStyle: ((row: string) => string) | undefined;
 	private inputListeners = new Set<InputListener>();
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
@@ -771,6 +782,16 @@ export class TUI extends Container {
 	 */
 	setScrollbarStyle(style: ScrollbarStyle | null): void {
 		this.scrollbarStyle = style;
+	}
+
+	/**
+	 * Register the painter applied to viewport rows of the zone-less transcript
+	 * child under the pointer (hover feedback for children without hit zones).
+	 * Rows are padded to the terminal width before styling; pass undefined to
+	 * disable. The painter is app-owned because pi-tui has no theme.
+	 */
+	setTranscriptChildHoverStyle(style: ((row: string) => string) | undefined): void {
+		this.transcriptChildHoverStyle = style;
 	}
 
 	/**
@@ -1454,6 +1475,17 @@ export class TUI extends Container {
 		return false;
 	}
 
+	private transcriptEntryAt(scroll: Container, viewportRow: number): TranscriptIndexEntry | null {
+		const width = Math.max(1, this.terminal.columns);
+		const childWidth = Math.max(1, width - scroll.leftInset() - scroll.rightInset());
+		let indexed = !this.transcriptDirty && this.transcriptIndex.isWarmFor(scroll, childWidth);
+		if (!indexed && !this.transcriptIndex.isDeclinedFor(scroll)) {
+			indexed = this.transcriptIndex.syncFull(scroll, childWidth);
+			if (indexed) this.transcriptDirty = false;
+		}
+		return indexed ? this.transcriptIndex.locate(this.scrollTop + viewportRow) : null;
+	}
+
 	/**
 	 * Hit-test the transcript scroll region's children at a viewport row:
 	 * `viewportRow` is 0-based from the viewport's top, so the transcript line
@@ -1476,14 +1508,8 @@ export class TUI extends Container {
 		const line = this.scrollTop + viewportRow;
 		const colInset = scroll.leftInset();
 		const childWidth = Math.max(1, width - colInset - scroll.rightInset());
-		let indexed = !this.transcriptDirty && this.transcriptIndex.isWarmFor(scroll, childWidth);
-		if (!indexed && !this.transcriptIndex.isDeclinedFor(scroll)) {
-			indexed = this.transcriptIndex.syncFull(scroll, childWidth);
-			if (indexed) this.transcriptDirty = false;
-		}
-		if (indexed) {
-			const entry = this.transcriptIndex.locate(line);
-			if (entry === null) return null;
+		const entry = this.transcriptEntryAt(scroll, viewportRow);
+		if (entry !== null) {
 			const child = entry.child;
 			if (!hasHitZones(child)) return null;
 			const translated: MouseEvent = {
@@ -1495,6 +1521,7 @@ export class TUI extends Container {
 			const zone = hitZoneAt(resolveHitZones(child, childWidth), translated.row, translated.col, kind);
 			return zone === null ? null : { zone, event: translated };
 		}
+		if (!this.transcriptIndex.isDeclinedFor(scroll)) return null;
 		let acc = 0;
 		for (const child of scroll.children) {
 			const base = acc + scroll.rowsBeforeChild(child);
@@ -2135,22 +2162,37 @@ export class TUI extends Container {
 	 * = skip the frame).
 	 */
 	private updateTranscriptZoneHover(event: MouseEvent): void {
-		const hit = this.isTranscriptContentCell(event.row, event.col)
+		const isContent = this.isTranscriptContentCell(event.row, event.col);
+		const hit = isContent
 			? this.transcriptZoneHit(this.layoutRegions.scroll as Container, event.row - 1, event, "hover")
 			: null;
 		const next = hit === null ? null : { owner: hit.zone.owner, id: hit.zone.id };
 		const prev = this.lastTranscriptHoveredZone;
-		if (prev === null && next === null) return;
-		if (prev !== null && next !== null && prev.owner === next.owner && prev.id === next.id) return;
-		let renderNeeded = false;
-		if (prev !== null && (next === null || prev.owner !== next.owner)) {
-			renderNeeded = prev.owner.setHoveredZone?.(null) !== false;
+		if (prev !== null || next !== null) {
+			if (prev === null || next === null || prev.owner !== next.owner || prev.id !== next.id) {
+				let renderNeeded = false;
+				if (prev !== null && (next === null || prev.owner !== next.owner)) {
+					renderNeeded = prev.owner.setHoveredZone?.(null) !== false;
+				}
+				if (next !== null) {
+					renderNeeded = next.owner.setHoveredZone?.(next.id) !== false || renderNeeded;
+				}
+				this.lastTranscriptHoveredZone = next;
+				if (renderNeeded) this.requestRender();
+			}
 		}
-		if (next !== null) {
-			renderNeeded = next.owner.setHoveredZone?.(next.id) !== false || renderNeeded;
+		// Zone-less child hover: pure repaint feedback for children without a
+		// hit zone of their own (assistant/user text and friends). Zone owners
+		// keep their custom hover — no double painting.
+		const childAtPointer =
+			isContent && hit === null && this.transcriptChildHoverStyle !== undefined
+				? (this.transcriptEntryAt(this.layoutRegions.scroll as Container, event.row - 1)?.child ??
+					null)
+				: null;
+		if (childAtPointer !== this.hoveredTranscriptChild) {
+			this.hoveredTranscriptChild = childAtPointer;
+			this.requestChromeRender();
 		}
-		this.lastTranscriptHoveredZone = next;
-		if (renderNeeded) this.requestRender();
 	}
 
 	/**
@@ -2160,9 +2202,14 @@ export class TUI extends Container {
 	 */
 	private clearTranscriptZoneHover(): void {
 		const prev = this.lastTranscriptHoveredZone;
-		if (prev === null) return;
-		this.lastTranscriptHoveredZone = null;
-		if (prev.owner.setHoveredZone?.(null) !== false) this.requestRender();
+		if (prev !== null) {
+			this.lastTranscriptHoveredZone = null;
+			if (prev.owner.setHoveredZone?.(null) !== false) this.requestRender();
+		}
+		if (this.hoveredTranscriptChild !== null) {
+			this.hoveredTranscriptChild = null;
+			this.requestChromeRender();
+		}
 	}
 
 	private handleInput(data: string): void {
@@ -2846,6 +2893,7 @@ export class TUI extends Container {
 	 */
 	private materializeTranscriptWindow(scroll: Container, fromLine: number, count: number): string[] {
 		const lead = " ".repeat(scroll.leftInset());
+		const width = Math.max(1, this.terminal.columns);
 		const rows: string[] = [];
 		const toLine = fromLine + count;
 		for (const entry of this.transcriptIndex.windowEntries(fromLine, toLine)) {
@@ -2860,6 +2908,14 @@ export class TUI extends Container {
 					this.transcriptPrefixCache.set(lines, cached);
 				}
 				block = cached.block;
+			}
+			if (entry.child === this.hoveredTranscriptChild && this.transcriptChildHoverStyle !== undefined) {
+				// The hovered zone-less child gets a fresh padded+painted block;
+				// the shared cached block stays untouched for the unhovered path.
+				const style = this.transcriptChildHoverStyle;
+				block = block.map((row) =>
+					isImageLine(row) ? row : style(row + " ".repeat(Math.max(0, width - visibleWidth(row)))),
+				);
 			}
 			const start = Math.max(fromLine - entry.base, 0);
 			const end = Math.min(entry.base + entry.height, toLine) - entry.base;

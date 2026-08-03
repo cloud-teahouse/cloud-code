@@ -28,12 +28,15 @@ describe('applyCardTone', () => {
   let TEXT_OPEN = '';
   let DIM_OPEN = '';
   let BG_OPEN = '';
+  let HOVER_BG_OPEN = '';
   beforeAll(() => {
     TEXT_OPEN = fgOpen('text');
     DIM_OPEN = fgOpen('textDim');
     const sampled = currentTheme.bg('userMessageBackground', SENTINEL);
     BG_OPEN = sampled.slice(0, sampled.indexOf(SENTINEL));
-    if (TEXT_OPEN.length === 0 || BG_OPEN.length === 0) {
+    const hoverSampled = currentTheme.bg('hoverBackground', SENTINEL);
+    HOVER_BG_OPEN = hoverSampled.slice(0, hoverSampled.indexOf(SENTINEL));
+    if (TEXT_OPEN.length === 0 || BG_OPEN.length === 0 || HOVER_BG_OPEN.length === 0) {
       throw new Error('theme sampling produced no SGR sequences');
     }
   });
@@ -51,7 +54,8 @@ describe('applyCardTone', () => {
     expect(out).toContain(`${TEXT_OPEN}dim\x1b[39m`);
     expect(out).toContain(chalk.red('red'));
     expect(out).toContain(chalk.bold('bold'));
-    expect(strip(out)).toBe(strip(line));
+    // Hover also paints the background, padding the row to width.
+    expect(strip(out).trimEnd()).toBe(strip(line));
   });
 
   it('keeps diff and syntax colors while whitening textDim-toned meta', () => {
@@ -68,7 +72,27 @@ describe('applyCardTone', () => {
     // diffMeta equals textDim in the dark palette, so the meta run whitens
     // with the rest of the dim detail text.
     expect(out).toContain(`${TEXT_OPEN} … meta\x1b[39m`);
-    expect(strip(out)).toBe(strip(line));
+    expect(strip(out).trimEnd()).toBe(strip(line));
+  });
+
+  it('paints hoverBackground behind semantic-color rows without changing their foreground', () => {
+    const palette = currentTheme.palette;
+    const line = chalk.hex(palette.diffAdded)('+ added') + chalk.hex(palette.error)(' error');
+    const image = '\u001B_Ga=T,f=100;payload\u001B\\';
+    const out = applyCardTone(['', line, image], {
+      width: 20,
+      tone: 'hover',
+      bgFrom: 1,
+      toneFrom: 1,
+    });
+
+    expect(out[0]).toBe('');
+    expect(out[1]).toContain(HOVER_BG_OPEN);
+    expect(out[1]).not.toContain(BG_OPEN);
+    expect(out[1]).toContain(chalk.hex(palette.diffAdded)('+ added'));
+    expect(out[1]).toContain(chalk.hex(palette.error)(' error'));
+    expect(visibleWidth(strip(out[1]!))).toBe(20);
+    expect(out[2]).toBe(image);
   });
 
   it('brightens every row in a folded block when a continuation has inline color', () => {
@@ -88,7 +112,7 @@ describe('applyCardTone', () => {
     expect(out[2]).not.toBe(lines[2]);
     expect(out[3]).not.toBe(lines[3]);
     expect(out[2]).toContain(chalk.hex(palette.primary)('kaos test/pty.test.ts > …'));
-    expect(strip(out[2]!)).toBe(strip(lines[2]!));
+    expect(strip(out[2]!).trimEnd()).toBe(strip(lines[2]!));
   });
 
   it('brightens styled continuation rows in an expanded ordered list', () => {
@@ -111,7 +135,7 @@ describe('applyCardTone', () => {
     }
     expect(out[2]).toContain(chalk.hex(palette.primary)('804c590c'));
     expect(out[3]).toContain(chalk.bold('fixes)'));
-    expect(strip(out[4]!)).toBe(strip(lines[4]!));
+    expect(strip(out[4]!).trimEnd()).toBe(strip(lines[4]!));
   });
 
   it('keeps bold intact when nested inside dim', () => {
@@ -121,7 +145,7 @@ describe('applyCardTone', () => {
     expect(out).toContain('\x1b[1mb\x1b[22m');
     expect(out).toContain(`${TEXT_OPEN}a`);
     expect(out).toContain(`${TEXT_OPEN}c\x1b[39m`);
-    expect(strip(out)).toBe('abc');
+    expect(strip(out).trimEnd()).toBe('abc');
   });
 
   it('leaves lines above toneFrom untouched', () => {
@@ -132,7 +156,10 @@ describe('applyCardTone', () => {
       bgFrom: 0,
       toneFrom: 1,
     });
-    expect(out[0]).toBe(header);
+    // Its text and styling survive; the hover background paints it too
+    // (the whole block highlights), padded to width.
+    expect(strip(out[0]!).trimEnd()).toBe('header');
+    expect(out[0]).toContain(HOVER_BG_OPEN);
   });
 
   it('paints the background from bgFrom down and pads rows to the width', () => {
