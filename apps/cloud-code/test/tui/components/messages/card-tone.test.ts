@@ -71,6 +71,49 @@ describe('applyCardTone', () => {
     expect(strip(out)).toBe(strip(line));
   });
 
+  it('brightens every row in a folded block when a continuation has inline color', () => {
+    const palette = currentTheme.palette;
+    const lines = [
+      '',
+      currentTheme.fg('textDim', '● The failure is ') +
+        chalk.hex(palette.primary)('kaos test/pty.test.ts > …') +
+        ' — a known load-sensitive flake…',
+      chalk.hex(palette.primary)('kaos test/pty.test.ts > …') + ' continuation',
+      chalk.dim('… (还有 3 行，ctrl+o 展开)'),
+    ];
+
+    const out = applyCardTone(lines, { width: 80, tone: 'hover', bgFrom: 1, toneFrom: 1 });
+
+    expect(out[1]).not.toBe(lines[1]);
+    expect(out[2]).not.toBe(lines[2]);
+    expect(out[3]).not.toBe(lines[3]);
+    expect(out[2]).toContain(chalk.hex(palette.primary)('kaos test/pty.test.ts > …'));
+    expect(strip(out[2]!)).toBe(strip(lines[2]!));
+  });
+
+  it('brightens styled continuation rows in an expanded ordered list', () => {
+    const palette = currentTheme.palette;
+    const lines = [
+      '',
+      currentTheme.fg('textDim', '1. Alpha release: all checks passed'),
+      chalk.bold('2. Beta pre-release: build-commit = ') +
+        chalk.hex(palette.primary)('804c590c') +
+        chalk.bold(' ✓ (new binaries with all visual'),
+      chalk.bold('fixes)'),
+      chalk.hex(palette.primary)('3. Publish to npm: …') + ' beta auto-published…',
+      chalk.underline('beta auto-published…'),
+    ];
+
+    const out = applyCardTone(lines, { width: 80, tone: 'hover', bgFrom: 1, toneFrom: 1 });
+
+    for (let i = 1; i < lines.length; i++) {
+      expect(out[i]).not.toBe(lines[i]);
+    }
+    expect(out[2]).toContain(chalk.hex(palette.primary)('804c590c'));
+    expect(out[3]).toContain(chalk.bold('fixes)'));
+    expect(strip(out[4]!)).toBe(strip(lines[4]!));
+  });
+
   it('keeps bold intact when nested inside dim', () => {
     const line = chalk.dim(`a${chalk.bold('b')}c`);
     const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0, toneFrom: 0 })[0]!;
@@ -83,13 +126,13 @@ describe('applyCardTone', () => {
 
   it('leaves lines above toneFrom untouched', () => {
     const header = currentTheme.boldFg('primary', 'header');
-    const out = applyCardTone([chalk.dim('gray'), header], {
+    const out = applyCardTone([header, chalk.dim('body')], {
       width: 40,
       tone: 'hover',
       bgFrom: 0,
       toneFrom: 1,
     });
-    expect(out[1]).toBe(header);
+    expect(out[0]).toBe(header);
   });
 
   it('paints the background from bgFrom down and pads rows to the width', () => {
@@ -106,6 +149,17 @@ describe('applyCardTone', () => {
     expect(out[2]).toContain(BG_OPEN);
     expect(out[2]).toContain(`${TEXT_OPEN}body`);
     expect(visibleWidth(strip(out[2]!))).toBe(10);
+  });
+
+  it('leaves inline image rows untouched during hover and click tones', () => {
+    const image = '\u001B_Ga=T,f=100;payload\u001B\\';
+
+    expect(applyCardTone([image], { width: 10, tone: 'hover', bgFrom: 0, toneFrom: 0 })[0]).toBe(
+      image,
+    );
+    expect(applyCardTone([image], { width: 10, tone: 'click', bgFrom: 0, toneFrom: 0 })[0]).toBe(
+      image,
+    );
   });
 
   it('is a no-op when colors are disabled', () => {

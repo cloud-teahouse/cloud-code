@@ -13,12 +13,11 @@
  *
  * The base lines keep their own styling; the tone is a post-process over the
  * rendered output, so hover never rebuilds child components and colored
- * content survives untouched: syntax highlighting and the diff add/remove/
- * gutter colors carry their own SGR sequences, which the dim→white swap does
- * not match. Only the theme's exact `textDim` sequence and `chalk.dim`
- * (SGR 2) runs whiten — which also catches content painted in a color equal
- * to `textDim` (the dark palette's `diffMeta`), by design: it reads as dim
- * detail text.
+ * content survives untouched. The theme's exact `textDim` sequence and
+ * `chalk.dim` (SGR 2) runs whiten as before. Lines made only from plain text
+ * and other inline styles receive the text foreground around their unstyled
+ * spans, while nested syntax/link colors remain intact, so every detail row
+ * gets a readable hover change without washing its semantic colors away.
  */
 
 import chalk from 'chalk';
@@ -59,12 +58,14 @@ export function applyCardTone(lines: string[], options: CardToneOptions): string
   const out = lines.slice();
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i]!;
-    if (whiten && i >= whitenFrom) {
+    const image = isImageLine(line);
+    // Foreground wrappers, padding, and background escapes would corrupt an
+    // inline image's escape payload, so image rows keep their raw form even
+    // inside the block.
+    if (whiten && i >= whitenFrom && !image) {
       line = brightenDetailLine(line, dimFgOpen, textFgOpen);
     }
-    // Padding and background escapes would corrupt an inline image's escape
-    // payload, so image rows keep their raw form even inside the block.
-    if (paint && i >= bgFrom && !isImageLine(line)) {
+    if (paint && i >= bgFrom && !image) {
       line = paintBackground(line, width);
     }
     out[i] = line;
@@ -96,11 +97,15 @@ function sampledFgOpen(token: 'textDim' | 'text'): string {
  * `chalk.dim` segments (SGR 2 … 22). Bold shares the SGR 22 closer with dim,
  * so dim/bold opens are tracked on a stack to pair each close with the
  * attribute it actually ends; chalk reopens the outer style after an inner
- * close, which the stack model absorbs unchanged.
+ * close, which the stack model absorbs unchanged. If a line has no dim run,
+ * its plain spans are wrapped in the text foreground instead, re-opening that
+ * foreground after nested color resets.
  */
 function brightenDetailLine(line: string, dimFgOpen: string, textFgOpen: string): string {
-  let out = dimFgOpen.length > 0 ? line.split(dimFgOpen).join(textFgOpen) : line;
-  if (!out.includes('\x1b[2m')) return out;
+  const out = dimFgOpen.length > 0 ? line.split(dimFgOpen).join(textFgOpen) : line;
+  if (!out.includes('\x1b[2m')) {
+    return out === line ? addHoverForeground(out, textFgOpen) : out;
+  }
   const stack: ('dim' | 'bold')[] = [];
   const sgr = /\x1b\[[0-9;]*m/g;
   let result = '';
@@ -123,5 +128,24 @@ function brightenDetailLine(line: string, dimFgOpen: string, textFgOpen: string)
     last = match.index + seq.length;
   }
   result += out.slice(last);
+  return result;
+}
+
+/** Keep inline colors while giving otherwise unstyled spans the hover tone. */
+function addHoverForeground(line: string, textFgOpen: string): string {
+  if (line.length === 0 || textFgOpen.length === 0) return line;
+
+  const sgr = /\x1b\[[0-9;]*m/g;
+  let result = textFgOpen;
+  let last = 0;
+  for (let match = sgr.exec(line); match !== null; match = sgr.exec(line)) {
+    const seq = match[0];
+    result += line.slice(last, match.index) + seq;
+    if (seq === '\x1b[39m' || seq === '\x1b[0m' || seq === '\x1b[m') {
+      result += textFgOpen;
+    }
+    last = match.index + seq.length;
+  }
+  result += line.slice(last) + '\x1b[39m';
   return result;
 }
