@@ -275,8 +275,7 @@ function pushToolActivity(
   wrap: boolean,
 ): void {
   const icon = entry.status === 'running' ? '●' : entry.status === 'failed' ? '✗' : '✓';
-  const color =
-    entry.status === 'running' ? 'success' : entry.status === 'failed' ? 'error' : 'textMuted';
+  const color = entry.status === 'failed' ? 'error' : 'success';
   const argsSummary = singleLine(entry.argsText);
   const suffix = entry.status === 'running' ? ` (${t('workflows.detail.toolRunning')})` : '';
   if (wrap) {
