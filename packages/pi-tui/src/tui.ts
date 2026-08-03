@@ -1457,16 +1457,14 @@ export class TUI extends Container {
 	/**
 	 * Hit-test the transcript scroll region's children at a viewport row:
 	 * `viewportRow` is 0-based from the viewport's top, so the transcript line
-	 * under the pointer is `scrollTop + viewportRow`. The line → child lookup
-	 * goes through the row index's binary search whenever its cached geometry
-	 * is exact (warm index, no mutation latched for the next render); the
-	 * fallback is a top-down walk that renders children at the width the
-	 * scroll container lays them out (terminal columns minus its gutter
-	 * insets) — render caches keep this cheap. Either way only the child that
-	 * owns the line gets its zones resolved. The returned event is expressed
-	 * in that child's frame, ready for {@link dispatchHitZone}'s owner
-	 * re-translation. Returns null when no child — or no zone of the
-	 * requested kind — covers the point.
+	 * under the pointer is `scrollTop + viewportRow`. A dirty or cold index is
+	 * synchronously revalidated once before the line lookup, so repeated motion
+	 * events use the same binary-search path instead of walking the transcript.
+	 * Containers with per-child chrome remain on the legacy walk because the
+	 * index cannot reproduce their geometry. The returned event is expressed in
+	 * the owning child's frame, ready for {@link dispatchHitZone}'s owner
+	 * re-translation. Returns null when no child — or no zone of the requested
+	 * kind — covers the point.
 	 */
 	private transcriptZoneHit(
 		scroll: Container,
@@ -1478,7 +1476,12 @@ export class TUI extends Container {
 		const line = this.scrollTop + viewportRow;
 		const colInset = scroll.leftInset();
 		const childWidth = Math.max(1, width - colInset - scroll.rightInset());
-		if (!this.transcriptDirty && this.transcriptIndex.isWarmFor(scroll, childWidth)) {
+		let indexed = !this.transcriptDirty && this.transcriptIndex.isWarmFor(scroll, childWidth);
+		if (!indexed && !this.transcriptIndex.isDeclinedFor(scroll)) {
+			indexed = this.transcriptIndex.syncFull(scroll, childWidth);
+			if (indexed) this.transcriptDirty = false;
+		}
+		if (indexed) {
 			const entry = this.transcriptIndex.locate(line);
 			if (entry === null) return null;
 			const child = entry.child;

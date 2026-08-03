@@ -81,16 +81,15 @@ export class TranscriptRowIndex {
 	}
 
 	/**
-	 * Revalidate every child's geometry: one render call per child (a cache
-	 * hit for unchanged content) and a prefix-sum rebuild. Returns false when
-	 * the container paints per-child chrome rows (rowsBeforeChild), which the
-	 * index cannot reproduce — the caller falls back to whole-container
-	 * rendering.
+	 * Revalidate every child's geometry: one render call per child (a cache hit
+	 * for unchanged content), while retaining entries whose child and lines
+	 * references are unchanged. Once the first changed child is found, only the
+	 * suffix's prefix bases are updated. Returns false when the container paints
+	 * per-child chrome rows (rowsBeforeChild), which the index cannot reproduce —
+	 * the caller falls back to whole-container rendering.
 	 */
 	syncFull(container: Container, width: number): boolean {
 		const children = container.children;
-		const entries: TranscriptIndexEntry[] = [];
-		let base = 0;
 		for (const child of children) {
 			if (container.rowsBeforeChild(child) !== 0) {
 				this.container = null;
@@ -100,14 +99,36 @@ export class TranscriptRowIndex {
 				this.declinedContainer = container;
 				return false;
 			}
-			const lines = child.render(width);
-			entries.push({ child, lines, base, height: lines.length });
-			base += lines.length;
 		}
+
+		const entries = this.entries;
+		let base = 0;
+		let firstChanged = -1;
+		for (let i = 0; i < children.length; i++) {
+			const child = children[i]!;
+			const previous = entries[i];
+			const lines = child.render(width);
+			const unchanged = previous !== undefined && previous.child === child && previous.lines === lines;
+
+			if (firstChanged === -1 && unchanged) {
+				base += previous.height;
+				continue;
+			}
+			if (firstChanged === -1) firstChanged = i;
+
+			const entry = previous !== undefined && previous.child === child ? previous : { child, lines, base, height: lines.length };
+			entry.child = child;
+			entry.lines = lines;
+			entry.base = base;
+			entry.height = lines.length;
+			entries[i] = entry;
+			base += entry.height;
+		}
+		if (entries.length > children.length) entries.length = children.length;
+
 		this.container = container;
 		this.width = width;
 		this.childrenArray = children;
-		this.entries = entries;
 		this._totalLines = base;
 		return true;
 	}

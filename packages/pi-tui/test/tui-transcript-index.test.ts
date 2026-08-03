@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { HitZone, HitZoneId } from "../src/hit-zones.ts";
-import { TranscriptRowIndex } from "../src/transcript-index.ts";
+import { TranscriptRowIndex, type TranscriptIndexEntry } from "../src/transcript-index.ts";
 import { type Component, Container, type MouseEvent, TUI } from "../src/tui.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -20,6 +20,10 @@ function stubbed(label: string, height: number): StubComponent {
 	const component = new StubComponent();
 	component.lines = Array.from({ length: height }, (_, i) => `${label}-${i + 1}`);
 	return component;
+}
+
+function entriesOf(index: TranscriptRowIndex): TranscriptIndexEntry[] {
+	return (index as unknown as { entries: TranscriptIndexEntry[] }).entries;
 }
 
 describe("TranscriptRowIndex", () => {
@@ -44,6 +48,38 @@ describe("TranscriptRowIndex", () => {
 		assert.strictEqual(index.locate(6)?.child, c);
 		assert.strictEqual(index.locate(7), null);
 		assert.strictEqual(index.locate(100), null);
+	});
+
+	it("reuses unchanged entries across dirty and append syncs", () => {
+		const container = new Container();
+		const children = [stubbed("a", 2), stubbed("b", 2), stubbed("c", 2)];
+		for (const child of children) container.addChild(child);
+		const index = new TranscriptRowIndex();
+		index.syncFull(container, 80);
+		const entries = entriesOf(index);
+		const entryRefs = entries.slice();
+
+		index.syncFull(container, 80);
+		assert.strictEqual(entriesOf(index), entries, "steady sync must not allocate entries");
+		assert.deepStrictEqual(entries, entryRefs);
+
+		children[0]!.lines = [...children[0]!.lines, "a-3"];
+		index.syncFull(container, 80);
+		assert.strictEqual(entriesOf(index), entries, "dirty sync must reuse the entries array");
+		assert.strictEqual(entries[1], entryRefs[1], "unchanged suffix entry must be reused");
+		assert.strictEqual(entries[2], entryRefs[2], "unchanged suffix entry must be reused");
+		assert.strictEqual(entries[1]!.base, 3, "prefix must be rebuilt after the changed child");
+		assert.strictEqual(index.totalLines, 7);
+
+		const appended = stubbed("d", 1);
+		container.addChild(appended);
+		index.syncFull(container, 80);
+		assert.strictEqual(entriesOf(index), entries, "append sync must extend in place");
+		assert.strictEqual(entries[0], entryRefs[0], "unchanged prefix entry must be reused");
+		assert.strictEqual(entries[2], entryRefs[2], "unchanged suffix entry must be reused");
+		assert.strictEqual(entries[3]!.child, appended);
+		assert.strictEqual(entries[3]!.base, 7);
+		assert.strictEqual(index.totalLines, 8);
 	});
 
 	it("tracks warmth across structural and width changes", () => {
@@ -163,6 +199,13 @@ class ZoneCard extends CountingChild {
 	}
 	setHoveredZone(id: HitZoneId | null): void {
 		this.hovers.push(id);
+	}
+}
+
+class StableHoverZoneCard extends ZoneCard {
+	override setHoveredZone(id: HitZoneId | null): boolean {
+		super.setHoveredZone(id);
+		return false;
 	}
 }
 
@@ -406,5 +449,28 @@ describe("transcript row index counters", () => {
 		assert.deepStrictEqual(card.hits, [{ id: "A", row: 2, col: 4 }]);
 		assert.strictEqual(totalRenderCalls(children), 0, "press hit-test re-rendered children");
 		void tui;
+	});
+
+	it("syncs a dirty hit index once before repeated motions", async () => {
+		const card = new StableHoverZoneCard("card-last", 3);
+		card.zones = [{ id: "A", row: 0, col: 1, width: CHILD_WIDTH, height: 3 }];
+		const children: CountingChild[] = [...makeChildren(1999, 2), card];
+		const { tui, terminal } = await setupIndexedTranscript(children);
+		tui.scrollToBottom();
+		await terminal.waitForRender();
+
+		children[0]!.lines = [...children[0]!.lines, "child-0-3"];
+		tui.requestRender();
+		resetRenderCalls(children);
+		for (let i = 0; i < 5; i++) terminal.sendInput(`\x1b[<35;6;${i + 2}M`);
+
+		assert.deepStrictEqual(card.hovers, ["A"]);
+		assert.strictEqual(
+			totalRenderCalls(children),
+			children.length,
+			"dirty motions should sync the index once, not linearly walk once per cell",
+		);
+		await terminal.waitForRender();
+		assert.strictEqual(totalRenderCalls(children), children.length, "the scheduled frame should reuse the synced index");
 	});
 });

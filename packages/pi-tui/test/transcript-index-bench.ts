@@ -17,9 +17,12 @@ const CHILD_HEIGHT = 2;
 const WIDTH = 75;
 const VIEWPORT = 7;
 const LOOKS = 20_000;
+const STREAM_LOOKS = 5_000;
+const DIRTY_HIT_LOOKS = 2_000;
+const DIRTY_HIT_MOTIONS = 5;
 
 class BenchChild implements Component {
-	readonly lines = [`${"x".repeat(20)}`, `${"y".repeat(20)}`];
+	lines = [`${"x".repeat(20)}`, `${"y".repeat(20)}`];
 	renderCalls = 0;
 	render(_width: number): string[] {
 		this.renderCalls++;
@@ -39,13 +42,13 @@ for (let i = 0; i < CHILDREN; i++) {
 const index = new TranscriptRowIndex();
 index.syncFull(container, WIDTH);
 
-function time(label: string, fn: () => void): number {
+function time(label: string, fn: () => void, looks = LOOKS): number {
 	// Warmup
 	for (let i = 0; i < 100; i++) fn();
 	const start = performance.now();
-	for (let i = 0; i < LOOKS; i++) fn();
-	const ms = (performance.now() - start) / LOOKS;
-	console.log(`${label.padEnd(56)} ${(ms * 1000).toFixed(2).padStart(10)} µs/op`);
+	for (let i = 0; i < looks; i++) fn();
+	const ms = (performance.now() - start) / looks;
+	console.log(`${label.padEnd(64)} ${(ms * 1000).toFixed(2).padStart(10)} µs/op`);
 	return ms;
 }
 
@@ -69,11 +72,11 @@ const indexedHit = time("indexed hit-test (binary search)", () => {
 
 console.log(`  → ${(legacyHit / indexedHit).toFixed(0)}× faster\n`);
 
-// --- compose: steady frame (scroll position changed, content frozen) ---
+// --- animation tick: scroll position changed, content frozen ---
 const lead = "  ";
 const scrollTop = CHILDREN * CHILD_HEIGHT - VIEWPORT;
 
-const legacyCompose = time("legacy compose (render+prefix+concat+slice)", () => {
+const legacyAnimation = time("legacy animation tick (render+prefix+concat+slice)", () => {
 	const out: string[] = [];
 	for (const child of container.children) {
 		for (const line of child.render(WIDTH)) out.push(lead + line);
@@ -82,7 +85,7 @@ const legacyCompose = time("legacy compose (render+prefix+concat+slice)", () => 
 });
 
 const prefixCache = new WeakMap<string[], string[]>();
-const indexedCompose = time("indexed compose (window materialization)", () => {
+const indexedAnimation = time("indexed animation tick (window materialization)", () => {
 	const rows: string[] = [];
 	for (const entry of index.windowEntries(scrollTop, scrollTop + VIEWPORT)) {
 		let block = prefixCache.get(entry.lines);
@@ -96,25 +99,92 @@ const indexedCompose = time("indexed compose (window materialization)", () => {
 	}
 });
 
-console.log(`  → ${(legacyCompose / indexedCompose).toFixed(0)}× faster\n`);
+console.log(`  → ${(legacyAnimation / indexedAnimation).toFixed(0)}× faster\n`);
 
-// --- compose: revalidation frame (one child changed; both paths walk all) ---
-const legacyDirty = time("legacy dirty frame (same as steady)", () => {
-	const out: string[] = [];
-	for (const child of container.children) {
-		for (const line of child.render(WIDTH)) out.push(lead + line);
-	}
-	out.slice(scrollTop, scrollTop + VIEWPORT);
-});
+// --- streaming: the last child returns a new two-line array every frame ---
+let streamingFrame = 0;
+const touchStreamingTail = (): void => {
+	streamingFrame++;
+	children[CHILDREN - 1]!.lines = [`x-${streamingFrame}`, `y-${streamingFrame}`];
+};
 
-const indexedDirty = time("indexed dirty frame (syncFull + window)", () => {
-	index.syncFull(container, WIDTH);
-	const rows: string[] = [];
-	for (const entry of index.windowEntries(scrollTop, scrollTop + VIEWPORT)) {
-		const start = Math.max(scrollTop - entry.base, 0);
-		const end = Math.min(entry.base + entry.height, scrollTop + VIEWPORT) - entry.base;
-		for (let i = start; i < end; i++) rows.push(entry.lines[i]!);
-	}
-});
+const legacyDirty = time(
+	"legacy streaming dirty frame (full render + prefix + concat)",
+	() => {
+		touchStreamingTail();
+		const out: string[] = [];
+		for (const child of container.children) {
+			for (const line of child.render(WIDTH)) out.push(lead + line);
+		}
+		out.slice(scrollTop, scrollTop + VIEWPORT);
+	},
+	STREAM_LOOKS,
+);
 
-console.log(`  → ${(legacyDirty / indexedDirty).toFixed(2)}× (dirty frames stay O(children) by design)`);
+const indexedDirty = time(
+	"indexed streaming dirty frame (incremental sync + window)",
+	() => {
+		touchStreamingTail();
+		index.syncFull(container, WIDTH);
+		const rows: string[] = [];
+		for (const entry of index.windowEntries(scrollTop, scrollTop + VIEWPORT)) {
+			const start = Math.max(scrollTop - entry.base, 0);
+			const end = Math.min(entry.base + entry.height, scrollTop + VIEWPORT) - entry.base;
+			for (let i = start; i < end; i++) rows.push(entry.lines[i]!);
+		}
+	},
+	STREAM_LOOKS,
+);
+
+console.log(`  → ${(legacyDirty / indexedDirty).toFixed(2)}× faster\n`);
+
+// --- dirty-period hit-test: one stream mutation, then several pointer cells ---
+const dirtyHitContainer = new Container();
+const dirtyHitChildren: BenchChild[] = [];
+for (let i = 0; i < CHILDREN; i++) {
+	const child = new BenchChild();
+	dirtyHitChildren.push(child);
+	dirtyHitContainer.addChild(child);
+}
+const dirtyHitIndex = new TranscriptRowIndex();
+dirtyHitIndex.syncFull(dirtyHitContainer, WIDTH);
+const dirtyHitLine = CHILDREN * CHILD_HEIGHT - 1;
+let dirtyHitFrame = 0;
+const touchDirtyHitTail = (): void => {
+	dirtyHitFrame++;
+	dirtyHitChildren[CHILDREN - 1]!.lines = [`x-${dirtyHitFrame}`, `y-${dirtyHitFrame}`];
+};
+
+const legacyDirtyHit = time(
+	"legacy dirty-period hit-test (linear walk × motions)",
+	() => {
+		touchDirtyHitTail();
+		for (let motion = 0; motion < DIRTY_HIT_MOTIONS; motion++) {
+			let acc = 0;
+			for (const child of dirtyHitContainer.children) {
+				const height = child.render(WIDTH).length;
+				if (dirtyHitLine >= acc && dirtyHitLine < acc + height) break;
+				acc += height;
+			}
+		}
+	},
+	DIRTY_HIT_LOOKS,
+);
+
+const indexedDirtyHit = time(
+	"indexed dirty-period hit-test (one sync + binary motions)",
+	() => {
+		touchDirtyHitTail();
+		let dirty = true;
+		for (let motion = 0; motion < DIRTY_HIT_MOTIONS; motion++) {
+			if (dirty) {
+				dirtyHitIndex.syncFull(dirtyHitContainer, WIDTH);
+				dirty = false;
+			}
+			dirtyHitIndex.locate(dirtyHitLine);
+		}
+	},
+	DIRTY_HIT_LOOKS,
+);
+
+console.log(`  → ${(legacyDirtyHit / indexedDirtyHit).toFixed(2)}× faster`);
