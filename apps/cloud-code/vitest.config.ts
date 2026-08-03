@@ -22,5 +22,6 @@ export default defineConfig({
       GIT_CONFIG_VALUE_0: 'false',
     },
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
+    setupFiles: ['./test/setup-home.ts'],
   },
 });
