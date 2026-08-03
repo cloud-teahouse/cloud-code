@@ -68,10 +68,10 @@ export const selectors: Record<keyof typeof enDomain, string> = {
   'selectors.registryImport.tokenLabel': 'Bearer token',
 
   // ── 上下文压缩块 ──
-  'selectors.compaction.compacting': '正在压缩上下文...',
+  'selectors.compaction.compacting': '正在压缩上下文…',
   'selectors.compaction.complete': '上下文压缩完成',
   'selectors.compaction.cancelled': '上下文压缩已取消',
-  'selectors.compaction.tokens': ' ({before} → {after} tokens)',
+  'selectors.compaction.tokens': ' ({before} → {after} token)',
   'selectors.compaction.hintShow': '（Ctrl-O 展开压缩摘要）',
   'selectors.compaction.hintHide': '（Ctrl-O 收起压缩摘要）',
   'selectors.compaction.tip': ' · 提示 {tip}',

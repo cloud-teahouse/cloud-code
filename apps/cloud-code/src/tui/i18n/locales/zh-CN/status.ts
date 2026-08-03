@@ -73,7 +73,7 @@ export const status: Record<keyof typeof enDomain, string> = {
   'status.login.waiting': '等待授权…',
   'status.login.prompt': '请在浏览器中打开下面的 URL 完成授权：',
   'status.login.codeLabel': '验证码：',
-  'status.working': '工作中...',
+  'status.working': '工作中…',
   'status.notify.approvalRequired': 'Cloud Code CLI 需要审批',
   'status.notify.question': 'Cloud Code CLI 需要你的回答',
   'status.errorPrefix': '错误：{message}',
@@ -102,7 +102,7 @@ export const status: Record<keyof typeof enDomain, string> = {
 
   // ── 用户键位绑定文件（tui/keybindings/loader.ts） ──
   'status.keybindings.parseError': '{file}：{message}。已使用默认键位。',
-  'status.keybindings.notAnObject': '{file}：应为「动作 → 键位」的对象。已使用默认键位。',
+  'status.keybindings.notAnObject': '{file}：应为"动作 → 键位"的对象。已使用默认键位。',
   'status.keybindings.unknownAction': '{file}：未知动作 "{action}"——已跳过。',
   'status.keybindings.invalidValue': '{file}："{action}" 的值应为键位字符串或字符串数组——已跳过。',
   'status.keybindings.reservedKey': '{file}："{key}" 为中断/退出保留键，不可改绑——已跳过 "{action}"。',

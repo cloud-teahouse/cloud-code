@@ -114,6 +114,7 @@ export const dialogs = {
   'dialogs.question.other': 'Other',
   'dialogs.question.notAnswered': 'Not answered',
   'dialogs.question.reviewTitle': 'Review your answer before submit',
+  'dialogs.question.questionMarker': 'Q',
   'dialogs.question.submitPrompt': 'Ready to submit your answers?',
   'dialogs.question.unansweredWarning': 'Some questions are still unanswered.',
   'dialogs.question.submit': 'Submit',

@@ -191,7 +191,9 @@ export class BtwPanelComponent implements Component {
   }
 
   private renderTurn(turn: BtwTurn, width: number): string[] {
-    const prompt = chalk.hex(currentTheme.palette.accent)(`Q: ${turn.prompt}`);
+    const prompt = chalk.hex(currentTheme.palette.accent)(
+      t('panels.btw.questionLine', { prompt: turn.prompt }),
+    );
     const lines = [...new Text(prompt, 0, 0).render(width)];
     const answer = turn.answer.trim();
     const thinking = turn.thinking.trim();

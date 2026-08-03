@@ -781,7 +781,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
       const answer = this.answers[i];
       appendWrapped(
         lines,
-        `  ${dim('Q')}  `,
+        `  ${dim(t('dialogs.question.questionMarker'))}  `,
         '       ',
         question.question,
         renderWidth,

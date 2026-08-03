@@ -16,6 +16,7 @@ export const footer = {
   'footer.agentsRunning.one': '[{count} agent running]',
   'footer.agentsRunning.other': '[{count} agents running]',
   'footer.goal.badge': '{status} · {elapsed} · {turns}',
+  'footer.goal.badgePrefix': 'goal',
   'footer.goal.status.active': 'active',
   'footer.goal.status.paused': 'paused',
   'footer.goal.status.blocked': 'blocked',

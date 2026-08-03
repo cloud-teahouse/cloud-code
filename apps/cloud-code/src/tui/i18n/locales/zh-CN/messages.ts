@@ -32,8 +32,8 @@ export const messages: Record<keyof typeof enDomain, string> = {
   // ── 子代理卡片 ──
   'messages.toolCall.subagent.label': '子代理 ({id})',
   'messages.toolCall.subagent.labelWithName': '子代理 {name} ({id})',
-  'messages.toolCall.subagent.moreToolCalls.one': '还有 {count} 次调用 ...',
-  'messages.toolCall.subagent.moreToolCalls.other': '还有 {count} 次调用 ...',
+  'messages.toolCall.subagent.moreToolCalls.one': '还有 {count} 次调用 …',
+  'messages.toolCall.subagent.moreToolCalls.other': '还有 {count} 次调用 …',
   'messages.toolCall.subagent.phase.queued': '○ 排队',
   'messages.toolCall.subagent.phase.starting': '↻ 启动中…',
   'messages.toolCall.subagent.phase.running': '↻ 运行中',
@@ -54,9 +54,9 @@ export const messages: Record<keyof typeof enDomain, string> = {
   'messages.toolCall.bg.failed': '后台代理失败',
 
   // ── 流式预览 ──
-  'messages.toolCall.write.moreLines': '... （还有 {count} 行，共 {total} 行，ctrl+o 展开）',
-  'messages.toolCall.edit.preparing': '正在准备更改... {size} · 耗时 {elapsed}',
-  'messages.toolCall.edit.preparingFor': '正在为 {path} 准备更改... {size} · 耗时 {elapsed}',
+  'messages.toolCall.write.moreLines': '… （还有 {count} 行，共 {total} 行，ctrl+o 展开）',
+  'messages.toolCall.edit.preparing': '正在准备更改… {size} · 耗时 {elapsed}',
+  'messages.toolCall.edit.preparingFor': '正在为 {path} 准备更改… {size} · 耗时 {elapsed}',
 
   // ── AgentSwarm 结果摘要 ──
   'messages.toolCall.swarm.prefix': 'Agent 集群： ',
@@ -105,13 +105,13 @@ export const messages: Record<keyof typeof enDomain, string> = {
   'messages.goal.status.complete': '已完成',
   'messages.goal.turns.one': '{count} 轮',
   'messages.goal.turns.other': '{count} 轮',
-  'messages.goal.tokens': '{count} tokens',
+  'messages.goal.tokens': '{count} token',
 
   // ── 速览摘要与截断输出 ──
   'messages.summary.more': ', +{count} 更多',
-  'messages.truncated.moreLines': '... （还有 {count} 行）',
-  'messages.truncated.moreLinesExpand': '... （还有 {count} 行，ctrl+o 展开）',
-  'messages.truncated.earlierLines': '... （之前 {count} 行）',
+  'messages.truncated.moreLines': '… （还有 {count} 行）',
+  'messages.truncated.moreLinesExpand': '… （还有 {count} 行，ctrl+o 展开）',
+  'messages.truncated.earlierLines': '… （之前 {count} 行）',
 
   // ── diff 预览（diff-preview.ts）──
   'messages.diff.moreChangesHidden.one': '还有 {count} 处修改未显示（{hint} 展开）',

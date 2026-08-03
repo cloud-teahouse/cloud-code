@@ -40,7 +40,7 @@ export const panels: Record<keyof typeof enDomain, string> = {
 
   // ── /status 统计标签页 ──
   'panels.stats.favoriteModel': '常用模型',
-  'panels.stats.totalTokens': '总 token 数',
+  'panels.stats.totalTokens': '总 token',
   'panels.stats.sessions': '会话数',
   'panels.stats.longestSession': '最长会话',
   'panels.stats.activeDays': '活跃天数',
@@ -96,8 +96,8 @@ export const panels: Record<keyof typeof enDomain, string> = {
   'panels.usage.codex.redeemHint': '按 R 使用一次',
   'panels.usage.codex.redeemChecking': '用量重置机会：正在查询可用重置…',
   'panels.usage.codex.redeemConfirm': '使用 1 次用量重置（共 {count} 次）？[y/N]',
-  'panels.usage.codex.redeemWillUse': '将使用：“{title}”——{description}',
-  'panels.usage.codex.redeemAlsoAvailable': '另有可用：“{title}”',
+  'panels.usage.codex.redeemWillUse': '将使用："{title}"——{description}',
+  'panels.usage.codex.redeemAlsoAvailable': '另有可用："{title}"',
   'panels.usage.codex.redeemDefaultTitle': '完全重置',
   'panels.usage.codex.redeemDefaultDescription': '重置当前全部用量限额。',
   'panels.usage.codex.redeemExpiryToday': '{time} 过期',
@@ -258,8 +258,9 @@ export const panels: Record<keyof typeof enDomain, string> = {
   // ── /btw 支线提问面板 ──
   'panels.btw.hintClose': 'Esc 关闭 ',
   'panels.btw.hintCloseScroll': 'Esc 关闭 · ↑↓ 滚动 ',
-  'panels.btw.ready': '随时提出支线问题...',
-  'panels.btw.waiting': '等待回答...',
+  'panels.btw.ready': '随时提出支线问题…',
+  'panels.btw.waiting': '等待回答…',
+  'panels.btw.questionLine': '问：{prompt}',
 
   // ── TODO 列表面板 ──
   'panels.todo.title': '  待办',

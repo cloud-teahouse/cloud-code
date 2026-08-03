@@ -272,7 +272,7 @@ describe('FooterComponent — turn token breakdown', () => {
     const lines = fc.render(120);
     const line2 = lines[1] ?? '';
     const out = strip(line2);
-    expect(out).toContain('上下文: 42% (420k/1M) · 输入 8k · 缓存 6k (75%) · 输出 512');
+    expect(out).toContain('上下文：42% (420k/1M) · 输入 8k · 缓存 6k (75%) · 输出 512');
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(120);
     }

@@ -40,8 +40,8 @@ export const notices: Record<keyof typeof enDomain, string> = {
   'notices.plan.titleWithStatus': ' 计划{suffix} ',
 
   // ── thinking ──
-  'notices.thinking.live': '思考中...',
-  'notices.thinking.moreLines': '... （还有 {count} 行，ctrl+o 展开）',
+  'notices.thinking.live': '思考中…',
+  'notices.thinking.moreLines': '… （还有 {count} 行，ctrl+o 展开）',
 
   // ── 技能 / 插件命令卡片 ──
   'notices.skill.activated': '▶ 已激活技能：',

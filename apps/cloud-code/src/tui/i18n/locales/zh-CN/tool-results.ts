@@ -43,46 +43,46 @@ export const toolResults: Record<keyof typeof enDomain, string> = {
   'toolResult.team.teamNameRequired':
     '需要提供 team_name：显式传入团队名称，或在属于某个团队的 teammate 中调用。',
   'toolResult.team.teamNameInvalid':
-    '团队名称“{team}”无效：请使用字母、数字、短横线或下划线，并以字母或数字开头。',
+    '团队名称"{team}"无效：请使用字母、数字、短横线或下划线，并以字母或数字开头。',
 
   // ── TeamTask* ──
-  'toolResult.teamTask.created': '已在团队“{team}”中创建任务 #{id}：{subject}',
-  'toolResult.teamTask.updated': '已更新团队“{team}”中的任务 #{id}：{subject}',
+  'toolResult.teamTask.created': '已在团队"{team}"中创建任务 #{id}：{subject}',
+  'toolResult.teamTask.updated': '已更新团队"{team}"中的任务 #{id}：{subject}',
   'toolResult.teamTask.nothingToUpdate':
     '没有可更新的内容：请至少传入 status、owner、subject、description 之一。',
-  'toolResult.teamTask.notFound': '团队“{team}”中不存在任务 #{id}。',
+  'toolResult.teamTask.notFound': '团队"{team}"中不存在任务 #{id}。',
   'toolResult.teamTask.ownedByOther':
-    '任务 #{id} 属于“{owner}”，而不是你（“{caller}”）。teammate 只能更新自己的任务。',
+    '任务 #{id} 属于"{owner}"，而不是你（"{caller}"）。teammate 只能更新自己的任务。',
   'toolResult.teamTask.cannotReassign':
     'teammate 不能重新分配任务归属。请让 leader 重新分配。',
   'toolResult.teamTask.noTeam':
-    '团队“{team}”尚不存在。使用 TeamTaskCreate 创建任务即可建立共享任务列表。',
-  'toolResult.teamTask.listEmpty': '团队“{team}”没有任务。',
+    '团队"{team}"尚不存在。使用 TeamTaskCreate 创建任务即可建立共享任务列表。',
+  'toolResult.teamTask.listEmpty': '团队"{team}"没有任务。',
   'toolResult.teamTask.claimed':
-    '已认领团队“{team}”中的任务 #{id}（owner：{owner}，状态：in_progress）：{subject}。' +
+    '已认领团队"{team}"中的任务 #{id}（owner：{owner}，状态：in_progress）：{subject}。' +
     '请将其作为你的新目标；完成后用 TeamTaskUpdate 将任务标记为已完成。',
   'toolResult.teamTask.noneClaimable':
-    '团队“{team}”中没有可认领的任务——队列为空，或所有待处理任务都已有 owner。' +
+    '团队"{team}"中没有可认领的任务——队列为空，或所有待处理任务都已有 owner。' +
     '请向 leader 汇报，不要循环轮询。',
   'toolResult.teamTask.claimNotTeammate':
     '只有 teammate 才能认领任务——认领者身份来自 teammate 运行时上下文，而不是参数。' +
     'leader 应在创建时分配工作（TeamTaskCreate 的 owner）。',
   'toolResult.teamTask.claimNoTeam':
-    'teammate“{name}”不属于任何团队，因此无法认领任务。' +
+    'teammate"{name}"不属于任何团队，因此无法认领任务。' +
     '生成 teammate 时传入 team_name 即可让其访问共享任务列表。',
 
   // ── SendMessage ──
   'toolResult.sendMessage.sent':
-    '消息已发送给团队“{team}”中的“{to}”（id：{id}）。' +
+    '消息已发送给团队"{team}"中的"{to}"（id：{id}）。' +
     '正在运行的 teammate 会在运行途中收到；否则将在其下次恢复时送达。',
   'toolResult.sendMessage.sentLeader':
-    '消息已发送给团队“{team}”的 leader（id：{id}）。leader 会在稍后的回合收到通知。',
+    '消息已发送给团队"{team}"的 leader（id：{id}）。leader 会在稍后的回合收到通知。',
   'toolResult.sendMessage.permissionApprovalSent':
-    '已向团队“{team}”中的“{to}”发送权限批准（请求 {requestId}，id：{id}）。',
+    '已向团队"{team}"中的"{to}"发送权限批准（请求 {requestId}，id：{id}）。',
   'toolResult.sendMessage.permissionRejectionSent':
-    '已向团队“{team}”中的“{to}”发送权限拒绝（请求 {requestId}，id：{id}）。',
+    '已向团队"{team}"中的"{to}"发送权限拒绝（请求 {requestId}，id：{id}）。',
   'toolResult.sendMessage.shutdownSent':
-    '已向团队“{team}”中的“{to}”发送关闭请求（id：{id}）。' +
+    '已向团队"{team}"中的"{to}"发送关闭请求（id：{id}）。' +
     'teammate 在任务停止前有一段短暂的收尾时间；它确认后你会收到通知。',
   'toolResult.sendMessage.cannotSendToSelf': '不能给自己发送消息。',
   'toolResult.sendMessage.leaderOnly':

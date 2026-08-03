@@ -105,7 +105,7 @@ export const plugins: Record<keyof typeof enDomain, string> = {
   'plugins.command.loadFailed': '加载插件失败：{error}',
   'plugins.command.loadMcpFailed': '加载插件 MCP 服务器失败：{error}',
   'plugins.command.mcpFailed': '/plugins mcp 失败：{error}',
-  'plugins.command.installingOrUpdating': '正在从插件市场安装或更新 {label}...',
+  'plugins.command.installingOrUpdating': '正在从插件市场安装或更新 {label}…',
   'plugins.command.installFailed': '安装 {label} 失败：{error}',
   'plugins.command.mcpDisabledHint':
     ' 部分 MCP 服务器已禁用；用 /plugins mcp enable {id} <server> 重新启用。',

@@ -155,7 +155,7 @@ function formatGoalBadge(
     turns,
   });
   return (
-    chalk.hex(colors.textMuted)('[goal ') +
+    chalk.hex(colors.textMuted)('[' + t('footer.goal.badgePrefix') + ' ') +
     chalk.hex(dotColor)('●') +
     (shimmerFrame !== undefined
       ? shimmerText(` ${label}`, shimmerFrame) + chalk.hex(colors.textMuted)(']')

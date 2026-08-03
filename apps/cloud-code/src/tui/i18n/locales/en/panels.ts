@@ -253,6 +253,7 @@ export const panels = {
   'panels.btw.hintCloseScroll': 'Esc close · ↑↓ scroll ',
   'panels.btw.ready': 'Ready for a side question...',
   'panels.btw.waiting': 'Waiting for answer...',
+  'panels.btw.questionLine': 'Q: {prompt}',
 
   // ── TODO list panel ──
   'panels.todo.title': '  Todo',
