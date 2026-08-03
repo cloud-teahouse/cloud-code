@@ -135,16 +135,27 @@ describe('workspace local config', () => {
 
   it('expands a ~/ path to the home directory when appending', async () => {
     const root = await makeProject();
-    const homeDir = testKaos.gethome();
-    const homeProjectDir = await mkdtemp(join(homeDir, 'kimi-workspace-local-home-'));
-    tempDirs.push(homeProjectDir);
-    const sharedDir = join(homeProjectDir, 'shared');
-    await mkdir(sharedDir, { recursive: true });
-    const tildePath = `~/${sharedDir.slice(homeDir.length + 1)}`;
+    // ~ expansion goes through os.homedir(); point HOME at a scratch dir so
+    // the test does not depend on the real home being writable.
+    const previousHome = process.env['HOME'];
+    const fakeHome = await mkdtemp(join(tmpdir(), 'kimi-workspace-local-HOME-'));
+    tempDirs.push(fakeHome);
+    process.env['HOME'] = fakeHome;
+    try {
+      const homeDir = testKaos.gethome();
+      const homeProjectDir = await mkdtemp(join(homeDir, 'kimi-workspace-local-home-'));
+      tempDirs.push(homeProjectDir);
+      const sharedDir = join(homeProjectDir, 'shared');
+      await mkdir(sharedDir, { recursive: true });
+      const tildePath = `~/${sharedDir.slice(homeDir.length + 1)}`;
 
-    const result = await appendWorkspaceAdditionalDir(testKaos, root, tildePath, []);
+      const result = await appendWorkspaceAdditionalDir(testKaos, root, tildePath, []);
 
-    expect(result.additionalDirs).toEqual([sharedDir]);
+      expect(result.additionalDirs).toEqual([sharedDir]);
+    } finally {
+      if (previousHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = previousHome;
+    }
   });
 
   it('uses the actual local.toml state even when current dirs are empty', async () => {
