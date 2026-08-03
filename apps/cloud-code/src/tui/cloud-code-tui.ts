@@ -1053,7 +1053,7 @@ export class CloudCodeTUI {
     const { ui, rootContainer, slotContainer } = this.state;
     ui.clear();
     // The root holds exactly two regions: the scrollable transcript and the
-    // fixed bottom slot (notice/activity/todo/queue/btw/swarm/editor +
+    // fixed bottom slot (notice/activity/swarm/todo/queue/btw/editor +
     // footer). In fullscreen mode the TUI pins the slot and scrolls the
     // transcript viewport; in inline mode the sections stack in the same order.
     // Full-screen takeovers (tasks/workflows browsers, approval preview)
@@ -1063,15 +1063,16 @@ export class CloudCodeTUI {
     rootContainer.addChild(this.state.transcriptContainer);
     rootContainer.addChild(slotContainer);
     slotContainer.clear();
-    // Transient notices head the slot, right under the transcript viewport:
-    // pinned to the conversation instead of wedged between the todo/queue
-    // panels and the editor below.
+    // Transient status heads the slot, right under the transcript viewport:
+    // notices, the activity spinner and the swarm progress all read as part
+    // of the conversation flow — never wedged between the content panels
+    // (todo/queue/btw) and the editor below.
     slotContainer.addChild(this.state.noticeContainer);
     slotContainer.addChild(this.state.activityContainer);
+    slotContainer.addChild(this.state.swarmContainer);
     slotContainer.addChild(this.state.todoPanelContainer);
     slotContainer.addChild(this.state.queueContainer);
     slotContainer.addChild(this.state.btwPanelContainer);
-    slotContainer.addChild(this.state.swarmContainer);
     slotContainer.addChild(this.state.editorContainer);
     // Footer is mounted later (mountFooter), not here.
   }

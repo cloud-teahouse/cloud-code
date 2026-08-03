@@ -2855,15 +2855,14 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
     const rootChildren = driver.state.slotContainer.children;
-    // Transient notices head the slot, right under the transcript — above the
-    // /btw panel too, so they never wedge between the conversation and the
-    // panels or the input area. Below the panel only the (usually empty)
-    // swarm zone separates it from the editor.
+    // Transient status (notice, activity, swarm) heads the slot, right under
+    // the transcript — content panels (todo/queue/btw) sit below it, so a
+    // running swarm never wedges between the btw panel and the editor.
     expect(rootChildren.indexOf(driver.state.noticeContainer)).toBe(0);
-    expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
-      rootChildren.indexOf(driver.state.swarmContainer) - 1,
-    );
     expect(rootChildren.indexOf(driver.state.swarmContainer)).toBe(
+      rootChildren.indexOf(driver.state.todoPanelContainer) - 1,
+    );
+    expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
       rootChildren.indexOf(driver.state.editorContainer) - 1,
     );
     expect(transcript).toContain('main answer after btw');

@@ -42,7 +42,7 @@ export interface TUIState {
    *  directly; in inline mode this container's own render() inserts a filler
    *  gap after the transcript to bottom-anchor the slot. */
   rootContainer: BottomAnchorContainer;
-  /** Fixed bottom slot: notice/activity/todo/queue/btw/swarm/editor/footer, in order. */
+  /** Fixed bottom slot: notice/activity/swarm/todo/queue/btw/editor/footer, in order. */
   slotContainer: Container;
   transcriptContainer: Container;
   activityContainer: Container;

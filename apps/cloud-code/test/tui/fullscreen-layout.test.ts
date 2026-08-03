@@ -104,10 +104,10 @@ describe('fullscreen layout wiring', () => {
     expect(state.slotContainer.children).toEqual([
       state.noticeContainer,
       state.activityContainer,
+      state.swarmContainer,
       state.todoPanelContainer,
       state.queueContainer,
       state.btwPanelContainer,
-      state.swarmContainer,
       state.editorContainer,
     ]);
   });
