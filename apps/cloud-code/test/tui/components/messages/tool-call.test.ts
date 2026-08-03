@@ -3036,6 +3036,26 @@ describe('ToolCallComponent', () => {
       );
     }
 
+    function makeSingleChangeEditCard(): ToolCallComponent {
+      return new ToolCallComponent(
+        {
+          id: 'call_edit_single_change',
+          name: 'Edit',
+          args: {
+            file_path: 'README.md',
+            old_string: '**门禁**：旧',
+            new_string: '**门禁**：新',
+          },
+        },
+        {
+          tool_call_id: 'call_edit_single_change',
+          output: 'Replaced 1 occurrence in README.md',
+          is_error: false,
+        },
+        stubTui(30),
+      );
+    }
+
     function makeReadCard(): ToolCallComponent {
       return new ToolCallComponent(
         { id: 'call_read_inter', name: 'Read', args: { file_path: 'foo.ts' } },
@@ -3162,6 +3182,33 @@ describe('ToolCallComponent', () => {
       // Only the textDim-toned meta footer whitens.
       expect(body).not.toContain(DIM_OPEN);
       expect(body).toContain(TEXT_OPEN);
+      expect(hovered.join('\n')).not.toContain(BG_OPEN);
+
+      component.setHoveredZone(null);
+      expect(component.render(100)).toEqual(base);
+      component.dispose();
+    });
+
+    it('shows an expand hint when a single-change Edit card hides result details', () => {
+      const component = makeSingleChangeEditCard();
+      const base = component.render(100);
+      const text = strip(base.join('\n'));
+
+      expect(text).toContain('+1 -1 README.md');
+      expect(text).toMatch(/\d+ more lines?[, ]+.*ctrl\+o to expand/);
+      expect([...component.hitZones()]).toHaveLength(1);
+      component.dispose();
+    });
+
+    it('whitens a single-change Edit diff while its card is hovered', () => {
+      const component = makeSingleChangeEditCard();
+      const base = component.render(100);
+      component.setHoveredZone('card');
+
+      const hovered = component.render(100);
+      expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
+      expect(hovered.join('\n')).not.toBe(base.join('\n'));
+      expect(hovered.slice(2).join('\n')).toContain(TEXT_OPEN);
       expect(hovered.join('\n')).not.toContain(BG_OPEN);
 
       component.setHoveredZone(null);

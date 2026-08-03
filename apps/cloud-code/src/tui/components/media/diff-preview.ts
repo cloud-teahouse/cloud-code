@@ -227,9 +227,20 @@ function formatDiffRow(line: DiffLine, s: DiffStyles): string {
   return gutter + '  ' + line.code;
 }
 
+function clusteredBodyRowCount(clusters: Cluster[]): number {
+  let rows = 0;
+  let prevEnd = -1;
+  for (const cluster of clusters) {
+    if (prevEnd >= 0 && cluster.start - prevEnd - 1 > 0) rows++;
+    rows += cluster.end - cluster.start + 1;
+    prevEnd = cluster.end;
+  }
+  return rows;
+}
+
 export interface ClusteredDiffResult {
   readonly lines: string[];
-  /** True when the `maxLines` cap elided changed rows an expansion reveals. */
+  /** True when the `maxLines` cap elided body rows an expansion reveals. */
   readonly truncated: boolean;
 }
 
@@ -251,7 +262,7 @@ export function renderDiffLinesClustered(
   return renderDiffLinesClusteredWithMeta(oldText, newText, path, opts).lines;
 }
 
-/** {@link renderDiffLinesClustered} plus whether the cap hid changed rows. */
+/** {@link renderDiffLinesClustered} plus whether the cap hid body rows. */
 export function renderDiffLinesClusteredWithMeta(
   oldText: string,
   newText: string,
@@ -282,6 +293,7 @@ export function renderDiffLinesClusteredWithMeta(
 
   if (clusters.length === 0) return { lines: output, truncated: false };
 
+  const fullBodyRows = clusteredBodyRowCount(clusters);
   const cap = maxLines !== undefined && maxLines >= 0 ? maxLines : Number.POSITIVE_INFINITY;
   let body = 0;
   let prevEnd = -1;
@@ -329,13 +341,20 @@ export function renderDiffLinesClusteredWithMeta(
     }
   }
 
-  if (truncated) {
-    const hidden = changedCount - shownChanges;
-    if (hidden > 0) {
-      const hint = opts.expandKeyHint ?? 'ctrl+o';
-      output.push(s.meta(`     … ${moreChangesHiddenText(hidden, hint)}`));
-    }
+  const hiddenChanges = changedCount - shownChanges;
+  const hiddenRows = Math.max(0, fullBodyRows - body);
+  if (truncated && hiddenRows > 0) {
+    const hint = opts.expandKeyHint ?? 'ctrl+o';
+    output.push(
+      s.meta(
+        `     … ${
+          hiddenChanges > 0
+            ? moreChangesHiddenText(hiddenChanges, hint)
+            : t('messages.truncated.moreLinesExpand', { count: hiddenRows })
+        }`,
+      ),
+    );
   }
 
-  return { lines: output, truncated: truncated && changedCount > shownChanges };
+  return { lines: output, truncated: truncated && hiddenRows > 0 };
 }

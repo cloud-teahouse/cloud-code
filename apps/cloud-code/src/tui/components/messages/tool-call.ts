@@ -2587,6 +2587,25 @@ export class ToolCallComponent extends Container {
       for (const line of lines) {
         this.addChild(new Text(line, 2, 0));
       }
+      if (
+        shouldCap &&
+        !truncated &&
+        lines.length > 1 &&
+        this.result !== undefined &&
+        !this.result.is_error &&
+        this.result.output.length > 0
+      ) {
+        const hiddenLines = countNonEmptyLines(this.result.output);
+        if (hiddenLines > 0) {
+          this.addChild(
+            new Text(
+              currentTheme.dim(t('messages.truncated.moreLinesExpand', { count: hiddenLines })),
+              2,
+              0,
+            ),
+          );
+        }
+      }
     } else if (isCommandCardToolName(name)) {
       // Surface the command in the body across the whole lifecycle — while
       // streaming, running, and after the result lands. Keeping the collapsed

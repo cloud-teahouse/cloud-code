@@ -228,4 +228,16 @@ describe('renderDiffLinesClustered', () => {
     expect(text).toContain('ctrl+o to expand');
     expect(text).not.toContain('L41X');
   });
+
+  it('shows a line-count footer when the cap hides context after all changes', () => {
+    const text = stripAnsi(
+      renderDiffLinesClustered('old\nA\nB\nC\nD', 'new\nA\nB\nC\nD', 'f.ts', {
+        contextLines: 3,
+        maxLines: 2,
+      }).join('\n'),
+    );
+    expect(text).toContain('old');
+    expect(text).toContain('new');
+    expect(text).toMatch(/\d+ more lines?[, ]+.*ctrl\+o to expand/);
+  });
 });
