@@ -515,6 +515,9 @@ max_context_size = 100000
     const extraDir = join(workDir, 'extra');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(extraDir, { recursive: true });
     await mkdir(join(workDir, '.cloud-code'), { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
@@ -554,6 +557,9 @@ max_context_size = 100000
     const extraDir = join(workDir, 'extra');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(extraDir, { recursive: true });
     await mkdir(join(workDir, '.cloud-code'), { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
@@ -589,6 +595,9 @@ max_context_size = 100000
     const extraDir = join(workDir, 'extra');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(extraDir, { recursive: true });
     await mkdir(join(workDir, '.cloud-code'), { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
@@ -630,6 +639,9 @@ max_context_size = 100000
     const callerDir = join(workDir, 'caller');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(localDir, { recursive: true });
     await mkdir(callerDir, { recursive: true });
     await mkdir(join(workDir, '.cloud-code'), { recursive: true });
@@ -674,6 +686,9 @@ max_context_size = 100000
     const sharedDir = join(workDir, 'shared');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(sharedDir, { recursive: true });
     await mkdir(join(workDir, '.cloud-code'), { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
@@ -710,6 +725,9 @@ max_context_size = 100000
     const callerDir = join(workDir, 'other');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(localDir, { recursive: true });
     await mkdir(callerDir, { recursive: true });
     await mkdir(join(workDir, '.cloud-code'), { recursive: true });
@@ -777,6 +795,9 @@ max_context_size = 100000
     const extraDir = join(workDir, 'extra');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(extraDir, { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
 
@@ -830,6 +851,9 @@ max_context_size = 100000
     const extraDir = join(workDir, 'extra');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(extraDir, { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
 
@@ -875,6 +899,9 @@ max_context_size = 100000
     const extraDir = join(workDir, 'extra');
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
+    // Self-root the tmp workspace: without a marker, findProjectRoot climbs
+    // to the real repo when TMPDIR sits inside it and pollutes its local.toml.
+    await mkdir(join(workDir, '.git'), { recursive: true });
     await mkdir(extraDir, { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
 
