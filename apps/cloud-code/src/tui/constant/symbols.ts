@@ -6,15 +6,24 @@ export const STATUS_BULLET = '● ';
 export const USER_MESSAGE_BULLET = '✨ ';
 export const SUCCESS_MARK = '✓ ';
 export const FAILURE_MARK = '✗ ';
-// Tree gutter on tool-detail body rows: `├─` on middle rows, `└─` on the last
-// row of the card's last detail block, with the body text aligned after the
-// gutter. The gutter renders in the `textDim` tone. This is the convention
-// for dim detail bodies under a tool header — the same shape read-group/
-// agent-group rows already used. Two exceptions: command cards use the
-// `$`/`⎿` shape below instead of the tree gutter, and raw structured
+// Tree gutter on tool-detail body rows: each logical entry (one line of tool
+// output, one glance row, …) opens with `├─` — or `└─` when it is the last
+// entry of the card's last detail block — and the entry's wrap continuations
+// align under the entry text on the continuation gutters below instead of
+// opening new branches. The gutter renders in the `textDim` tone. This is the
+// convention for dim detail bodies under a tool header — the same shape
+// read-group/agent-group rows already used. Two exceptions: command cards
+// use the `$`/`⎿` shape below instead of the tree gutter, and raw structured
 // payloads use the single-bar gutter further below.
 export const DETAIL_TREE_MIDDLE = '  ├─ ';
 export const DETAIL_TREE_LAST = '  └─ ';
+// Continuation gutters for the wrap continuations of a multi-row tree entry.
+// Both match the branch gutter's cell width so continuation rows stay aligned
+// with the entry text: the `│` bar keeps the entry visually connected to the
+// next sibling's branch, while blank space follows the closing `└─` (the
+// tree has ended there).
+export const DETAIL_TREE_CONTINUATION = '  │  ';
+export const DETAIL_TREE_CONTINUATION_LAST = '     ';
 
 // Raw structured payload gutter (e.g. an MCP tool result that is one JSON
 // document): the tree gutter reads as noise against JSON/code, so those

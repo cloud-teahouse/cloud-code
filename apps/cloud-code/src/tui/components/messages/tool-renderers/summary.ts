@@ -28,7 +28,10 @@ type GlanceFn = (
 
 // Detail body rows render flush left in the shared `textDim` tone; the tree
 // gutter wrapper in tool-call.ts owns indentation.
-function withGlance(glance: GlanceFn | null): ResultRenderer {
+function withGlance(
+  glance: GlanceFn | null,
+  options?: { perLineOutput?: boolean },
+): ResultRenderer {
   const renderer: ResultRenderer = (toolCall, result, ctx) => {
     if (result.is_error) return renderTruncated(toolCall, result, ctx);
 
@@ -40,7 +43,16 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
       }
     }
     if (ctx.expanded && result.output.length > 0) {
-      out.push(new Text(currentTheme.fg('textDim', result.output), 0, 0));
+      if (options?.perLineOutput === true) {
+        // One component per output line: each line is a discrete entry in the
+        // detail tree, so a long match wraps as a continuation of its own
+        // branch instead of opening sibling branches (see DetailTreeComponent).
+        for (const outputLine of result.output.split('\n')) {
+          out.push(new Text(currentTheme.fg('textDim', outputLine), 0, 0));
+        }
+      } else {
+        out.push(new Text(currentTheme.fg('textDim', result.output), 0, 0));
+      }
     }
     return out;
   };
@@ -95,6 +107,8 @@ export const thinkSummary: ResultRenderer = withGlance(null);
 export const editSummary: ResultRenderer = withGlance(null);
 export const writeSummary: ResultRenderer = withGlance(null);
 
-// Tools that benefit from inline path samples below the chip.
-export const grepSummary: ResultRenderer = withGlance(grepGlance);
-export const globSummary: ResultRenderer = withGlance(globGlance);
+// Tools that benefit from inline path samples below the chip. Their expanded
+// output is a list of discrete per-line entries (matches, file paths), so
+// each line gets its own tree branch.
+export const grepSummary: ResultRenderer = withGlance(grepGlance, { perLineOutput: true });
+export const globSummary: ResultRenderer = withGlance(globGlance, { perLineOutput: true });

@@ -413,11 +413,16 @@ describe('ToolCallComponent', () => {
       const beta = lines.find((l) => l.includes('beta'));
       expect(alpha).toBeDefined();
       expect(beta).toBeDefined();
-      expect(strip(alpha!)).toMatch(/^ {2}├─ /u);
-      expect(strip(beta!)).toMatch(/^ {2}└─ /u);
+      // The generic result body is one logical entry: its first row opens
+      // the (here closing) branch, and the second output line aligns under
+      // the entry text as a blank continuation — not a new branch.
+      expect(strip(alpha!)).toMatch(/^ {2}└─ /u);
+      expect(strip(beta!)).toMatch(/^ {5}beta/u);
+      expect(strip(beta!)).not.toContain('├─');
+      expect(strip(beta!)).not.toContain('└─');
       // The gutter itself renders in the shared textDim detail tone.
-      expect(alpha!).toContain(currentTheme.fg('textDim', '  ├─ '));
-      expect(beta!).toContain(currentTheme.fg('textDim', '  └─ '));
+      expect(alpha!).toContain(currentTheme.fg('textDim', '  └─ '));
+      expect(beta!).toContain(currentTheme.fg('textDim', '     '));
       // Body rows use the shared textDim detail tone.
       expect(alpha!).toContain(currentTheme.fg('textDim', 'alpha'));
       // The call line keeps the status bullet — the gutter is result-only.
@@ -492,10 +497,100 @@ describe('ToolCallComponent', () => {
     );
 
     const lines = component.render(100);
-    const row = lines.find((l) => l.includes('repo-a'));
-    expect(row).toBeDefined();
-    expect(strip(row!)).toMatch(/^ {2}├─ /u);
-    expect(lines.every((l) => !l.includes('  │ '))).toBe(true);
+    const rowA = lines.find((l) => l.includes('repo-a'));
+    const rowB = lines.find((l) => l.includes('repo-b'));
+    expect(rowA).toBeDefined();
+    expect(rowB).toBeDefined();
+    // Tree shape: the body opens with a branch and continues aligned —
+    // the raw-payload single bar would prefix every row with `  │ ` instead.
+    expect(strip(rowA!)).toMatch(/^ {2}└─ /u);
+    expect(strip(rowB!)).toMatch(/^ {5}repo-b/u);
+  });
+
+  describe('detail tree wrap continuations', () => {
+    const GREP_OUTPUT = [
+      "src/tui/foo.ts:133:        expect(text).toContain('dev 版本，可能不稳定');",
+      'src/tui/bar.ts:45: const alpha = someFairlyLongFunctionCall(argumentOne, argumentTwo);',
+      'src/tui/baz.ts:67: short();',
+      'src/tui/qux.ts:89: medium.length.call.here();',
+      'src/tui/quux.ts:101: another();',
+    ].join('\n');
+
+    function grepBodyLines(id: string, width: number, expanded: boolean): string[] {
+      const component = new ToolCallComponent(
+        { id, name: 'Grep', args: { pattern: 'dev' } },
+        { tool_call_id: id, output: GREP_OUTPUT, is_error: false },
+      );
+      if (expanded) component.setExpanded(true);
+      const all = component.render(width).map(strip);
+      return all.slice(all.findIndex((l) => l.includes('Grep')) + 1);
+    }
+
+    it('keeps a wrapped grep match inside one tree node', () => {
+      // Inner width is 35, so the long matches wrap onto continuation rows.
+      const body = grepBodyLines('call_grep_wrap', 40, true);
+
+      // Each match opens exactly one branch; its wrapped content continues on
+      // the lighter `│` gutter aligned under the entry text — the content is
+      // never hung on a sibling `├─` of its own.
+      const fooBranch = body.findIndex((l) => l.startsWith('  ├─ src/tui/foo.ts:133:'));
+      expect(fooBranch).toBeGreaterThanOrEqual(0);
+      expect(body[fooBranch + 1]).toMatch(/^ {2}│ {2}expect\(text\)/u);
+      expect(body[fooBranch + 2]).toMatch(/^ {2}│ {2}/u);
+
+      // The closing entry carries `└─` on its first row.
+      expect(body.at(-1)!).toMatch(/^ {2}└─ src\/tui\/quux\.ts:101: another\(\);/u);
+
+      // No continuation row re-opens a branch.
+      const continuations = body.filter((l) => l.startsWith('  │  ') || l.startsWith('     '));
+      expect(continuations.length).toBeGreaterThan(0);
+      for (const row of continuations) {
+        expect(row).not.toContain('├─');
+        expect(row).not.toContain('└─');
+      }
+    });
+
+    it('wraps the collapsed glance inside one tree node, +N more tail included', () => {
+      const body = grepBodyLines('call_grep_glance_wrap', 30, false);
+
+      // The comma-joined glance is one logical entry: exactly one branch row
+      // (the closing `└─`), and every wrapped fragment — including the split
+      // `+2 more` tail — continues on blank space instead of a new node.
+      expect(body.length).toBeGreaterThan(1);
+      expect(body[0]).toMatch(/^ {2}└─ /u);
+      for (const row of body.slice(1)) {
+        expect(row).toMatch(/^ {5}\S/u);
+      }
+    });
+
+    it('keeps the +N 更多 tail inside the glance node when CJK text wraps (zh-CN)', () => {
+      setLocalePreference('zh-CN');
+      try {
+        const body = grepBodyLines('call_grep_glance_wrap_zh', 30, false);
+        // The CJK tail may split mid-word (`更`/`多`), but the fragment stays
+        // a blank continuation of the single glance node.
+        expect(body.length).toBeGreaterThan(1);
+        expect(body[0]).toMatch(/^ {2}└─ /u);
+        for (const row of body.slice(1)) {
+          expect(row).toMatch(/^ {5}\S/u);
+        }
+      } finally {
+        setLocalePreference('en');
+      }
+    });
+
+    it('keeps every rendered row within the render width (ANSI-aware wrap)', () => {
+      for (const width of [30, 40, 55]) {
+        const component = new ToolCallComponent(
+          { id: `call_grep_w${width}`, name: 'Grep', args: { pattern: 'dev' } },
+          { tool_call_id: `call_grep_w${width}`, output: GREP_OUTPUT, is_error: false },
+        );
+        component.setExpanded(true);
+        for (const row of component.render(width)) {
+          expect(visibleWidth(strip(row))).toBeLessThanOrEqual(width);
+        }
+      }
+    });
   });
 
   it('keeps the tree gutter for a non-MCP tool even when the output parses as JSON', () => {

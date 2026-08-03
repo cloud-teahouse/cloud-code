@@ -21,7 +21,14 @@ import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
 } from '#/tui/constant/streaming';
-import { DETAIL_TREE_LAST, DETAIL_TREE_MIDDLE, RAW_PAYLOAD_GUTTER, STATUS_BULLET } from '#/tui/constant/symbols';
+import {
+  DETAIL_TREE_CONTINUATION,
+  DETAIL_TREE_CONTINUATION_LAST,
+  DETAIL_TREE_LAST,
+  DETAIL_TREE_MIDDLE,
+  RAW_PAYLOAD_GUTTER,
+  STATUS_BULLET,
+} from '#/tui/constant/symbols';
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
@@ -609,12 +616,15 @@ class PrefixedWrappedLine implements Component {
 }
 
 /**
- * Tree-gutter detail hierarchy: every row of a tool detail body is prefixed
- * with the shared tree gutter in the `textDim` tone — `├─` on middle rows,
- * `└─` on the final row when this is the card's last detail block — so all
- * dim detail bodies read as one aligned level under the tool header.
- * Render-only wrapper around the components produced by a ResultRenderer:
- * the inner components lay out at `width - gutterWidth`. Command cards
+ * Tree-gutter detail hierarchy: each inner component is one logical entry of
+ * the tool detail body. An entry's first visual row carries the shared tree
+ * branch in the `textDim` tone — `├─` for middle entries, `└─` for the last
+ * entry when this is the card's last detail block — and the entry's wrap
+ * continuations align under the entry text on the lighter continuation
+ * gutter (`│`, or blank space once the closing `└─` has ended the tree), so
+ * a long line that wraps never reads as sibling branches. Render-only
+ * wrapper around the components produced by a ResultRenderer: the inner
+ * components lay out at `width - gutterWidth`. Command cards
  * (Bash/ExecSession) use CommandBodyComponent instead.
  */
 class DetailTreeComponent implements Component, CollapsedRowProbe {
@@ -644,14 +654,35 @@ class DetailTreeComponent implements Component, CollapsedRowProbe {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
     const gutterWidth = visibleWidth(DETAIL_TREE_MIDDLE);
-    const lines = this.inners.flatMap((inner) =>
+    const groups = this.inners.map((inner) =>
       inner.render(Math.max(1, safeWidth - gutterWidth)),
     );
-    return lines.map((line, index) => {
-      const gutter =
-        this.tail && index === lines.length - 1 ? DETAIL_TREE_LAST : DETAIL_TREE_MIDDLE;
-      return truncateToWidth(`${currentTheme.fg('textDim', gutter)}${line}`, safeWidth, '…');
-    });
+    // The closing `└─` belongs to the last entry that produced rows.
+    let lastGroup = -1;
+    if (this.tail) {
+      for (let index = groups.length - 1; index >= 0; index--) {
+        if (groups[index]!.length > 0) {
+          lastGroup = index;
+          break;
+        }
+      }
+    }
+    const out: string[] = [];
+    for (const [groupIndex, lines] of groups.entries()) {
+      const isLast = groupIndex === lastGroup;
+      for (const [rowIndex, line] of lines.entries()) {
+        const gutter =
+          rowIndex === 0
+            ? isLast
+              ? DETAIL_TREE_LAST
+              : DETAIL_TREE_MIDDLE
+            : isLast
+              ? DETAIL_TREE_CONTINUATION_LAST
+              : DETAIL_TREE_CONTINUATION;
+        out.push(truncateToWidth(`${currentTheme.fg('textDim', gutter)}${line}`, safeWidth, '…'));
+      }
+    }
+    return out;
   }
 }
 

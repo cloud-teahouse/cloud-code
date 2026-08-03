@@ -1,12 +1,15 @@
 /**
  * Convention guard for tool detail bodies: every dim detail body under a tool
- * header renders through the shared tree gutter (`├─` middle rows, `└─` last
- * row — see DETAIL_TREE_MIDDLE/DETAIL_TREE_LAST in tui/constant/symbols) in
- * the `textDim` tone, with text aligned after the gutter. Command cards
- * (Bash/ExecSession tool cards and the `!` shell-run card) are the one
- * exception: they render the `$ command` / `⎿ output` shape owned by
- * shell-execution.ts, so the `⎿` mark must stay confined to the command-card
- * modules and per-renderer ad-hoc indentation must not come back.
+ * header renders through the shared tree gutter in the `textDim` tone — each
+ * logical entry opens with `├─` (or `└─` for the last entry of the card's
+ * last detail block) and its wrap continuations align on the lighter
+ * continuation gutter instead of opening new branches (see
+ * DETAIL_TREE_MIDDLE/DETAIL_TREE_LAST/DETAIL_TREE_CONTINUATION* in
+ * tui/constant/symbols). Command cards (Bash/ExecSession tool cards and the
+ * `!` shell-run card) are the one exception: they render the `$ command` /
+ * `⎿ output` shape owned by shell-execution.ts, so the `⎿` mark must stay
+ * confined to the command-card modules and per-renderer ad-hoc indentation
+ * must not come back.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
