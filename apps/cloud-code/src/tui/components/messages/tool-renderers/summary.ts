@@ -29,7 +29,7 @@ type GlanceFn = (
 // Detail body rows render flush left in the shared `textDim` tone; the tree
 // gutter wrapper in tool-call.ts owns indentation.
 function withGlance(glance: GlanceFn | null): ResultRenderer {
-  return (toolCall, result, ctx) => {
+  const renderer: ResultRenderer = (toolCall, result, ctx) => {
     if (result.is_error) return renderTruncated(toolCall, result, ctx);
 
     const out: Component[] = [];
@@ -44,6 +44,11 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
     }
     return out;
   };
+  // The collapsed body omits the raw output (at most a glance line shows), so
+  // any non-error result with output has something for a click to expand into.
+  renderer.hidesContentWhenCollapsed = (result) =>
+    result.is_error !== true && result.output.length > 0;
+  return renderer;
 }
 
 function nonEmptyLines(text: string): string[] {

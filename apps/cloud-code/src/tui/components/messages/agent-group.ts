@@ -24,7 +24,7 @@ import { currentTheme } from '#/tui/theme';
 import { shimmerText } from '#/tui/utils/shimmer';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
-import { RUNNING_ANIMATION_INTERVAL_MS } from './tool-call';
+import { BLINK_HALF_PERIOD_TICKS, RUNNING_ANIMATION_INTERVAL_MS } from './tool-call';
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
 
 const THROTTLE_MS = 200;
@@ -54,10 +54,10 @@ export class AgentGroupComponent extends Container {
   private lastFlushPhases = new Map<string, ToolCallSubagentSnapshot['phase']>();
   private _invalidating = false;
   /**
-   * Header animation while any member is still in flight: the group title
-   * carries the shimmer wave on the same cadence a standalone running card
-   * uses (the ● bullet stays as-is). The timer exists only while a snapshot
-   * reads non-terminal, so a finished group costs nothing.
+   * Header animation while any member is still in flight: the ● bullet
+   * blinks and the group title carries the shimmer wave, both on the same
+   * cadence a standalone running card uses. The timer exists only while a
+   * snapshot reads non-terminal, so a finished group costs nothing.
    */
   private animationTimer: ReturnType<typeof setInterval> | undefined;
   private animationFrame = 0;
@@ -167,12 +167,10 @@ export class AgentGroupComponent extends Container {
     const total = snapshots.length;
     const counts = countPhases(snapshots);
     const allDone = counts.terminal === total;
-    const bullet = allDone
-      ? currentTheme.fg('success', STATUS_BULLET)
-      : currentTheme.fg('text', STATUS_BULLET);
     const elapsedSeconds = maxElapsedSeconds(snapshots);
 
     if (allDone) {
+      const bullet = currentTheme.fg('success', STATUS_BULLET);
       const types = new Set(snapshots.map((s) => s.agentName).filter((n) => n !== undefined));
       const headerLabel =
         types.size === 1
@@ -184,13 +182,18 @@ export class AgentGroupComponent extends Container {
       return `${bullet}${currentTheme.boldFg('primary', headerLabel)}${tail}`;
     }
 
+    // In-flight: the ● bullet blinks on the same RUNNING_ANIMATION cadence
+    // that drives the shimmer (matching the plain ToolGroup), the title
+    // carries the shimmer wave, and the elapsed tail stays dim chrome.
+    const bullet =
+      Math.floor(this.animationFrame / BLINK_HALF_PERIOD_TICKS) % 2 === 0
+        ? currentTheme.fg('text', STATUS_BULLET)
+        : currentTheme.dimFg('textDim', STATUS_BULLET);
     const parts = formatBreakdownParts(counts);
     const headerText = parts.length > 0
       ? t('swarm.group.running.breakdown', { count: total, parts: parts.join(', ') })
       : t('swarm.group.running', { count: total });
     const tail = formatHeaderTail({ toolCount: 0, tokens: 0, elapsedSeconds });
-    // In-flight: the title carries the shimmer wave; the ● bullet keeps its
-    // static tone and the elapsed tail stays dim chrome.
     return `${bullet}${shimmerText(headerText, this.animationFrame)}${tail}`;
   }
 

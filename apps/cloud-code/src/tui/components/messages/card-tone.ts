@@ -4,7 +4,9 @@
  *
  *   normal: keyboard-only flow; renders byte-identical to the base lines.
  *   hover:  gray detail text turns white (the detail body; the header row
- *           sits below `toneFrom` and keeps its colors).
+ *           sits below `toneFrom` and keeps its colors — unless the card is
+ *           header-only, in which case the header's own gray runs whiten so
+ *           the expandable affordance stays visible).
  *   click:  additionally the card region sits on a gray background block
  *           (from `bgFrom` down, so the leading spacer stays unpainted and
  *           the block reads as separated from surrounding content).
@@ -50,10 +52,14 @@ export function applyCardTone(lines: string[], options: CardToneOptions): string
   const whiten = textFgOpen.length > 0;
   const paint = tone === 'click' && chalk.level > 0;
   if (!whiten && !paint) return lines;
+  // A hover over a header-only card has no body rows to whiten; lift the
+  // boundary to the header row so its gray argument/chip runs still signal
+  // the expandable affordance (colored parts keep their tones).
+  const whitenFrom = tone === 'hover' && toneFrom >= lines.length ? bgFrom : toneFrom;
   const out = lines.slice();
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i]!;
-    if (whiten && i >= toneFrom) {
+    if (whiten && i >= whitenFrom) {
       line = brightenDetailLine(line, dimFgOpen, textFgOpen);
     }
     // Padding and background escapes would corrupt an inline image's escape

@@ -2235,7 +2235,7 @@ export class CloudCodeTUI {
         return component;
       }
       case 'thinking': {
-        const thinking = new ThinkingComponent(entry.content, true);
+        const thinking = new ThinkingComponent(entry.content, true, 'finalized', this.state.ui);
         if (this.state.toolOutputExpanded) thinking.setExpanded(true);
         return thinking;
       }

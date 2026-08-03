@@ -139,13 +139,26 @@ describe('ShellRunComponent hardening', () => {
 
   it('tracks hover state through setHoveredZone', () => {
     const c = create();
-    c.finish('done', '', false);
+    // A capped finished view so the card has folded rows to expand into —
+    // short outputs declare no zone at all.
+    const stdout = Array.from({ length: 10 }, (_, i) => `line${String(i + 1)}`).join('\n');
+    c.finish(stdout, '', false);
     c.render(100);
     const zone = [...c.hitZones()][0]!;
     expect(c.setHoveredZone(zone.id)).not.toBe(false);
     expect(c.setHoveredZone(zone.id)).toBe(false);
     expect(c.setHoveredZone(null)).not.toBe(false);
     expect(c.setHoveredZone(null)).toBe(false);
+  });
+
+  it('declares no hit zone while running or when the finished output fits', () => {
+    const c = create();
+    c.append('out1\nout2\n');
+    c.render(100);
+    expect([...c.hitZones()]).toEqual([]);
+    c.finish('done', '', false);
+    c.render(100);
+    expect([...c.hitZones()]).toEqual([]);
   });
 
   it('keeps a keyboard expansion requested while running for the finished view', () => {

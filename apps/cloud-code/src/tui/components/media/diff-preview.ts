@@ -227,6 +227,12 @@ function formatDiffRow(line: DiffLine, s: DiffStyles): string {
   return gutter + '  ' + line.code;
 }
 
+export interface ClusteredDiffResult {
+  readonly lines: string[];
+  /** True when the `maxLines` cap elided changed rows an expansion reveals. */
+  readonly truncated: boolean;
+}
+
 /**
  * Render a diff with surrounding context, eliding unchanged middle
  * regions between change clusters with a `… N unchanged lines …`
@@ -242,6 +248,16 @@ export function renderDiffLinesClustered(
   path: string,
   opts: ClusteredDiffOptions = {},
 ): string[] {
+  return renderDiffLinesClusteredWithMeta(oldText, newText, path, opts).lines;
+}
+
+/** {@link renderDiffLinesClustered} plus whether the cap hid changed rows. */
+export function renderDiffLinesClusteredWithMeta(
+  oldText: string,
+  newText: string,
+  path: string,
+  opts: ClusteredDiffOptions = {},
+): ClusteredDiffResult {
   const s = makeDiffStyles();
   const contextLines = opts.contextLines ?? 3;
   const maxLines = opts.maxLines;
@@ -264,7 +280,7 @@ export function renderDiffLinesClustered(
   header += path;
   output.push(header);
 
-  if (clusters.length === 0) return output;
+  if (clusters.length === 0) return { lines: output, truncated: false };
 
   const cap = maxLines !== undefined && maxLines >= 0 ? maxLines : Number.POSITIVE_INFINITY;
   let body = 0;
@@ -321,5 +337,5 @@ export function renderDiffLinesClustered(
     }
   }
 
-  return output;
+  return { lines: output, truncated: truncated && changedCount > shownChanges };
 }

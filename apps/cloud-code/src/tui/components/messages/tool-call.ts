@@ -9,7 +9,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import { Container, Spacer, Text, truncateToWidth, visibleWidth } from '@cloud-code/pi-tui';
 import type { Component, HitZone, HitZoneId, MouseEvent, TUI } from '@cloud-code/pi-tui';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
-import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
+import { renderDiffLinesClusteredWithMeta } from '#/tui/components/media/diff-preview';
 import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
@@ -47,6 +47,7 @@ import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { TruncatedOutputComponent, toolResultDisplayText } from './tool-renderers/truncated';
+import { collapsedHiddenRows, type CollapsedRowProbe } from './tool-renderers/types';
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
@@ -616,7 +617,7 @@ class PrefixedWrappedLine implements Component {
  * the inner components lay out at `width - gutterWidth`. Command cards
  * (Bash/ExecSession) use CommandBodyComponent instead.
  */
-class DetailTreeComponent implements Component {
+class DetailTreeComponent implements Component, CollapsedRowProbe {
   constructor(
     private readonly inners: readonly Component[],
     private tail = true,
@@ -628,6 +629,15 @@ class DetailTreeComponent implements Component {
 
   invalidate(): void {
     for (const inner of this.inners) inner.invalidate?.();
+  }
+
+  collapsedHiddenRows(width: number): number {
+    const gutterWidth = visibleWidth(DETAIL_TREE_MIDDLE);
+    let hidden = 0;
+    for (const inner of this.inners) {
+      hidden += collapsedHiddenRows(inner, Math.max(1, width - gutterWidth));
+    }
+    return hidden;
   }
 
   render(width: number): string[] {
@@ -652,11 +662,20 @@ class DetailTreeComponent implements Component {
  * branches on every row are noise against JSON. Only the generic renderer's
  * output is ever wrapped this way; lists of discrete items keep the tree.
  */
-class RawPayloadComponent implements Component {
+class RawPayloadComponent implements Component, CollapsedRowProbe {
   constructor(private readonly inners: readonly Component[]) { }
 
   invalidate(): void {
     for (const inner of this.inners) inner.invalidate?.();
+  }
+
+  collapsedHiddenRows(width: number): number {
+    const gutterWidth = visibleWidth(RAW_PAYLOAD_GUTTER);
+    let hidden = 0;
+    for (const inner of this.inners) {
+      hidden += collapsedHiddenRows(inner, Math.max(1, width - gutterWidth));
+    }
+    return hidden;
   }
 
   render(width: number): string[] {
@@ -692,8 +711,18 @@ export class ToolCallComponent extends Container {
    * dispatches input.
    */
   private zoneMeta:
-    | { width: number; lines: number; spacerRows: number; headerRows: number }
+    | { width: number; lines: number; spacerRows: number; headerRows: number; expandable: boolean }
     | undefined;
+  /**
+   * Width-independent "collapsed hides content" signals, recomputed by the
+   * body builders: the call preview (Write content / Edit diff / multi-line
+   * command) and the summary-style result renderers know at build time when
+   * their collapsed form elides rows. Width-dependent caps (wrapped output
+   * previews) are probed at render time via {@link CollapsedRowProbe}
+   * instead. A card with nothing hidden declares no click/hover zone.
+   */
+  private callPreviewHides = false;
+  private contentHides = false;
   /**
    * Tone post-process cache keyed on the base lines' identity, so a hovered
    * or click-expanded card returns a referentially stable line array across
@@ -922,7 +951,20 @@ export class ToolCallComponent extends Container {
     // child 0 is the leading spacer, child 1 the header row(s).
     const spacerRows = childLines[0]?.length ?? 0;
     const headerRows = childLines[1]?.length ?? 0;
-    this.zoneMeta = { width, lines: base.length, spacerRows, headerRows };
+    // The card is interactive only while there is something to expand into
+    // (or it is already expanded, so a click can collapse it back). A card
+    // whose collapsed render already shows everything declares no zone —
+    // clicking it would only repaint the region without revealing content.
+    let expandable = this.expansion !== 'collapsed' || this.callPreviewHides || this.contentHides;
+    if (!expandable) {
+      for (let i = 0; i < this.children.length; i++) {
+        if (collapsedHiddenRows(this.children[i]!, width) > 0) {
+          expandable = true;
+          break;
+        }
+      }
+    }
+    this.zoneMeta = { width, lines: base.length, spacerRows, headerRows, expandable };
     return this.applyTone(base, width);
   }
 
@@ -1005,11 +1047,13 @@ export class ToolCallComponent extends Container {
 
   /**
    * The card's single hit zone: its whole rendered region below the leading
-   * spacer row, so the spacer gap between cards stays inert.
+   * spacer row, so the spacer gap between cards stays inert. Registered only
+   * while the card has collapsed content to expand into (or is expanded and
+   * can collapse back) — a fully-visible card stays click/hover inert.
    */
   hitZones(): Iterable<HitZone> {
     const meta = this.zoneMeta;
-    if (meta === undefined || meta.lines <= meta.spacerRows) return [];
+    if (meta === undefined || meta.lines <= meta.spacerRows || !meta.expandable) return [];
     return [
       {
         id: CARD_HIT_ZONE,
@@ -2443,6 +2487,7 @@ export class ToolCallComponent extends Container {
   }
 
   private buildCallPreview(): void {
+    this.callPreviewHides = false;
     const name = this.toolCall.name;
     if (name === 'ExitPlanMode') {
       this.buildPlanPreview();
@@ -2479,6 +2524,7 @@ export class ToolCallComponent extends Container {
       const writeShouldCap = this.expansion === 'collapsed';
       const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
+      if (writeShouldCap && remaining > 0) this.callPreviewHides = true;
       for (const [i, line] of shown.entries()) {
         const lineNum = currentTheme.dim(String(i + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
@@ -2502,10 +2548,11 @@ export class ToolCallComponent extends Container {
       const newStr = str(this.toolCall.args['new_string']);
       if (oldStr.length === 0 && newStr.length === 0) return;
       const filePath = str(this.toolCall.args['file_path'] ?? this.toolCall.args['path']);
-      const lines = renderDiffLinesClustered(oldStr, newStr, filePath, {
+      const { lines, truncated } = renderDiffLinesClusteredWithMeta(oldStr, newStr, filePath, {
         contextLines: 3,
         ...(shouldCap ? { maxLines: COMMAND_PREVIEW_LINES } : {}),
       });
+      if (shouldCap && truncated) this.callPreviewHides = true;
       for (const line of lines) {
         this.addChild(new Text(line, 2, 0));
       }
@@ -2520,12 +2567,16 @@ export class ToolCallComponent extends Container {
       // renders the result only.
       const command = str(this.toolCall.args['command']);
       if (command.length === 0) return;
+      const capped = this.expansion === 'collapsed';
+      if (capped && command.split('\n').length > COMMAND_PREVIEW_LINES) {
+        this.callPreviewHides = true;
+      }
       this.addChild(
         new CommandBodyComponent([
           new ShellExecutionComponent({
             command,
             showCommand: true,
-            commandPreviewLines: this.expansion !== 'collapsed' ? undefined : COMMAND_PREVIEW_LINES,
+            commandPreviewLines: capped ? COMMAND_PREVIEW_LINES : undefined,
           }),
         ]),
       );
@@ -2589,12 +2640,16 @@ export class ToolCallComponent extends Container {
     if (isCommandCardToolName(name)) {
       const cmd = extractPartialStringField(previewText, 'command');
       if (cmd === undefined || cmd.length === 0) return;
+      const capped = this.expansion === 'collapsed';
+      if (capped && cmd.split('\n').length > COMMAND_PREVIEW_LINES) {
+        this.callPreviewHides = true;
+      }
       this.addChild(
         new CommandBodyComponent([
           new ShellExecutionComponent({
             command: cmd,
             showCommand: true,
-            commandPreviewLines: this.expansion !== 'collapsed' ? undefined : COMMAND_PREVIEW_LINES,
+            commandPreviewLines: capped ? COMMAND_PREVIEW_LINES : undefined,
           }),
         ]),
       );
@@ -2647,6 +2702,7 @@ export class ToolCallComponent extends Container {
   }
 
   private buildContent(): void {
+    this.contentHides = false;
     const { result } = this;
     if (result === undefined) return;
 
@@ -2721,9 +2777,11 @@ export class ToolCallComponent extends Container {
     }
 
     const renderer = pickResultRenderer(this.toolCall.name);
-    const components = renderer(this.toolCall, result, {
-      expanded: this.expansion !== 'collapsed',
-    });
+    const expanded = this.expansion !== 'collapsed';
+    if (!expanded && renderer.hidesContentWhenCollapsed?.(result) === true) {
+      this.contentHides = true;
+    }
+    const components = renderer(this.toolCall, result, { expanded });
     if (components.length > 0) {
       this.addChild(this.wrapResultBody(result, components));
     }

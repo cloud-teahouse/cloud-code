@@ -10,8 +10,8 @@ import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
-import type { ResultRenderer } from './tool-renderers/types';
-import { PREVIEW_LINES } from './tool-renderers/types';
+import type { CollapsedRowProbe, ResultRenderer } from './tool-renderers/types';
+import { collapsedHiddenRows, PREVIEW_LINES } from './tool-renderers/types';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
 /**
@@ -45,11 +45,20 @@ export function commandCardNoOutputRow(): string {
  * wrap-then-prefix mechanics, but with a plain indent instead of the tree
  * gutter so the `$`/`⎿` markers own the row shape.
  */
-export class CommandBodyComponent implements Component {
+export class CommandBodyComponent implements Component, CollapsedRowProbe {
   constructor(private readonly inners: readonly Component[]) { }
 
   invalidate(): void {
     for (const inner of this.inners) inner.invalidate?.();
+  }
+
+  collapsedHiddenRows(width: number): number {
+    const indentWidth = visibleWidth(COMMAND_BODY_INDENT);
+    let hidden = 0;
+    for (const inner of this.inners) {
+      hidden += collapsedHiddenRows(inner, Math.max(1, width - indentWidth));
+    }
+    return hidden;
   }
 
   render(width: number): string[] {
@@ -67,11 +76,20 @@ export class CommandBodyComponent implements Component {
  * Output half of the command-card shape: renders the inner output components
  * at the body width and prefixes the rows via `prefixCommandOutputRows`.
  */
-class CommandOutputComponent implements Component {
+class CommandOutputComponent implements Component, CollapsedRowProbe {
   constructor(private readonly inners: readonly Component[]) { }
 
   invalidate(): void {
     for (const inner of this.inners) inner.invalidate?.();
+  }
+
+  collapsedHiddenRows(width: number): number {
+    const prefixWidth = visibleWidth(COMMAND_OUTPUT_MARK);
+    let hidden = 0;
+    for (const inner of this.inners) {
+      hidden += collapsedHiddenRows(inner, Math.max(1, width - prefixWidth));
+    }
+    return hidden;
   }
 
   render(width: number): string[] {
@@ -101,7 +119,7 @@ export interface ShellExecutionOptions {
   readonly expandHint?: boolean;
 }
 
-export class ShellExecutionComponent extends Container {
+export class ShellExecutionComponent extends Container implements CollapsedRowProbe {
   constructor(options: ShellExecutionOptions) {
     super();
 
@@ -118,6 +136,14 @@ export class ShellExecutionComponent extends Container {
         options.expandHint ?? true,
       );
     }
+  }
+
+  collapsedHiddenRows(width: number): number {
+    let hidden = 0;
+    for (const child of this.children) {
+      hidden += collapsedHiddenRows(child, Math.max(1, width));
+    }
+    return hidden;
   }
 
   private addCommandPreview(command: string, previewLines: number | undefined): void {

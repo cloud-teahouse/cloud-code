@@ -3130,4 +3130,140 @@ describe('ToolCallComponent', () => {
       component.dispose();
     });
   });
+
+  describe('hit zone registration gating (expandable content only)', () => {
+    function zoneCount(component: ToolCallComponent, width = 100): number {
+      component.render(width);
+      return [...component.hitZones()].length;
+    }
+
+    it('declares no zone for an in-flight header-only card', () => {
+      const component = new ToolCallComponent(
+        { id: 'hz_inflight', name: 'Grep', args: { pattern: 'foo' } },
+        undefined,
+        stubTui(30),
+      );
+      expect(zoneCount(component)).toBe(0);
+      component.dispose();
+    });
+
+    it('declares no zone when a finished command card fits the preview caps', () => {
+      const component = new ToolCallComponent(
+        { id: 'hz_short_bash', name: 'Bash', args: { command: 'echo hi' } },
+        { tool_call_id: 'hz_short_bash', output: 'hi', is_error: false },
+        stubTui(30),
+      );
+      expect(zoneCount(component)).toBe(0);
+      component.dispose();
+    });
+
+    it('declares no zone for a running single-subagent Agent card (fixed-height body)', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'hz_agent', name: 'Agent', args: { description: 'x' } },
+        undefined,
+        stubTui(30),
+      );
+      component.onSubagentSpawned({
+        agentId: 'sub_hz_agent',
+        agentName: 'explore',
+        runInBackground: false,
+      });
+      expect(zoneCount(component)).toBe(0);
+      component.dispose();
+    });
+
+    it('declares a zone only at widths where wrapped output exceeds the cap', () => {
+      const longOutput = `{"data":"${'x'.repeat(200)}","ok":true}`;
+      const component = new ToolCallComponent(
+        { id: 'hz_mcp', name: 'mcp__srv__tool', args: {} },
+        { tool_call_id: 'hz_mcp', output: longOutput, is_error: false },
+        stubTui(30),
+      );
+      expect(zoneCount(component, 40)).toBe(1);
+      expect(zoneCount(component, 400)).toBe(0);
+      component.dispose();
+    });
+
+    it('declares a zone when the call preview hides rows (command lines, Write content, Edit diff)', () => {
+      const command = Array.from({ length: 15 }, (_, i) => `echo ${i}`).join('\n');
+      const bash = new ToolCallComponent(
+        { id: 'hz_multiline', name: 'Bash', args: { command } },
+        undefined,
+        stubTui(30),
+      );
+      expect(zoneCount(bash)).toBe(1);
+      bash.dispose();
+
+      const content = Array.from({ length: 20 }, (_, i) => `const v${i} = ${i};`).join('\n');
+      const write = new ToolCallComponent(
+        { id: 'hz_write', name: 'Write', args: { file_path: 'f.ts', content } },
+        { tool_call_id: 'hz_write', output: '', is_error: false },
+        stubTui(30),
+      );
+      expect(zoneCount(write)).toBe(1);
+      write.dispose();
+
+      const edit = new ToolCallComponent(
+        {
+          id: 'hz_edit',
+          name: 'Edit',
+          args: {
+            file_path: 'f.ts',
+            old_string: Array.from({ length: 30 }, (_, i) => `old${i}`).join('\n'),
+            new_string: Array.from({ length: 30 }, (_, i) => `new${i}`).join('\n'),
+          },
+        },
+        { tool_call_id: 'hz_edit', output: '', is_error: false },
+        stubTui(30),
+      );
+      expect(zoneCount(edit)).toBe(1);
+      edit.dispose();
+    });
+
+    it('declares no zone for a Write card whose preview and result both fit', () => {
+      const component = new ToolCallComponent(
+        { id: 'hz_write_short', name: 'Write', args: { file_path: 'f.ts', content: 'a\nb\nc\n' } },
+        { tool_call_id: 'hz_write_short', output: '', is_error: false },
+        stubTui(30),
+      );
+      expect(zoneCount(component)).toBe(0);
+      component.dispose();
+    });
+  });
+
+  describe('hover whitening on a header-only expandable card', () => {
+    it('whitens the collapsed Read header dim runs while colored parts keep tones', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        currentTheme.setPalette(darkColors);
+        const SENTINEL = '';
+        const fgOpen = (token: 'text' | 'textDim' | 'success'): string => {
+          const sampled = currentTheme.fg(token, SENTINEL);
+          return sampled.slice(0, sampled.indexOf(SENTINEL));
+        };
+        const component = new ToolCallComponent(
+          { id: 'hv_read', name: 'Read', args: { path: 'src/foo.ts' } },
+          { tool_call_id: 'hv_read', output: 'line one\nline two', is_error: false },
+          stubTui(30),
+        );
+        const normal = component.render(100);
+        const zone = [...component.hitZones()][0];
+        expect(zone).toBeDefined();
+        expect(component.setHoveredZone(zone!.id)).not.toBe(false);
+        const hovered = component.render(100);
+        expect(hovered[1]).not.toBe(normal[1]);
+        // The dim argument run turns white…
+        expect(hovered[1]).toContain(`${fgOpen('text')} (src/foo.ts)`);
+        // …while the success ● and the bold tool name keep their tones.
+        expect(hovered[1]).toContain(`${fgOpen('success')}${STATUS_BULLET}`);
+        expect(component.setHoveredZone(null)).not.toBe(false);
+        expect(component.render(100)[1]).toBe(normal[1]);
+        component.dispose();
+      } finally {
+        chalk.level = previousLevel;
+      }
+    });
+  });
 });

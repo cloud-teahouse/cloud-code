@@ -4,7 +4,7 @@ import { t, tIfKnown } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ToolResultBlockData } from '#/tui/types';
 
-import type { ResultRenderer } from './types';
+import type { CollapsedRowProbe, ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
 
 /**
@@ -42,7 +42,7 @@ export function trimTrailingEmptyLines(lines: string[]): string[] {
  * the tree gutter that indents and connects the body lives in tool-call.ts's
  * DetailTreeComponent wrapper, not here.
  */
-export class TruncatedOutputComponent implements Component {
+export class TruncatedOutputComponent implements Component, CollapsedRowProbe {
   private textComponent: Text;
   private readonly expanded: boolean;
   private readonly maxLines: number;
@@ -80,6 +80,12 @@ export class TruncatedOutputComponent implements Component {
   invalidate(): void {
     // Text component caches wrapped lines; invalidate on terminal resize.
     this.textComponent.invalidate();
+  }
+
+  /** Rows the collapsed cap hides at `width`; 0 when expanded or all fits. */
+  collapsedHiddenRows(width: number): number {
+    if (this.expanded) return 0;
+    return Math.max(0, this.textComponent.render(Math.max(1, width)).length - this.maxLines);
   }
 
   private renderHint(width: number, hint: string): string {

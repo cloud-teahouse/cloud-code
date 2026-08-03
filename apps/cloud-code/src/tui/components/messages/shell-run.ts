@@ -47,6 +47,14 @@ class FinishedShellRunBody implements Component {
     this.textComponent.invalidate();
   }
 
+  /** Rows the collapsed fold hides at `width`; 0 when expanded or all fits. */
+  collapsedHiddenRows(width: number): number {
+    if (this.expanded) return 0;
+    const prefixWidth = visibleWidth(COMMAND_OUTPUT_MARK);
+    const contentWidth = Math.max(1, width - prefixWidth);
+    return Math.max(0, this.textComponent.render(contentWidth).length - RESULT_PREVIEW_LINES);
+  }
+
   render(width: number): string[] {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
@@ -108,7 +116,7 @@ export class ShellRunComponent extends Container {
   /** Pointer hover over the card's zone: the dim body renders white. */
   private hovered = false;
   /** Geometry of the last render, captured for `hitZones()`. */
-  private zoneMeta: { width: number; lines: number } | undefined;
+  private zoneMeta: { width: number; lines: number; expandable: boolean } | undefined;
   private renderCache: { width: number; lines: string[] } | undefined;
   private toneCache:
     | { base: string[]; width: number; tone: CardTone; out: string[] }
@@ -192,10 +200,14 @@ export class ShellRunComponent extends Container {
     this.flush();
   }
 
-  /** The card's single hit zone: its whole rendered region. */
+  /**
+   * The card's single hit zone: its whole rendered region. Registered only
+   * once the finished view has folded rows to expand into (or is expanded
+   * and can collapse back) — the running tail and short outputs stay inert.
+   */
   hitZones(): Iterable<HitZone> {
     const meta = this.zoneMeta;
-    if (meta === undefined || meta.lines <= 0) return [];
+    if (meta === undefined || meta.lines <= 0 || !meta.expandable) return [];
     return [{ id: CARD_HIT_ZONE, row: 0, col: 1, width: meta.width, height: meta.lines }];
   }
 
@@ -251,7 +263,13 @@ export class ShellRunComponent extends Container {
         this.renderCache = { width: safeWidth, lines: base };
       }
     }
-    this.zoneMeta = { width: safeWidth, lines: base.length };
+    // The card is interactive only once the finished view has folded rows a
+    // click/ctrl+o can reveal (or while expanded, so a click collapses back).
+    const expandable =
+      !this.running &&
+      (this.expansion !== 'collapsed' ||
+        (this.finishedBody?.collapsedHiddenRows(safeWidth) ?? 0) > 0);
+    this.zoneMeta = { width: safeWidth, lines: base.length, expandable };
     return this.applyTone(base, safeWidth);
   }
 

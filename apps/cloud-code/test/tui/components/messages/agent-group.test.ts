@@ -278,8 +278,18 @@ describe('AgentGroupComponent', () => {
       expect(strip(waved)).toContain('Running 2 agents (2 running)');
       const codes = new Set(waved.match(/\u001B\[38;2;\d+;\d+;\d+m/g) ?? []);
       expect(codes.size).toBeGreaterThan(1);
-      // The ● bullet keeps its static text tone — only the title shimmers.
-      expect(waved).toContain(chalk.hex(darkColors.text)(STATUS_BULLET));
+
+      // The ● bullet blinks on the animation cadence (bright ↔ dim).
+      const bulletTones = new Set<string>();
+      const bright = chalk.hex(darkColors.text)(STATUS_BULLET);
+      const dim = chalk.hex(darkColors.textDim).dim(STATUS_BULLET);
+      for (let i = 0; i < 12; i++) {
+        vi.advanceTimersByTime(100);
+        const h = header();
+        if (h.includes(bright)) bulletTones.add('bright');
+        else if (h.includes(dim)) bulletTones.add('dim');
+      }
+      expect(bulletTones).toEqual(new Set(['bright', 'dim']));
 
       // The wave travels on the group's own animation tick.
       vi.advanceTimersByTime(100);
