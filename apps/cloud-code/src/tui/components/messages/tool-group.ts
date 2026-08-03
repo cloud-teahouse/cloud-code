@@ -43,12 +43,11 @@ import {
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
-import { shimmerText } from '#/tui/utils/shimmer';
+import { blinkPhaseOn, shimmerText } from '#/tui/utils/shimmer';
 
 import { applyCardTone, type CardTone } from './card-tone';
 import { isCommandCardToolName } from './shell-execution';
 import {
-  BLINK_HALF_PERIOD_TICKS,
   RUNNING_ANIMATION_INTERVAL_MS,
   type ToolCallComponent,
   type ToolCallGroupSnapshot,
@@ -105,7 +104,6 @@ export class ToolGroupComponent extends Container {
    * reads pending, so a finished group costs nothing.
    */
   private animationTimer: ReturnType<typeof setInterval> | undefined;
-  private animationFrame = 0;
   private lastFlushPhases = new Map<string, ToolCallGroupSnapshot['phase']>();
   private _invalidating = false;
 
@@ -207,12 +205,11 @@ export class ToolGroupComponent extends Container {
     const title = t('notices.toolGroup.title', { tool: this.toolName, count: total });
 
     if (pending > 0) {
-      const bullet =
-        Math.floor(this.animationFrame / BLINK_HALF_PERIOD_TICKS) % 2 === 0
-          ? currentTheme.fg('text', STATUS_BULLET)
-          : currentTheme.dimFg('textDim', STATUS_BULLET);
+      const bullet = blinkPhaseOn()
+        ? currentTheme.fg('text', STATUS_BULLET)
+        : currentTheme.dimFg('textDim', STATUS_BULLET);
       const running = currentTheme.dim(t('notices.toolGroup.runningSuffix', { count: pending }));
-      return `${bullet}${shimmerText(title, this.animationFrame)}${running}`;
+      return `${bullet}${shimmerText(title)}${running}`;
     }
 
     // All calls have finished, either successfully or with failures.
@@ -232,28 +229,38 @@ export class ToolGroupComponent extends Container {
   }
 
   private buildBodyLine(snap: ToolCallGroupSnapshot, isLast: boolean): string {
-    const label =
-      snap.keyArg !== undefined && snap.keyArg.length > 0
-        ? currentTheme.fg('text', snap.keyArg)
-        : currentTheme.dim(this.toolName);
-
-    let tail: string;
-    if (snap.phase === 'pending') {
-      tail = currentTheme.dim(t('notices.toolGroup.runningTail'));
-    } else if (snap.phase === 'failed') {
-      tail = currentTheme.fg('error', t('notices.toolGroup.failedSuffix'));
-    } else {
-      tail = snap.chip !== undefined ? currentTheme.dim(` · ${snap.chip}`) : '';
-    }
+    const hasKeyArg = snap.keyArg !== undefined && snap.keyArg.length > 0;
+    const label = hasKeyArg ? snap.keyArg! : this.toolName;
 
     // Command rows keep the `$` prompt shape of a standalone command card;
     // other tools render the shared tree gutter (dim) like any detail body.
     if (isCommandCardToolName(this.toolName)) {
+      const styledLabel = hasKeyArg ? currentTheme.fg('text', label) : currentTheme.dim(label);
+      let tail: string;
+      if (snap.phase === 'pending') {
+        tail = currentTheme.dim(t('notices.toolGroup.runningTail'));
+      } else if (snap.phase === 'failed') {
+        tail = currentTheme.fg('error', t('notices.toolGroup.failedSuffix'));
+      } else {
+        tail = snap.chip !== undefined ? currentTheme.dim(` · ${snap.chip}`) : '';
+      }
       const prompt = currentTheme.fg('shellMode', COMMAND_PROMPT);
-      return `${COMMAND_BODY_INDENT}${prompt}${label}${tail}`;
+      return `${COMMAND_BODY_INDENT}${prompt}${styledLabel}${tail}`;
     }
-    const branch = currentTheme.fg('textDim', isLast ? DETAIL_TREE_LAST : DETAIL_TREE_MIDDLE);
-    return `${branch}${label}${tail}`;
+
+    const branch = isLast ? DETAIL_TREE_LAST : DETAIL_TREE_MIDDLE;
+    if (snap.phase === 'failed') {
+      return (
+        currentTheme.fg('textDim', `${branch}${label}`) +
+        currentTheme.fg('error', t('notices.toolGroup.failedSuffix'))
+      );
+    }
+    const tail = snap.phase === 'pending'
+      ? t('notices.toolGroup.runningTail')
+      : snap.chip !== undefined
+        ? ` · ${snap.chip}`
+        : '';
+    return currentTheme.fg('textDim', `${branch}${label}${tail}`);
   }
 
   private syncAnimationTimer(needed: boolean): void {
@@ -263,7 +270,6 @@ export class ToolGroupComponent extends Container {
     }
     if (this.animationTimer !== undefined) return;
     this.animationTimer = setInterval(() => {
-      this.animationFrame += 1;
       const snapshots = this.entries.map((e) => e.tc.getGroupSnapshot());
       const { pending, failed } = countPhases(snapshots);
       if (pending === 0) {

@@ -51,8 +51,10 @@ describe('tool detail tree convention', () => {
   it('the tree gutter renders in the textDim tone', () => {
     const expectations: Record<string, RegExp> = {
       'tool-call.ts': /fg\('textDim', gutter\)/,
-      'tool-group.ts': /fg\('textDim', isLast \? DETAIL_TREE_LAST : DETAIL_TREE_MIDDLE\)/,
-      'read-group.ts': /fg\('textDim', isLast \? '└─' : '├─'\)/u,
+      // Group/read rows are whole-row textDim (gutter, path and tail share
+      // one wrap), so the gutter can never drift to a different tone.
+      'tool-group.ts': /fg\('textDim', `\$\{branch\}\$\{label\}/,
+      'read-group.ts': /fg\('textDim', ` {2}\$\{branch\} \$\{path\}/,
     };
     for (const [name, pattern] of Object.entries(expectations)) {
       const content = readFileSync(join(MESSAGES_DIR, name), 'utf8');

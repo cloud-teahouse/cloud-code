@@ -71,8 +71,10 @@ describe('ReadGroupComponent hover and click interaction', () => {
     const lastBranch = rows.find((l) => l.includes('src/b.ts'));
     expect(firstBranch).toBeDefined();
     expect(lastBranch).toBeDefined();
-    expect(firstBranch!).toContain(currentTheme.fg('textDim', '├─'));
-    expect(lastBranch!).toContain(currentTheme.fg('textDim', '└─'));
+    expect(firstBranch!).toContain(currentTheme.fg('textDim', '  ├─ src/a.ts · 1 line'));
+    expect(lastBranch!).toContain(currentTheme.fg('textDim', '  └─ src/b.ts · 1 line'));
+    expect(firstBranch!).not.toContain(currentTheme.fg('text', 'src/a.ts'));
+    expect(lastBranch!).not.toContain(currentTheme.fg('text', 'src/b.ts'));
     group.dispose();
     a.dispose();
     b.dispose();
@@ -124,8 +126,21 @@ describe('ReadGroupComponent hover and click interaction', () => {
     group.setHoveredZone('card');
     const hovered = group.render(120);
     expect(hovered[0]).toBe(base[0]);
-    expect(hovered[1]).toBe(base[1]);
-    expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
+    // The header row is painted by the hover background but keeps its text
+    // and foreground colors.
+    expect(hovered[1]).not.toBe(base[1]);
+    expect(strip(hovered[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
+    expect(
+      hovered
+        .slice(1)
+        .map((line) => strip(line).trimEnd())
+        .join('\n'),
+    ).toBe(
+      base
+        .slice(1)
+        .map((line) => strip(line).trimEnd())
+        .join('\n'),
+    );
     const body = hovered.slice(2).join('\n');
     expect(body).toContain(TEXT_OPEN);
     expect(body).not.toContain('\x1b[2m');

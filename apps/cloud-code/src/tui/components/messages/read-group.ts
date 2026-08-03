@@ -197,24 +197,21 @@ export class ReadGroupComponent extends Container {
   }
 
   private buildBodyLine(snap: ToolCallReadSnapshot, isLast: boolean): string {
-    const dim = (text: string): string => currentTheme.dim(text);
-    const branch = currentTheme.fg('textDim', isLast ? '└─' : '├─');
+    const branch = isLast ? '└─' : '├─';
     const path = snap.filePath ?? '';
-    const pathPart = currentTheme.fg('text', path);
-
-    let tail: string;
-    if (snap.phase === 'pending') {
-      tail = dim(t('notices.readGroup.readingTail'));
-    } else if (snap.phase === 'failed') {
-      tail = currentTheme.fg('error', t('notices.readGroup.failedSuffix'));
-    } else {
-      tail = dim(
-        t(snap.lines === 1 ? 'notices.readGroup.lines.one' : 'notices.readGroup.lines.other', {
-          count: snap.lines,
-        }),
+    if (snap.phase === 'failed') {
+      return (
+        currentTheme.fg('textDim', `  ${branch} ${path}`) +
+        currentTheme.fg('error', t('notices.readGroup.failedSuffix'))
       );
     }
-    return `  ${branch} ${pathPart}${tail}`;
+    const tail =
+      snap.phase === 'pending'
+        ? t('notices.readGroup.readingTail')
+        : t(snap.lines === 1 ? 'notices.readGroup.lines.one' : 'notices.readGroup.lines.other', {
+            count: snap.lines,
+          });
+    return currentTheme.fg('textDim', `  ${branch} ${path}${tail}`);
   }
 
   override invalidate(): void {
