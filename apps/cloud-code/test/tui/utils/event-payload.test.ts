@@ -17,6 +17,11 @@ describe('streaming tool argument payload helpers', () => {
     });
   });
 
+  it('returns early before scanning deltas without a JSON object prefix', () => {
+    expect(parseStreamingArgs('plain tool output with no object')).toEqual({});
+    expect(parseStreamingArgs(' \n\t')).toEqual({});
+  });
+
   it('caps accumulated streaming preview text', () => {
     const current = 'a'.repeat(STREAMING_ARGS_PREVIEW_MAX_CHARS - 2);
 

@@ -42,9 +42,17 @@ function unescapeJsonString(s: string): string {
   });
 }
 
+export function hasStreamingArgsObjectPrefix(argumentsText: string): boolean {
+  const firstNonWhitespace = argumentsText.search(/\S/);
+  return firstNonWhitespace >= 0 && argumentsText[firstNonWhitespace] === '{';
+}
+
 export function parseStreamingArgs(argumentsText: string): Record<string, unknown> {
-  const previewText = argumentsText.slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
-  if (previewText.trim().length === 0) return {};
+  const previewText =
+    argumentsText.length <= STREAMING_ARGS_PREVIEW_MAX_CHARS
+      ? argumentsText
+      : argumentsText.slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
+  if (!hasStreamingArgsObjectPrefix(previewText)) return {};
   if (
     argumentsText.length <= STREAMING_ARGS_PREVIEW_MAX_CHARS &&
     previewText.trimEnd().endsWith('}')

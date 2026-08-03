@@ -354,6 +354,22 @@ export class FooterComponent implements Component {
    */
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
+  private statusLineSignatureCache:
+    | {
+        input: AppState['statusLine'];
+        items: readonly string[] | null | undefined;
+        itemsLength: number;
+        command: string | null | undefined;
+        value: string;
+      }
+    | undefined;
+  /**
+   * Render signature parts are compared before joining, so unchanged footer
+   * inputs avoid rebuilding the signature string on every frame.
+   */
+  private renderSignaturePartsCache:
+    | { parts: readonly (string | number)[]; value: string }
+    | undefined;
   /**
    * Render output cache keyed by a signature of every input the two footer
    * lines depend on (state fields, git snapshot, tip rotation index, goal
@@ -789,7 +805,7 @@ export class FooterComponent implements Component {
       // Hover repaints only the underline of one segment; it must still bust
       // the cache or the affordance never appears.
       this.hover.index ?? '',
-      JSON.stringify(state.statusLine ?? null),
+      this.statusLineSignature(),
       this.statusLineRunner?.current() ?? '',
       currentTipIndex(),
       goalSnapshotKey(goal) ?? '',
@@ -804,20 +820,62 @@ export class FooterComponent implements Component {
         ? ''
         : `${String(turnUsage.inputOther)},${String(turnUsage.inputCacheRead)},${String(turnUsage.inputCacheCreation)},${String(turnUsage.output)}`,
     );
-    parts.push(
-      git === null
-        ? ''
-        : [
-            git.branch,
-            git.dirty ? 1 : 0,
-            git.ahead,
-            git.behind,
-            git.diffAdded,
-            git.diffDeleted,
-            git.pullRequest?.number ?? '',
-          ].join(','),
-    );
-    return parts.join('');
+    if (git === null) {
+      parts.push('');
+    } else {
+      parts.push(
+        git.branch,
+        git.dirty ? 1 : 0,
+        git.ahead,
+        git.behind,
+        git.diffAdded,
+        git.diffDeleted,
+        git.pullRequest?.number ?? '',
+      );
+    }
+
+    const cached = this.renderSignaturePartsCache;
+    if (cached !== undefined && cached.parts.length === parts.length) {
+      let unchanged = true;
+      for (let index = 0; index < parts.length; index += 1) {
+        if (parts[index] !== cached.parts[index]) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) return cached.value;
+    }
+
+    const value = parts.join('');
+    this.renderSignaturePartsCache = { parts, value };
+    return value;
+  }
+
+  private statusLineSignature(): string {
+    const statusLine = this.state.statusLine;
+    const items = statusLine?.items;
+    const itemsLength = items?.length ?? -1;
+    const command = statusLine?.command;
+    const cached = this.statusLineSignatureCache;
+    if (
+      cached !== undefined &&
+      cached.input === statusLine &&
+      cached.items === items &&
+      cached.itemsLength === itemsLength &&
+      cached.command === command
+    ) {
+      return cached.value;
+    }
+
+    const value = JSON.stringify(statusLine ?? null) ?? 'null';
+    this.statusLineSignatureCache = {
+      input: statusLine,
+      items,
+      itemsLength,
+      command,
+      value,
+    };
+    return value;
   }
 
   private syncGoalClock(goal: AppState['goal']): void {

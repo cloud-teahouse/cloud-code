@@ -858,11 +858,12 @@ export class SessionEventHandler {
     streamingUI.noteTokenActivity();
     // Only AgentSwarm routing needs the parsed args; resolving the name
     // first keeps every other tool's per-delta path free of the (up to
-    // 64KB) streaming-args preview parse.
-    if (
+    // 64KB) streaming-args preview parse. Non-JSON deltas stay on the
+    // allocation-free path until an object prefix is present.
+    const isAgentSwarm =
       streamingUI.getStreamingToolCallName(event.toolCallId) === 'AgentSwarm' ||
-      this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId)
-    ) {
+      this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId);
+    if (isAgentSwarm && streamingUI.hasStreamingToolCallPreview(event.toolCallId)) {
       const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
       if (preview !== undefined) {
         this.subAgentEventHandler.handleAgentSwarmToolCallDelta(event.toolCallId, preview.args, {

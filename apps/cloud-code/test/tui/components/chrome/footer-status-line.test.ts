@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import chalk from 'chalk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import {
@@ -133,6 +133,28 @@ describe('FooterComponent status_line items', () => {
     const footer = new FooterComponent(state);
 
     expect(plain(footer.render(120)[0]!).trim()).toBe('');
+  });
+
+  it('caches status-line serialization and signature joins until inputs change', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['cwd', 'model'], command: null },
+    };
+    const footer = new FooterComponent(state);
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    try {
+      const first = footer.render(120);
+      expect(footer.render(120)).toBe(first);
+      expect(stringify).toHaveBeenCalledTimes(1);
+
+      state.statusLine = { items: ['cwd'], command: null };
+      footer.setState(state);
+      footer.render(120);
+      expect(stringify).toHaveBeenCalledTimes(2);
+    } finally {
+      stringify.mockRestore();
+    }
   });
 });
 

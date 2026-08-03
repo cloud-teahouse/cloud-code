@@ -12,7 +12,11 @@ import { TurnCompletionComponent } from '../components/messages/turn-completion'
 import { STREAMING_UI_FLUSH_MS, STREAM_STALL_CHECK_INTERVAL_MS, STREAM_STALL_THRESHOLD_MS } from '../constant/streaming';
 import { resolveDescription, t } from '../i18n';
 import { hasDispose } from '../utils/component-capabilities';
-import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
+import {
+  appendStreamingArgsPreview,
+  hasStreamingArgsObjectPrefix,
+  parseStreamingArgs,
+} from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
 import { nextTranscriptId } from '../utils/transcript-id';
 import { formatTurnCompletionLine } from '../utils/turn-completion';
@@ -66,8 +70,8 @@ export class StreamingUIController {
 
   private _currentTurnId: string | undefined = undefined;
   private _currentStep = 0;
-  private _assistantDraft = '';
-  private _thinkingDraft = '';
+  private _assistantDraftChunks: string[] = [];
+  private _thinkingDraftChunks: string[] = [];
   private _streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null = null;
   private _activeThinkingComponent: ThinkingComponent | undefined = undefined;
   private _activeCompactionBlock: CompactionComponent | undefined = undefined;
@@ -135,7 +139,7 @@ export class StreamingUIController {
   // ---------------------------------------------------------------------------
 
   appendThinkingDelta(delta: string): void {
-    this._thinkingDraft += delta;
+    if (delta.length > 0) this._thinkingDraftChunks.push(delta);
     this.pendingThinkingFlush = true;
   }
 
@@ -143,12 +147,12 @@ export class StreamingUIController {
     if (this._streamingBlock === null) {
       this.onStreamingTextStart();
     }
-    this._assistantDraft += delta;
+    if (delta.length > 0) this._assistantDraftChunks.push(delta);
     this.pendingAssistantFlush = true;
   }
 
   hasThinkingDraft(): boolean {
-    return this._thinkingDraft.length > 0;
+    return this._thinkingDraftChunks.length > 0;
   }
 
   hasActiveThinkingComponent(): boolean {
@@ -164,7 +168,7 @@ export class StreamingUIController {
   }
 
   clearAssistantDraft(): void {
-    this._assistantDraft = '';
+    this._assistantDraftChunks = [];
   }
 
   // ---------------------------------------------------------------------------
@@ -388,6 +392,11 @@ export class StreamingUIController {
     );
   }
 
+  hasStreamingToolCallPreview(id: string): boolean {
+    const argumentsText = this._streamingToolCallArguments.get(id)?.argumentsText;
+    return argumentsText !== undefined && hasStreamingArgsObjectPrefix(argumentsText);
+  }
+
   getStreamingToolCallPreview(
     id: string,
   ): { name: string; args: Record<string, unknown>; argumentsText: string; startedAtMs: number } | undefined {
@@ -533,11 +542,11 @@ export class StreamingUIController {
     this.pendingAssistantFlush = false;
     this.pendingToolCallFlushIds.clear();
 
-    if (shouldFlushThinking && this._thinkingDraft.length > 0) {
-      this.onThinkingUpdate(this._thinkingDraft);
+    if (shouldFlushThinking && this._thinkingDraftChunks.length > 0) {
+      this.onThinkingUpdate(this._thinkingDraftChunks.join(''));
     }
     if (shouldFlushAssistant) {
-      this.onStreamingTextUpdate(this._assistantDraft);
+      this.onStreamingTextUpdate(this._assistantDraftChunks.join(''));
     }
     for (const id of toolCallIds) {
       this.flushToolCallPreview(id);
@@ -631,7 +640,7 @@ export class StreamingUIController {
 
   flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
     this.flushNow();
-    this._thinkingDraft = '';
+    this._thinkingDraftChunks = [];
     this.onThinkingEnd();
     this.host.patchLivePane({ mode: nextMode });
   }
@@ -641,7 +650,7 @@ export class StreamingUIController {
     if (this._streamingBlock !== null) {
       this.onStreamingTextEnd();
     }
-    this._assistantDraft = '';
+    this._assistantDraftChunks = [];
     this.host.updateActivityPane();
     this.host.state.ui.requestRender();
   }
@@ -650,9 +659,9 @@ export class StreamingUIController {
     this.pendingAssistantFlush = false;
     this.pendingThinkingFlush = false;
     this.clearFlushTimerIfIdle();
-    this._assistantDraft = '';
+    this._assistantDraftChunks = [];
     this._streamingBlock = null;
-    this._thinkingDraft = '';
+    this._thinkingDraftChunks = [];
     this.disposeActiveThinkingComponent();
   }
 
@@ -931,7 +940,7 @@ export class StreamingUIController {
     };
     this._activeToolCalls.set(id, toolCall);
 
-    if (this._thinkingDraft.length > 0 || this._streamingBlock !== null) {
+    if (this.hasThinkingDraft() || this._streamingBlock !== null) {
       this.finalizeLiveTextBuffers('tool');
     }
 
