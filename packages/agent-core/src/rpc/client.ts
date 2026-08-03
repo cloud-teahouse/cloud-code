@@ -8,6 +8,7 @@ import {
 } from '../errors';
 import { abortable } from '../utils/abort';
 import type { CoreAPI } from './core-api';
+import { markLocalRpcMethod, materializeRpcPayload } from './payload';
 import type { SDKAPI } from './sdk-api';
 
 export interface RPCCallOptions {
@@ -35,12 +36,29 @@ export function createRPC<Left extends Record<string, any>, Right extends Record
   const left = createControlledPromise<PromisableMethods<Left>>();
   const right = createControlledPromise<PromisableMethods<Right>>();
 
-  function simulateNetwork<T>(data: T): Promise<T> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const serialized = JSON.stringify(data);
-        resolve(serialized === undefined ? (undefined as T) : JSON.parse(serialized));
-      }, 0);
+  function cloneWithJson<T>(data: T): T {
+    const serialized = JSON.stringify(data);
+    return serialized === undefined ? (undefined as T) : (JSON.parse(serialized) as T);
+  }
+
+  function cloneForLocalRpc<T>(data: T, preserveJsonSemantics = false): T {
+    if (preserveJsonSemantics) return cloneWithJson(data);
+    try {
+      return structuredClone(data);
+    } catch {
+      return cloneWithJson(data);
+    }
+  }
+
+  function simulateNetwork<T>(data: T, preserveJsonSemantics = false): Promise<T> {
+    return new Promise((resolve, reject) => {
+      queueMicrotask(() => {
+        try {
+          resolve(cloneForLocalRpc(data, preserveJsonSemantics));
+        } catch (error) {
+          reject(error);
+        }
+      });
     });
   }
 
@@ -49,9 +67,9 @@ export function createRPC<Left extends Record<string, any>, Right extends Record
   }
 
   function mapRpcFunction(fn: Function): Function {
-    return async (payload: any, options?: RPCCallOptions) => {
+    const mapped = async (payload: any, options?: RPCCallOptions) => {
       const signal = options?.signal;
-      const rpcPayload = await simulateNetwork(payload);
+      const rpcPayload = await simulateNetwork(materializeRpcPayload(payload));
       signal?.throwIfAborted();
       let response: RpcResponse;
       try {
@@ -63,10 +81,12 @@ export function createRPC<Left extends Record<string, any>, Right extends Record
         signal?.throwIfAborted();
         response = { ok: false, error: toCloudCodeErrorPayload(error) };
       }
-      const remoteResponse = await simulateNetwork(response);
+      // Error details are JSON wire data; preserve their coercions in-process too.
+      const remoteResponse = await simulateNetwork(response, response.ok === false);
       if (remoteResponse.ok) return remoteResponse.value;
       throw fromCloudCodeErrorPayload(remoteResponse.error);
     };
+    return markLocalRpcMethod(mapped);
   }
 
   function bindAllFunctions<T extends Record<string, any>>(obj: T): T {

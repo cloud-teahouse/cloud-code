@@ -43,6 +43,135 @@ describe('createRPC', () => {
     });
   });
 
+  it('dispatches a local call before the next macrotask', async () => {
+    const [connectCore, connectHost] = createRPC<CoreSide, HostSide>();
+    const received: string[] = [];
+    const hostProxyPromise = connectCore({
+      getConfig: ({ sessionId }) => ({ model: sessionId }),
+    });
+    const coreProxy = await connectHost({
+      emitEvent: (event) => {
+        received.push(event.type);
+      },
+      requestApproval: async () => ({ decision: 'approved' }),
+      fail: async () => {},
+    });
+    const hostProxy = await hostProxyPromise;
+
+    const call = hostProxy.emitEvent({ type: 'assistant.delta', payload: { value: 1 } });
+    let timerRan = false;
+    setTimeout(() => {
+      timerRan = true;
+    }, 0);
+
+    await call;
+    expect(timerRan).toBe(false);
+    expect(received).toEqual(['assistant.delta']);
+    await coreProxy.getConfig({ sessionId: 'unused' });
+  });
+
+  it('preserves cancellation before handler dispatch', async () => {
+    const [connectCore, connectHost] = createRPC<CoreSide, HostSide>();
+    let handlerCalls = 0;
+    const hostProxyPromise = connectCore({
+      getConfig: ({ sessionId }) => ({ model: sessionId }),
+    });
+    const coreProxy = await connectHost({
+      emitEvent: () => {
+        handlerCalls += 1;
+      },
+      requestApproval: async () => ({ decision: 'approved' }),
+      fail: async () => {},
+    });
+    const hostProxy = await hostProxyPromise;
+    const controller = new AbortController();
+    const call = hostProxy.emitEvent(
+      { type: 'assistant.delta', payload: { value: 1 } },
+      { signal: controller.signal },
+    );
+    controller.abort();
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+    expect(handlerCalls).toBe(0);
+    await coreProxy.getConfig({ sessionId: 'unused' });
+  });
+
+  it('uses structuredClone without JSON serialization for cloneable payloads', async () => {
+    const [connectCore, connectHost] = createRPC<CoreSide, HostSide>();
+    const hostProxyPromise = connectCore({
+      getConfig: ({ sessionId }) => ({ model: sessionId }),
+    });
+    const coreProxy = await connectHost({
+      emitEvent: () => {},
+      requestApproval: async () => ({ decision: 'approved' }),
+      fail: async () => {},
+    });
+    const hostProxy = await hostProxyPromise;
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    try {
+      await hostProxy.emitEvent({ type: 'assistant.delta', payload: { value: 1 } });
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+    await coreProxy.getConfig({ sessionId: 'unused' });
+  });
+
+  it('falls back to JSON semantics when structuredClone rejects a payload', async () => {
+    const [connectCore, connectHost] = createRPC<CoreSide, HostSide>();
+    const received: unknown[] = [];
+    const hostProxyPromise = connectCore({
+      getConfig: ({ sessionId }) => ({ model: sessionId }),
+    });
+    const coreProxy = await connectHost({
+      emitEvent: (event) => {
+        received.push(event);
+      },
+      requestApproval: async () => ({ decision: 'approved' }),
+      fail: async () => {},
+    });
+    const hostProxy = await hostProxyPromise;
+
+    await hostProxy.emitEvent({
+      type: 'assistant.delta',
+      payload: { value: 1, ignored: (() => 'not cloneable') as never } as never,
+    });
+
+    expect(received).toEqual([{ type: 'assistant.delta', payload: { value: 1 } }]);
+    await coreProxy.getConfig({ sessionId: 'unused' });
+  });
+
+  it('dispatches 10000 events in order without dropping deltas', async () => {
+    const [connectCore, connectHost] = createRPC<CoreSide, HostSide>();
+    const received: number[] = [];
+    const hostProxyPromise = connectCore({
+      getConfig: ({ sessionId }) => ({ model: sessionId }),
+    });
+    const coreProxy = await connectHost({
+      emitEvent: (event) => {
+        received.push(event.payload.value);
+      },
+      requestApproval: async () => ({ decision: 'approved' }),
+      fail: async () => {},
+    });
+    const hostProxy = await hostProxyPromise;
+    const count = 10_000;
+    const startedAt = performance.now();
+
+    await Promise.all(
+      Array.from({ length: count }, (_, value) =>
+        hostProxy.emitEvent({ type: 'assistant.delta', payload: { value } }),
+      ),
+    );
+
+    const elapsedMs = performance.now() - startedAt;
+    console.info(`[createRPC benchmark] N=${count} elapsed=${elapsedMs.toFixed(2)}ms`);
+    expect(received).toHaveLength(count);
+    expect(received).toEqual(Array.from({ length: count }, (_, value) => value));
+    await coreProxy.getConfig({ sessionId: 'unused' });
+  });
+
   it('binds prototype methods and rehydrates plain remote errors as CloudCodeError(internal)', async () => {
     class HostImpl implements HostSide {
       readonly approvals: string[] = [];

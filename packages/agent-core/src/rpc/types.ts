@@ -1,4 +1,5 @@
 import type { RPCMethods } from './client';
+import { isLocalRpcMethod, markLocalRpcMethod, wrapRpcPayload } from './payload';
 
 type Prettify<T> = {
   [K in keyof T]: T[K];
@@ -23,7 +24,13 @@ export function proxyWithExtraPayload<T, U>(
       if (typeof origMethod !== 'function') {
         return origMethod;
       }
-      return (payload: any, ...args: any) => origMethod({ ...payload, ...extraPayload }, ...args);
+      const wrappedMethod = (payload: any, ...args: any) => {
+        const rpcPayload = isLocalRpcMethod(origMethod)
+          ? wrapRpcPayload(payload, extraPayload)
+          : { ...payload, ...extraPayload };
+        return origMethod(rpcPayload, ...args);
+      };
+      return isLocalRpcMethod(origMethod) ? markLocalRpcMethod(wrappedMethod) : wrappedMethod;
     },
   });
 }
