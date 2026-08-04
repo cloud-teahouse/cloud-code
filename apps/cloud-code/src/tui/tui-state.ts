@@ -13,7 +13,6 @@ import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
-import { whitenHoverLine } from './components/messages/card-tone';
 import { DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
@@ -126,10 +125,6 @@ export function createTUIState(options: CloudCodeTUIOptions): TUIState {
   ui.setScrollIndicatorLabel((hidden) => t('status.scrollIndicator', { count: hidden }));
   ui.setScrollIndicatorStyle(createScrollIndicatorStyle());
   ui.setScrollbarStyle(createScrollbarStyle());
-  // Zone-less transcript children (assistant/user text) brighten gray text to
-  // white on hover — foreground only, no background wash; zone owners keep
-  // their custom tone.
-  ui.setTranscriptChildHoverStyle(whitenHoverLine);
 
   const state: TUIState = {
     ui,

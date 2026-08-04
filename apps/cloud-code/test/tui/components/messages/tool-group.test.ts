@@ -398,19 +398,20 @@ describe('ToolGroupComponent', () => {
       b.dispose();
     });
 
-    it('hover whitens the summary rows and restores on leave', () => {
+    it('hover whitens gray rows (header included) and restores on leave', () => {
       const { group, a, b } = makeDoneGroup();
       const base = group.render(120);
 
       group.setHoveredZone('card');
       const hovered = group.render(120);
       expect(hovered[0]).toBe(base[0]); // spacer untouched
-      expect(hovered[1]).toBe(base[1]); // header keeps its colors
-      expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
-      const body = hovered.slice(2).join('\n');
-      expect(body).toContain(TEXT_OPEN);
-      expect(body).not.toContain('\x1b[2m');
+      // The header's colored bullet/title survive; its plain/gray runs lift.
+      expect(strip(hovered[1]!)).toBe(strip(base[1]!));
       expect(hovered.join('\n')).not.toContain(BG_OPEN);
+      const toned = hovered.slice(1).join('\n');
+      expect(toned).toContain(TEXT_OPEN);
+      expect(toned).not.toContain('\x1b[2m');
+      expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
       group.setHoveredZone(null);
       expect(group.render(120)).toEqual(base);
       group.dispose();

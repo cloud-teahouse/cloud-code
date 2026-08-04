@@ -1060,7 +1060,6 @@ export class ToolCallComponent extends Container {
       width,
       tone,
       bgFrom: this.zoneMeta?.spacerRows ?? 0,
-      toneFrom: (this.zoneMeta?.spacerRows ?? 0) + (this.zoneMeta?.headerRows ?? 0),
     });
     this.toneCache = { base, width, tone, out };
     return out;

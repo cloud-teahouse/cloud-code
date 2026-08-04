@@ -223,7 +223,7 @@ export class ThinkingComponent implements Component {
     if (cached !== undefined && cached.base === base && cached.width === width && cached.tone === tone) {
       return cached.out;
     }
-    const out = applyCardTone(base, { width, tone, bgFrom: 1, toneFrom: 1 });
+    const out = applyCardTone(base, { width, tone, bgFrom: 1 });
     this.toneCache = { base, width, tone, out };
     return out;
   }

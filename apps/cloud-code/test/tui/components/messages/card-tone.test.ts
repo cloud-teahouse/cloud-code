@@ -21,7 +21,7 @@ describe('applyCardTone', () => {
   });
 
   const SENTINEL = '\u0001';
-  const fgOpen = (token: 'text' | 'textDim'): string => {
+  const fgOpen = (token: 'text' | 'textDim' | 'textMuted'): string => {
     const sampled = currentTheme.fg(token, SENTINEL);
     return sampled.slice(0, sampled.indexOf(SENTINEL));
   };
@@ -43,35 +43,36 @@ describe('applyCardTone', () => {
 
   it('returns the input array untouched for the normal tone', () => {
     const lines = [currentTheme.fg('textDim', 'gray')];
-    expect(applyCardTone(lines, { width: 40, tone: 'normal', bgFrom: 0, toneFrom: 0 })).toBe(lines);
+    expect(applyCardTone(lines, { width: 40, tone: 'normal', bgFrom: 0 })).toBe(lines);
   });
 
   it('whitens textDim and chalk.dim runs but keeps colors and bold', () => {
     const line =
       currentTheme.fg('textDim', 'gray') + chalk.dim('dim') + chalk.red('red') + chalk.bold('bold');
-    const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0, toneFrom: 0 })[0]!;
+    const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0 })[0]!;
     expect(out).toContain(`${TEXT_OPEN}gray\x1b[39m`);
     expect(out).toContain(`${TEXT_OPEN}dim\x1b[39m`);
     expect(out).toContain(chalk.red('red'));
     expect(out).toContain(chalk.bold('bold'));
-    // Hover also paints the background, padding the row to width.
+    // Text content is unchanged — only the gray runs' colors move.
     expect(strip(out).trimEnd()).toBe(strip(line));
   });
 
-  it('keeps diff and syntax colors while whitening textDim-toned meta', () => {
+  it('keeps diff and syntax colors while whitening the gray gutter/meta runs', () => {
     const palette = currentTheme.palette;
     const line =
       chalk.hex(palette.diffGutter)('   1 ') +
       chalk.hex(palette.diffAdded)('+ added') +
       chalk.hex(palette.diffMeta)(' … meta') +
       '\x1b[34mconst\x1b[39m';
-    const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0, toneFrom: 0 })[0]!;
-    expect(out).toContain(chalk.hex(palette.diffGutter)('   1 '));
+    const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0 })[0]!;
+    // diffGutter equals textMuted and diffMeta equals textDim in the dark
+    // palette: both gray-family runs whiten on hover.
+    expect(out).toContain(`${TEXT_OPEN}   1 \x1b[39m`);
+    expect(out).toContain(`${TEXT_OPEN} … meta\x1b[39m`);
+    // Semantic colors survive untouched.
     expect(out).toContain(chalk.hex(palette.diffAdded)('+ added'));
     expect(out).toContain('\x1b[34mconst\x1b[39m');
-    // diffMeta equals textDim in the dark palette, so the meta run whitens
-    // with the rest of the dim detail text.
-    expect(out).toContain(`${TEXT_OPEN} … meta\x1b[39m`);
     expect(strip(out).trimEnd()).toBe(strip(line));
   });
 
@@ -83,7 +84,6 @@ describe('applyCardTone', () => {
       width: 20,
       tone: 'hover',
       bgFrom: 1,
-      toneFrom: 1,
     });
 
     expect(out[0]).toBe('');
@@ -106,7 +106,7 @@ describe('applyCardTone', () => {
       chalk.dim('… (还有 3 行，ctrl+o 展开)'),
     ];
 
-    const out = applyCardTone(lines, { width: 80, tone: 'hover', bgFrom: 1, toneFrom: 1 });
+    const out = applyCardTone(lines, { width: 80, tone: 'hover', bgFrom: 1 });
 
     expect(out[1]).not.toBe(lines[1]);
     expect(out[2]).not.toBe(lines[2]);
@@ -128,7 +128,7 @@ describe('applyCardTone', () => {
       chalk.underline('beta auto-published…'),
     ];
 
-    const out = applyCardTone(lines, { width: 80, tone: 'hover', bgFrom: 1, toneFrom: 1 });
+    const out = applyCardTone(lines, { width: 80, tone: 'hover', bgFrom: 1 });
 
     for (let i = 1; i < lines.length; i++) {
       expect(out[i]).not.toBe(lines[i]);
@@ -140,7 +140,7 @@ describe('applyCardTone', () => {
 
   it('keeps bold intact when nested inside dim', () => {
     const line = chalk.dim(`a${chalk.bold('b')}c`);
-    const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0, toneFrom: 0 })[0]!;
+    const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0 })[0]!;
     // The bold open/close pass through; only the dim runs become white.
     expect(out).toContain('\x1b[1mb\x1b[22m');
     expect(out).toContain(`${TEXT_OPEN}a`);
@@ -148,15 +148,20 @@ describe('applyCardTone', () => {
     expect(strip(out).trimEnd()).toBe('abc');
   });
 
-  it('leaves lines above toneFrom untouched', () => {
-    const header = currentTheme.boldFg('primary', 'header');
-    const out = applyCardTone([header, chalk.dim('body')], {
+  it('whitens gray runs in the header row as well as the body', () => {
+    const header = currentTheme.boldFg('primary', 'header') + chalk.dim(' (args)');
+    const spacer = '';
+    const out = applyCardTone([spacer, header, chalk.dim('body')], {
       width: 40,
       tone: 'hover',
-      bgFrom: 0,
-      toneFrom: 1,
+      bgFrom: 1,
     });
-    expect(out[0]).toBe(header);
+    // The spacer above bgFrom stays untouched.
+    expect(out[0]).toBe(spacer);
+    // The header's colored label keeps its tone; its gray args whiten.
+    expect(out[1]).toContain(currentTheme.boldFg('primary', 'header'));
+    expect(out[1]).toContain(`${TEXT_OPEN} (args)\x1b[39m`);
+    expect(out[2]).toContain(`${TEXT_OPEN}body\x1b[39m`);
   });
 
   it('paints the background from bgFrom down and pads rows to the width', () => {
@@ -164,11 +169,10 @@ describe('applyCardTone', () => {
       width: 10,
       tone: 'click',
       bgFrom: 1,
-      toneFrom: 2,
     });
     expect(out[0]).toBe('');
     expect(out[1]).toContain(BG_OPEN);
-    expect(out[1]).not.toContain(TEXT_OPEN);
+    expect(out[1]).toContain(`${TEXT_OPEN}hdr\x1b[39m`);
     expect(visibleWidth(strip(out[1]!))).toBe(10);
     expect(out[2]).toContain(BG_OPEN);
     expect(out[2]).toContain(`${TEXT_OPEN}body`);
@@ -178,10 +182,10 @@ describe('applyCardTone', () => {
   it('leaves inline image rows untouched during hover and click tones', () => {
     const image = '\u001B_Ga=T,f=100;payload\u001B\\';
 
-    expect(applyCardTone([image], { width: 10, tone: 'hover', bgFrom: 0, toneFrom: 0 })[0]).toBe(
+    expect(applyCardTone([image], { width: 10, tone: 'hover', bgFrom: 0 })[0]).toBe(
       image,
     );
-    expect(applyCardTone([image], { width: 10, tone: 'click', bgFrom: 0, toneFrom: 0 })[0]).toBe(
+    expect(applyCardTone([image], { width: 10, tone: 'click', bgFrom: 0 })[0]).toBe(
       image,
     );
   });
@@ -190,7 +194,7 @@ describe('applyCardTone', () => {
     chalk.level = 0;
     try {
       const lines = ['plain'];
-      expect(applyCardTone(lines, { width: 10, tone: 'click', bgFrom: 0, toneFrom: 0 })).toBe(lines);
+      expect(applyCardTone(lines, { width: 10, tone: 'click', bgFrom: 0 })).toBe(lines);
     } finally {
       chalk.level = 3;
     }
@@ -203,7 +207,7 @@ describe('applyCardTone', () => {
     currentTheme.setPalette(palette);
     try {
       const line = currentTheme.fg('textDim', 'gray');
-      const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0, toneFrom: 0 })[0]!;
+      const out = applyCardTone([line], { width: 40, tone: 'hover', bgFrom: 0 })[0]!;
       expect(out).not.toContain(DIM_OPEN);
       expect(out).toContain(`${fgOpen('text')}gray\x1b[39m`);
     } finally {

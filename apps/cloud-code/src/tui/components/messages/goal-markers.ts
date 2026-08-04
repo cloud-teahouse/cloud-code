@@ -103,7 +103,7 @@ export class GoalMarkerComponent implements Component {
     const base = this.renderBase(width);
     if (!this.hovered) return base;
     const start = this.leadingBlank ? 1 : 0;
-    return applyCardTone(base, { width, tone: 'hover', bgFrom: start, toneFrom: start });
+    return applyCardTone(base, { width, tone: 'hover', bgFrom: start });
   }
 
   private renderBase(width: number): string[] {

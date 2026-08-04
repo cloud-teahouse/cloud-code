@@ -271,7 +271,8 @@ function formatTurnUsageBreakdown(turnUsage: TokenUsage | null | undefined): str
   };
   const input = usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation;
   const segments = [t('footer.tokens.in', { tokens: formatTokenCount(input) })];
-  const hitRate = input > 0 ? Math.round((usage.inputCacheRead / input) * 100) : 0;
+  const hitRate =
+    input > 0 ? ((usage.inputCacheRead / input) * 100).toFixed(2) : '0.00';
   segments.push(
     t('footer.tokens.cache', {
       tokens: formatTokenCount(usage.inputCacheRead),

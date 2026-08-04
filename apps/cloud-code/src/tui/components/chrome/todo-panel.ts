@@ -197,7 +197,7 @@ export class TodoPanelComponent implements Component {
     }
     const base = this.renderBase(width);
     if (!this.hovered) return base;
-    return applyCardTone(base, { width, tone: 'hover', bgFrom: 0, toneFrom: 0 });
+    return applyCardTone(base, { width, tone: 'hover', bgFrom: 0 });
   }
 
   private renderBase(width: number): string[] {

@@ -230,7 +230,7 @@ describe('FooterComponent — turn token breakdown', () => {
     const [, line2] = fc.render(200);
     const out = strip(line2 ?? '');
     // input = 1024+6144+1024 = 8192 → 8k; hit rate = 6144/8192 = 75%.
-    expect(out).toContain('context: 50% · in 8k · cache 6k (75%) · out 512');
+    expect(out).toContain('context: 50% · in 8k · cache 6k (75.00%) · out 512');
   });
 
   it('renders the cache segment with a zero placeholder when the provider reports no cache activity', () => {
@@ -243,7 +243,7 @@ describe('FooterComponent — turn token breakdown', () => {
     const out = strip(line2 ?? '');
     // Segments always render (0 placeholders) since a4c6c30a — transient
     // "not yet reported" states never blank the context area out.
-    expect(out).toContain('context: 0% · in 2k · cache 0 (0%) · out 100');
+    expect(out).toContain('context: 0% · in 2k · cache 0 (0.00%) · out 100');
   });
 
   it('renders the breakdown with zero placeholders before the first step reports usage', () => {
@@ -251,7 +251,7 @@ describe('FooterComponent — turn token breakdown', () => {
     const [, line2] = fc.render(200);
     const out = strip(line2 ?? '');
     expect(out).toContain('context: 25%');
-    expect(out).toContain('· in 0 · cache 0 (0%) · out 0');
+    expect(out).toContain('· in 0 · cache 0 (0.00%) · out 0');
   });
 
   it('renders the zh-CN breakdown within the requested width', () => {
@@ -272,7 +272,7 @@ describe('FooterComponent — turn token breakdown', () => {
     const lines = fc.render(120);
     const line2 = lines[1] ?? '';
     const out = strip(line2);
-    expect(out).toContain('上下文：42% (420k/1M) · 输入 8k · 缓存 6k (75%) · 输出 512');
+    expect(out).toContain('上下文：42% (420k/1M) · 输入 8k · 缓存 6k (75.00%) · 输出 512');
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(120);
     }

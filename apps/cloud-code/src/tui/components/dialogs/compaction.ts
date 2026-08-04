@@ -251,7 +251,7 @@ export class CompactionComponent extends Container {
     this.zoneMeta = { width, lines: base.length };
     if (!this.hovered) return base;
     // Child 0 is the leading spacer — the hover whiten starts at the header.
-    return applyCardTone(base, { width, tone: 'hover', bgFrom: 1, toneFrom: 1 });
+    return applyCardTone(base, { width, tone: 'hover', bgFrom: 1 });
   }
 
   private stopAnimation(): void {

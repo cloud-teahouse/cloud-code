@@ -292,7 +292,7 @@ export class ShellRunComponent extends Container {
     if (cached !== undefined && cached.base === base && cached.width === width && cached.tone === tone) {
       return cached.out;
     }
-    const out = applyCardTone(base, { width, tone, bgFrom: 0, toneFrom: 0 });
+    const out = applyCardTone(base, { width, tone, bgFrom: 0 });
     this.toneCache = { base, width, tone, out };
     return out;
   }

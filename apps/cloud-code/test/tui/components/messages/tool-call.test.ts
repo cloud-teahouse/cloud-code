@@ -2867,7 +2867,7 @@ describe('ToolCallComponent', () => {
       component.dispose();
     });
 
-    it('hover whitens the detail body only and restores on leave', () => {
+    it('hover whitens gray rows (header included) and restores on leave', () => {
       const component = makeCard();
       const base = component.render(100);
       expect(base.slice(2).join('\n')).toContain(DIM_OPEN);
@@ -2875,12 +2875,13 @@ describe('ToolCallComponent', () => {
       component.setHoveredZone('card');
       const hovered = component.render(100);
       expect(hovered[0]).toBe(base[0]); // spacer untouched
-      expect(hovered[1]).toBe(base[1]); // header keeps its colors
+      // The header's colored bullet/label survive; its gray runs lift.
+      expect(strip(hovered[1]!)).toBe(strip(base[1]!));
+      const toned = hovered.slice(1).join('\n');
+      expect(toned).toContain(TEXT_OPEN);
+      expect(toned).not.toContain(DIM_OPEN);
+      expect(toned).not.toContain('\x1b[2m');
       expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
-      const body = hovered.slice(2).join('\n');
-      expect(body).toContain(TEXT_OPEN);
-      expect(body).not.toContain(DIM_OPEN);
-      expect(body).not.toContain('\x1b[2m');
       expect(hovered.join('\n')).not.toContain(BG_OPEN);
 
       component.setHoveredZone(null);
@@ -3103,7 +3104,8 @@ describe('ToolCallComponent', () => {
       component.setHoveredZone('card');
       const hovered = component.render(100);
       expect(hovered[0]).toBe(base[0]); // spacer untouched
-      expect(hovered[1]).toBe(base[1]); // header keeps its colors
+      // The header's colored runs survive; its gray runs lift with the body.
+      expect(strip(hovered[1]!)).toBe(strip(base[1]!));
       expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
       const body = hovered.slice(2).join('\n');
       expect(body).toContain(TEXT_OPEN); // whitened line numbers and hint
@@ -3161,7 +3163,7 @@ describe('ToolCallComponent', () => {
       component.dispose();
     });
 
-    it('hover over the Edit diff keeps add/remove/gutter colors and whitens only dim meta text', () => {
+    it('hover over the Edit diff keeps add/remove colors and whitens the gray gutter/meta runs', () => {
       const component = makeEditCard();
       const base = component.render(100);
       const baseBody = base.slice(2).join('\n');
@@ -3179,9 +3181,10 @@ describe('ToolCallComponent', () => {
       expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
       const body = hovered.slice(2).join('\n');
       expect(body).toContain(delOpen);
-      expect(body).toContain(gutterOpen);
+      // diffGutter shares textMuted's hex: the gray gutter whitens on hover.
+      expect(body).not.toContain(gutterOpen);
       expect(body).toContain(hexOpen(currentTheme.palette.diffAddedStrong)); // diff header row
-      // Only the textDim-toned meta footer whitens.
+      // The textDim-toned meta footer whitens as well.
       expect(body).not.toContain(DIM_OPEN);
       expect(body).toContain(TEXT_OPEN);
       expect(hovered.join('\n')).not.toContain(BG_OPEN);

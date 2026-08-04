@@ -380,7 +380,6 @@ export class ToolGroupComponent extends Container {
           width: safeWidth,
           tone,
           bgFrom: spacerRows,
-          toneFrom: spacerRows + headerRows,
         });
         this.toneCache = { refs: childLines, width: safeWidth, tone, out: result };
       }
