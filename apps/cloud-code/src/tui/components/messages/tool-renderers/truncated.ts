@@ -3,6 +3,7 @@ import { Text, truncateToWidth, type Component } from '@cloud-code/pi-tui';
 import { t, tIfKnown } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ToolResultBlockData } from '#/tui/types';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import type { CollapsedRowProbe, ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
@@ -79,6 +80,7 @@ export class TruncatedOutputComponent implements Component, CollapsedRowProbe {
 
   invalidate(): void {
     // Text component caches wrapped lines; invalidate on terminal resize.
+    this.renderCache = undefined;
     this.textComponent.invalidate();
   }
 
@@ -92,9 +94,34 @@ export class TruncatedOutputComponent implements Component, CollapsedRowProbe {
     return currentTheme.fg('textDim', truncateToWidth(hint, Math.max(0, width), '…'));
   }
 
+  /**
+   * Width-keyed output cache, keyed additionally on the wrapped content's
+   * array identity: steady frames return the same array reference instead of
+   * re-slicing and re-rendering the hint row on every transcript walk. The
+   * remaining options are constructor-fixed, so (width, content) identity is
+   * the whole invalidation surface.
+   */
+  private renderCache: { width: number; contentRef: string[]; lines: string[] } | undefined;
+
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
+    const cached = this.renderCache;
+    if (
+      isRenderCacheEnabled() &&
+      cached !== undefined &&
+      cached.width === width &&
+      cached.contentRef === contentLines
+    ) {
+      return cached.lines;
+    }
+    const out = this.renderUncached(width, contentLines);
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width, contentRef: contentLines, lines: out };
+    }
+    return out;
+  }
 
+  private renderUncached(width: number, contentLines: string[]): string[] {
     if (this.expanded || contentLines.length <= this.maxLines) {
       return contentLines;
     }

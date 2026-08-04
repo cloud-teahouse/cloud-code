@@ -626,6 +626,17 @@ class PrefixedWrappedLine implements Component {
  * (Bash/ExecSession) use CommandBodyComponent instead.
  */
 class DetailTreeComponent implements Component, CollapsedRowProbe {
+  /**
+   * Width-keyed output cache validated by the inners' rendered-line array
+   * identities: a steady frame (all inners cache-hitting) returns the same
+   * array reference without re-wrapping or re-truncating a single row — the
+   * per-line gutter styling and truncation below are the dominant per-frame
+   * cost of a long transcript's syncFull walk otherwise.
+   */
+  private renderCache:
+    | { width: number; tail: boolean; refs: readonly string[][]; lines: string[] }
+    | undefined;
+
   constructor(
     private readonly inners: readonly Component[],
     private tail = true,
@@ -636,6 +647,7 @@ class DetailTreeComponent implements Component, CollapsedRowProbe {
   }
 
   invalidate(): void {
+    this.renderCache = undefined;
     for (const inner of this.inners) inner.invalidate?.();
   }
 
@@ -655,6 +667,17 @@ class DetailTreeComponent implements Component, CollapsedRowProbe {
     const groups = this.inners.map((inner) =>
       inner.render(Math.max(1, safeWidth - gutterWidth)),
     );
+    const cached = this.renderCache;
+    if (
+      isRenderCacheEnabled() &&
+      cached !== undefined &&
+      cached.width === safeWidth &&
+      cached.tail === this.tail &&
+      cached.refs.length === groups.length &&
+      cached.refs.every((ref, i) => ref === groups[i])
+    ) {
+      return cached.lines;
+    }
     // The closing `└─` belongs to the last entry that produced rows.
     let lastGroup = -1;
     if (this.tail) {
@@ -680,6 +703,9 @@ class DetailTreeComponent implements Component, CollapsedRowProbe {
         out.push(truncateToWidth(`${currentTheme.fg('textDim', gutter)}${line}`, safeWidth, '…'));
       }
     }
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, tail: this.tail, refs: groups, lines: out };
+    }
     return out;
   }
 }
@@ -692,9 +718,15 @@ class DetailTreeComponent implements Component, CollapsedRowProbe {
  * output is ever wrapped this way; lists of discrete items keep the tree.
  */
 class RawPayloadComponent implements Component, CollapsedRowProbe {
+  /** Width-keyed output cache, validated by inner line-array identities. */
+  private renderCache:
+    | { width: number; refs: readonly string[][]; lines: string[] }
+    | undefined;
+
   constructor(private readonly inners: readonly Component[]) { }
 
   invalidate(): void {
+    this.renderCache = undefined;
     for (const inner of this.inners) inner.invalidate?.();
   }
 
@@ -711,12 +743,26 @@ class RawPayloadComponent implements Component, CollapsedRowProbe {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
     const gutterWidth = visibleWidth(RAW_PAYLOAD_GUTTER);
-    const lines = this.inners.flatMap((inner) =>
+    const groups = this.inners.map((inner) =>
       inner.render(Math.max(1, safeWidth - gutterWidth)),
     );
-    return lines.map((line) =>
+    const cached = this.renderCache;
+    if (
+      isRenderCacheEnabled() &&
+      cached !== undefined &&
+      cached.width === safeWidth &&
+      cached.refs.length === groups.length &&
+      cached.refs.every((ref, i) => ref === groups[i])
+    ) {
+      return cached.lines;
+    }
+    const out = groups.flat().map((line) =>
       truncateToWidth(`${currentTheme.fg('textDim', RAW_PAYLOAD_GUTTER)}${line}`, safeWidth, '…'),
     );
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, refs: groups, lines: out };
+    }
+    return out;
   }
 }
 

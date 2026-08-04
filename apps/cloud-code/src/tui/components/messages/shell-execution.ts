@@ -9,6 +9,7 @@ import {
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import type { CollapsedRowProbe, ResultRenderer } from './tool-renderers/types';
 import { collapsedHiddenRows, PREVIEW_LINES } from './tool-renderers/types';
@@ -46,9 +47,19 @@ export function commandCardNoOutputRow(): string {
  * gutter so the `$`/`⎿` markers own the row shape.
  */
 export class CommandBodyComponent implements Component, CollapsedRowProbe {
+  /**
+   * Width-keyed output cache validated by the inners' rendered-line array
+   * identities: steady frames return the same array reference instead of
+   * re-truncating every body row on every frame of a transcript walk.
+   */
+  private renderCache:
+    | { width: number; refs: readonly string[][]; lines: string[] }
+    | undefined;
+
   constructor(private readonly inners: readonly Component[]) { }
 
   invalidate(): void {
+    this.renderCache = undefined;
     for (const inner of this.inners) inner.invalidate?.();
   }
 
@@ -65,10 +76,25 @@ export class CommandBodyComponent implements Component, CollapsedRowProbe {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
     const indentWidth = visibleWidth(COMMAND_BODY_INDENT);
-    const lines = this.inners.flatMap((inner) =>
-      inner.render(Math.max(1, safeWidth - indentWidth)),
-    );
-    return lines.map((line) => truncateToWidth(`${COMMAND_BODY_INDENT}${line}`, safeWidth, '…'));
+    const innerWidth = Math.max(1, safeWidth - indentWidth);
+    const groups = this.inners.map((inner) => inner.render(innerWidth));
+    const cached = this.renderCache;
+    if (
+      isRenderCacheEnabled() &&
+      cached !== undefined &&
+      cached.width === safeWidth &&
+      cached.refs.length === groups.length &&
+      cached.refs.every((ref, i) => ref === groups[i])
+    ) {
+      return cached.lines;
+    }
+    const out = groups
+      .flat()
+      .map((line) => truncateToWidth(`${COMMAND_BODY_INDENT}${line}`, safeWidth, '…'));
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, refs: groups, lines: out };
+    }
+    return out;
   }
 }
 
@@ -77,9 +103,15 @@ export class CommandBodyComponent implements Component, CollapsedRowProbe {
  * at the body width and prefixes the rows via `prefixCommandOutputRows`.
  */
 class CommandOutputComponent implements Component, CollapsedRowProbe {
+  /** Width-keyed output cache, validated by inner line-array identities. */
+  private renderCache:
+    | { width: number; refs: readonly string[][]; lines: string[] }
+    | undefined;
+
   constructor(private readonly inners: readonly Component[]) { }
 
   invalidate(): void {
+    this.renderCache = undefined;
     for (const inner of this.inners) inner.invalidate?.();
   }
 
@@ -96,10 +128,25 @@ class CommandOutputComponent implements Component, CollapsedRowProbe {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
     const prefixWidth = visibleWidth(COMMAND_OUTPUT_MARK);
-    const lines = this.inners.flatMap((inner) =>
-      inner.render(Math.max(1, safeWidth - prefixWidth)),
+    const innerWidth = Math.max(1, safeWidth - prefixWidth);
+    const groups = this.inners.map((inner) => inner.render(innerWidth));
+    const cached = this.renderCache;
+    if (
+      isRenderCacheEnabled() &&
+      cached !== undefined &&
+      cached.width === safeWidth &&
+      cached.refs.length === groups.length &&
+      cached.refs.every((ref, i) => ref === groups[i])
+    ) {
+      return cached.lines;
+    }
+    const out = prefixCommandOutputRows(groups.flat()).map((line) =>
+      truncateToWidth(line, safeWidth, '…'),
     );
-    return prefixCommandOutputRows(lines).map((line) => truncateToWidth(line, safeWidth, '…'));
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, refs: groups, lines: out };
+    }
+    return out;
   }
 }
 
@@ -120,6 +167,16 @@ export interface ShellExecutionOptions {
 }
 
 export class ShellExecutionComponent extends Container implements CollapsedRowProbe {
+  /**
+   * Width-keyed output cache validated by the children's rendered-line array
+   * identities — without it the Container flat-map returns a fresh array on
+   * every frame, which would defeat the identity checks of any caching
+   * parent wrapper (CommandBodyComponent and friends).
+   */
+  private renderCache:
+    | { width: number; refs: readonly string[][]; lines: string[] }
+    | undefined;
+
   constructor(options: ShellExecutionOptions) {
     super();
 
@@ -144,6 +201,31 @@ export class ShellExecutionComponent extends Container implements CollapsedRowPr
       hidden += collapsedHiddenRows(child, Math.max(1, width));
     }
     return hidden;
+  }
+
+  override invalidate(): void {
+    this.renderCache = undefined;
+    super.invalidate();
+  }
+
+  override render(width: number): string[] {
+    const safeWidth = Math.max(1, width);
+    const groups = this.children.map((child) => child.render(safeWidth));
+    const cached = this.renderCache;
+    if (
+      isRenderCacheEnabled() &&
+      cached !== undefined &&
+      cached.width === safeWidth &&
+      cached.refs.length === groups.length &&
+      cached.refs.every((ref, i) => ref === groups[i])
+    ) {
+      return cached.lines;
+    }
+    const out = groups.flat();
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, refs: groups, lines: out };
+    }
+    return out;
   }
 
   private addCommandPreview(command: string, previewLines: number | undefined): void {
