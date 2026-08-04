@@ -109,6 +109,8 @@ describe('RainbowDance', () => {
 
   it('advances the phase by one per frame while flowing', () => {
     vi.useFakeTimers();
+    // The phase is wall-clock derived: pin t=0 so frames map 1:1 to time.
+    vi.setSystemTime(0);
     const dance = new RainbowDance(vi.fn());
 
     dance.start({ hold: true });

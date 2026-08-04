@@ -143,7 +143,8 @@ export function renderDanceFooterModel(modelLabel: string): string {
  * off (default), flowing, and a frozen static rainbow.
  */
 export class RainbowDance implements RainbowDanceController {
-  private currentPhase = 0;
+  /** Captured phase while frozen (settle with hold); null while flowing/off. */
+  private frozenPhase: number | null = null;
   private isColored = false;
   private frameTimer: ReturnType<typeof setInterval> | null = null;
   private flowStopTimer: ReturnType<typeof setTimeout> | null = null;
@@ -158,7 +159,12 @@ export class RainbowDance implements RainbowDanceController {
   }
 
   get phase(): number {
-    return this.currentPhase;
+    // Off means the default banner (phase 0); a held rainbow freezes at its
+    // captured phase; while flowing the phase is wall-clock derived, so timer
+    // drift can delay a repaint but never bends the rainbow's flow rate.
+    if (!this.isColored) return 0;
+    if (this.frozenPhase !== null) return this.frozenPhase;
+    return Math.floor(Date.now() / DANCE_FRAME_MS);
   }
 
   /**
@@ -170,9 +176,7 @@ export class RainbowDance implements RainbowDanceController {
     this.clearTimers();
     this.isColored = true;
     this.frameTimer = setInterval(() => {
-      // Phase just increments; rainbowText() takes it modulo the *current*
-      // palette length, so the dance never needs to know the palette size.
-      this.currentPhase += 1;
+      // Only schedules repaints; the phase itself is read off the clock.
       this.requestRender();
     }, DANCE_FRAME_MS);
     this.flowStopTimer = setTimeout(() => {
@@ -185,7 +189,7 @@ export class RainbowDance implements RainbowDanceController {
   stop(): void {
     this.clearTimers();
     this.isColored = false;
-    this.currentPhase = 0;
+    this.frozenPhase = null;
     this.requestRender();
   }
 
@@ -200,9 +204,11 @@ export class RainbowDance implements RainbowDanceController {
   /** End the flow: freeze the rainbow (hold) or fade back to default. */
   private settle(hold: boolean): void {
     this.clearTimers();
-    if (!hold) {
+    if (hold) {
+      this.frozenPhase = this.phase;
+    } else {
       this.isColored = false;
-      this.currentPhase = 0;
+      this.frozenPhase = null;
     }
     this.requestRender();
   }

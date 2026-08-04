@@ -8,7 +8,7 @@ import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { fitExactly, renderRow } from '#/tui/components/primitives';
 import { getLocalePreference, t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
-import { highlightBgIf } from '#/tui/utils/mouse-hover';
+import { underlineText } from '#/tui/utils/mouse-hover';
 import { wrapHint } from '#/tui/utils/hint';
 import {
   asWorkflowAgentInfo,
@@ -242,7 +242,7 @@ export class WorkflowsRoster extends Container {
             : row.kind === 'done-group'
               ? this.renderDoneGroupRow(row, innerWidth)
               : this.renderAgentRow(row.agent, innerWidth);
-        lines.push(highlightBgIf(line, this.hoveredRow === rowIndex));
+        lines.push(underlineText(line, this.hoveredRow === rowIndex));
       }
     }
     while (lines.length < height) lines.push('');
