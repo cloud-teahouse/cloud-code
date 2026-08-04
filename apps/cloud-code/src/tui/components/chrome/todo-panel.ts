@@ -9,10 +9,16 @@
  * is issued.
  */
 
-import type { Component } from '@cloud-code/pi-tui';
-import { truncateToWidth } from '@cloud-code/pi-tui';
+import {
+  truncateToWidth,
+  type Component,
+  type HitZone,
+  type HitZoneId,
+  type MouseEvent,
+} from '@cloud-code/pi-tui';
 import chalk from 'chalk';
 
+import { applyCardTone } from '#/tui/components/messages/card-tone';
 import { t, type MessageKey } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -27,6 +33,9 @@ export interface TodoItem {
 }
 
 const MAX_VISIBLE = 5;
+
+/** Hit-zone id of the panel's single whole-region interactive area. */
+const TODO_PANEL_HIT_ZONE = 'panel';
 
 export interface VisibleTodos {
   readonly rows: readonly TodoItem[];
@@ -117,6 +126,10 @@ export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
 export class TodoPanelComponent implements Component {
   private todos: readonly TodoItem[] = [];
   private expanded = false;
+  /** Pointer hover over the panel's zone: the gray rows render white. */
+  private hovered = false;
+  /** Geometry of the last render, captured for `hitZones()`. */
+  private zoneMeta: { width: number; lines: number } | undefined;
 
   setTodos(todos: readonly TodoItem[]): void {
     this.todos = todos.map((t) => ({
@@ -152,10 +165,42 @@ export class TodoPanelComponent implements Component {
     this.expanded = !this.expanded;
   }
 
+  /**
+   * The panel's single hit zone: its whole rendered region, registered only
+   * while the list overflows the collapsed cap — a click toggles the fold
+   * (keyboard parity with the todo toggle). A short list hides nothing, so
+   * it stays click/hover inert, matching the transcript cards.
+   */
+  hitZones(): Iterable<HitZone> {
+    const meta = this.zoneMeta;
+    if (meta === undefined || !this.hasOverflow()) return [];
+    return [{ id: TODO_PANEL_HIT_ZONE, row: 0, col: 1, width: meta.width, height: meta.lines }];
+  }
+
+  onHitZone(id: HitZoneId, _event: MouseEvent): void | boolean {
+    if (id !== TODO_PANEL_HIT_ZONE) return false;
+    this.toggleExpanded();
+  }
+
+  setHoveredZone(id: HitZoneId | null): void | boolean {
+    const hovered = id === TODO_PANEL_HIT_ZONE;
+    if (hovered === this.hovered) return false;
+    this.hovered = hovered;
+  }
+
   invalidate(): void {}
 
   render(width: number): string[] {
-    if (this.todos.length === 0) return [];
+    if (this.todos.length === 0) {
+      this.zoneMeta = undefined;
+      return [];
+    }
+    const base = this.renderBase(width);
+    if (!this.hovered) return base;
+    return applyCardTone(base, { width, tone: 'hover', bgFrom: 0, toneFrom: 0 });
+  }
+
+  private renderBase(width: number): string[] {
     const c = currentTheme.palette;
     const lines: string[] = [
       chalk.hex(c.border)('─'.repeat(width)),
@@ -185,7 +230,9 @@ export class TodoPanelComponent implements Component {
       }
     }
 
-    return lines.map((line) => truncateToWidth(line, width));
+    const clamped = lines.map((line) => truncateToWidth(line, width));
+    this.zoneMeta = { width, lines: clamped.length };
+    return clamped;
   }
 }
 

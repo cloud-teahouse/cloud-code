@@ -3,11 +3,18 @@
  *
  * Lifecycle changes (paused / resumed / cancelled) and `no_progress` verdicts
  * render as a single dim line — `◦ Goal paused` — that expands (ctrl+o, shared
- * with tool output) to show the reason when there is one. Terminal outcomes use
- * the richer completion card (the `/goal` box), not this marker.
+ * with tool output, or a mouse click on the marker; hovering whitens the gray
+ * text) to show the reason when there is one. Terminal outcomes use the
+ * richer completion card (the `/goal` box), not this marker.
  */
 
-import { truncateToWidth, type Component } from '@cloud-code/pi-tui';
+import {
+  truncateToWidth,
+  type Component,
+  type HitZone,
+  type HitZoneId,
+  type MouseEvent,
+} from '@cloud-code/pi-tui';
 import type { GoalChange } from '@cloud-code/sdk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
@@ -15,10 +22,14 @@ import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 
+import { applyCardTone } from './card-tone';
 import { goalReasonText } from './goal-reason';
 
 const HEAD_INDENT = '  ';
 const DETAIL_INDENT = '    ';
+
+/** Hit-zone id of the marker's single whole-region interactive area. */
+const GOAL_MARKER_HIT_ZONE = 'card';
 
 type GoalMarkerActor = 'user' | 'model' | 'runtime' | 'system';
 
@@ -37,6 +48,10 @@ export class GoalMarkerComponent implements Component {
   private readonly expandable: boolean;
   private readonly indent: string;
   private readonly leadingBlank: boolean;
+  /** Pointer hover over the marker's zone: the gray text renders white. */
+  private hovered = false;
+  /** Geometry of the last render, captured for `hitZones()`. */
+  private zoneMeta: { width: number; lines: number; interactive: boolean } | undefined;
 
   constructor(
     private readonly headline: string,
@@ -57,27 +72,59 @@ export class GoalMarkerComponent implements Component {
     this.expanded = expanded;
   }
 
+  /**
+   * The marker's single hit zone: its rendered region below the optional
+   * leading blank row. Registered only while a detail exists to reveal (or
+   * hide again) — a detail-less or non-expandable marker stays click/hover
+   * inert, matching the thinking blocks.
+   */
+  hitZones(): Iterable<HitZone> {
+    const meta = this.zoneMeta;
+    if (meta === undefined || !meta.interactive) return [];
+    const start = this.leadingBlank ? 1 : 0;
+    if (meta.lines <= start) return [];
+    return [
+      { id: GOAL_MARKER_HIT_ZONE, row: start, col: 1, width: meta.width, height: meta.lines - start },
+    ];
+  }
+
+  onHitZone(id: HitZoneId, _event: MouseEvent): void | boolean {
+    if (id !== GOAL_MARKER_HIT_ZONE) return false;
+    this.setExpanded(!this.expanded);
+  }
+
+  setHoveredZone(id: HitZoneId | null): void | boolean {
+    const hovered = id === GOAL_MARKER_HIT_ZONE;
+    if (hovered === this.hovered) return false;
+    this.hovered = hovered;
+  }
+
   render(width: number): string[] {
+    const base = this.renderBase(width);
+    if (!this.hovered) return base;
+    const start = this.leadingBlank ? 1 : 0;
+    return applyCardTone(base, { width, tone: 'hover', bgFrom: start, toneFrom: start });
+  }
+
+  private renderBase(width: number): string[] {
     const dot = currentTheme.fg(this.accentToken, this.marker);
     const head = currentTheme.fg(this.textToken, this.headline);
     const hasDetail = this.detail !== undefined && this.detail.length > 0;
-    if (!hasDetail) return this.clampToWidth([`${this.indent}${dot} ${head}`], width);
-
-    if (!this.expandable) {
-      return this.clampToWidth([`${this.indent}${dot} ${head}`], width);
+    let lines: string[];
+    if (!hasDetail || !this.expandable) {
+      lines = [`${this.indent}${dot} ${head}`];
+    } else if (!this.expanded) {
+      lines = [`${this.indent}${dot} ${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`];
+    } else {
+      lines = [`${this.indent}${dot} ${head}`];
+      const wrapWidth = Math.max(20, width - DETAIL_INDENT.length);
+      for (const line of wrap(this.detail, wrapWidth)) {
+        lines.push(DETAIL_INDENT + currentTheme.fg('textDim', line));
+      }
     }
-    if (!this.expanded) {
-      return this.clampToWidth(
-        [`${this.indent}${dot} ${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`],
-        width,
-      );
-    }
-    const out = [`${this.indent}${dot} ${head}`];
-    const wrapWidth = Math.max(20, width - DETAIL_INDENT.length);
-    for (const line of wrap(this.detail!, wrapWidth)) {
-      out.push(DETAIL_INDENT + currentTheme.fg('textDim', line));
-    }
-    return this.clampToWidth(out, width);
+    const clamped = this.clampToWidth(lines, width);
+    this.zoneMeta = { width, lines: clamped.length, interactive: this.expandable && hasDetail };
+    return clamped;
   }
 
   private clampToWidth(lines: string[], width: number): string[] {

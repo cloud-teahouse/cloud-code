@@ -1,4 +1,6 @@
 import { visibleWidth } from '@cloud-code/pi-tui';
+import type { MouseEvent } from '@cloud-code/pi-tui';
+import chalk from 'chalk';
 import { describe, expect, it } from 'vitest';
 
 import { SwarmModeMarkerComponent } from '#/tui/components/messages/swarm-markers';
@@ -154,6 +156,65 @@ describe('GoalMarkerComponent', () => {
     const marker = new GoalMarkerComponent('Goal paused', undefined, 'textDim');
     expect(marker.render(80)).toHaveLength(1);
     expect(strip(marker.render(80))).not.toContain('(ctrl+o)');
+  });
+});
+
+describe('GoalMarkerComponent — click/hover affordance', () => {
+  const mouse = undefined as unknown as MouseEvent;
+
+  const expandable = (): GoalMarkerComponent =>
+    new GoalMarkerComponent('Goal: no progress', 'still spinning', 'warning');
+
+  it('declares a hit zone only while a detail exists to reveal', () => {
+    const marker = expandable();
+    marker.render(80);
+    expect([...marker.hitZones()]).toHaveLength(1);
+
+    // No detail: nothing to reveal — no zone.
+    const plain = new GoalMarkerComponent('Goal paused', undefined, 'textDim');
+    plain.render(80);
+    expect([...plain.hitZones()]).toEqual([]);
+
+    // Detail present but expansion disabled (prominent markers): no zone.
+    const nonExpandable = new GoalMarkerComponent('Goal paused', 'still spinning', 'warning', {
+      expandable: false,
+    });
+    nonExpandable.render(80);
+    expect([...nonExpandable.hitZones()]).toEqual([]);
+  });
+
+  it('toggles the detail via clicks on the zone', () => {
+    const marker = expandable();
+    marker.render(80);
+    const zone = [...marker.hitZones()][0]!;
+    expect(strip(marker.render(80))).toContain('(ctrl+o)');
+
+    marker.onHitZone(zone.id, mouse);
+    expect(strip(marker.render(80))).toContain('still spinning');
+
+    // The zone stays while expanded so a click can fold the detail back.
+    expect([...marker.hitZones()]).toHaveLength(1);
+    marker.onHitZone(zone.id, mouse);
+    const collapsed = strip(marker.render(80));
+    expect(collapsed).not.toContain('still spinning');
+    expect(collapsed).toContain('(ctrl+o)');
+  });
+
+  it('whitens the marker on hover and restores on leave', () => {
+    // Force truecolor so the hover whiten shows up as changed ANSI codes.
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const marker = expandable();
+      const normal = marker.render(80);
+      const zone = [...marker.hitZones()][0]!;
+      expect(marker.setHoveredZone(zone.id)).not.toBe(false);
+      expect(marker.render(80)[0]).not.toBe(normal[0]);
+      expect(marker.setHoveredZone(null)).not.toBe(false);
+      expect(marker.render(80)[0]).toBe(normal[0]);
+    } finally {
+      chalk.level = previousLevel;
+    }
   });
 });
 

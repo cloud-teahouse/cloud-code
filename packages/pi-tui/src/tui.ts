@@ -509,6 +509,15 @@ export class TUI extends Container {
 	 */
 	private lastTranscriptHoveredZone: { owner: Component; id: HitZoneId } | null = null;
 	/**
+	 * The slot-panel zone the pointer currently hovers (chrome like the footer
+	 * or the todo panel, which never takes focus), as (declaring component,
+	 * zone id); null when it is over no slot hover zone. Tracked separately
+	 * from {@link lastHoveredZone} and {@link lastTranscriptHoveredZone}:
+	 * slot children outside the focused subtree get their own routing, as with
+	 * presses ({@link slotPanelZonePress}).
+	 */
+	private lastSlotPanelHoveredZone: { owner: Component; id: HitZoneId } | null = null;
+	/**
 	 * The zone-less transcript child under the pointer, painted with
 	 * {@link transcriptChildHoverStyle} at compose time. Children with their own
 	 * hit zones keep their custom hover; this only covers children without one.
@@ -689,6 +698,7 @@ export class TUI extends Container {
 		this.transcriptScrollbarGrabOffset = null;
 		this.transcriptIndex.reset();
 		this.clearTranscriptZoneHover();
+		this.clearSlotPanelZoneHover();
 		if (this.started) {
 			// Already running: switch the terminal mode live.
 			if (enabled) {
@@ -1727,6 +1737,7 @@ export class TUI extends Container {
 			// component's own hover routing.
 			if (event.button === 3) {
 				this.updateTranscriptZoneHover(event);
+				this.updateSlotPanelZoneHover(event);
 			}
 			const focused = this.focusedComponent;
 			if (focused === null) return;
@@ -2210,6 +2221,88 @@ export class TUI extends Container {
 			this.hoveredTranscriptChild = null;
 			this.requestChromeRender();
 		}
+	}
+
+	/**
+	 * Drop the slot-panel hover (fullscreen exit, the slot unmounting for a
+	 * takeover): the hovered owner is notified so it clears its affordance
+	 * instead of rendering it stale.
+	 */
+	private clearSlotPanelZoneHover(): void {
+		const prev = this.lastSlotPanelHoveredZone;
+		if (prev === null) return;
+		this.lastSlotPanelHoveredZone = null;
+		if (prev.owner.setHoveredZone?.(null) !== false) this.requestRender();
+	}
+
+	/**
+	 * Slot-panel zone hover: hit-test the slot children outside the focused
+	 * component's subtree (chrome like the footer or the todo panel, which
+	 * never takes focus) at the pointer position and notify the owning
+	 * components when the hovered (owner, id) pair changes — the hover
+	 * counterpart of {@link slotPanelZonePress}, mirroring
+	 * {@link updateTranscriptZoneHover}. A visible overlay shields the panels
+	 * it covers, so a covered panel's hover clears instead of firing through.
+	 */
+	private updateSlotPanelZoneHover(event: MouseEvent): void {
+		const { scroll, slot } = this.layoutRegions;
+		const regionsMounted =
+			scroll !== undefined &&
+			slot !== undefined &&
+			this.isComponentMounted(scroll) &&
+			this.isComponentMounted(slot);
+		let next: { owner: Component; id: HitZoneId } | null = null;
+		if (
+			regionsMounted &&
+			slot instanceof Container &&
+			event.row > this.lastViewportHeight &&
+			// A visible overlay owns the pointer inside its rect.
+			!this.isPointShieldedByOverlay(event.row, event.col)
+		) {
+			const row = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
+			const focused = this.focusedComponent;
+			const width = Math.max(1, this.terminal.columns);
+			// Render-free pre-check, same as slotPanelZonePress: bail before the
+			// height walk when no panel declares zones (the common case).
+			const anyZones = slot.children.some(
+				(child) =>
+					!(focused !== null && this.containsComponent(child, focused)) && hasHitZones(child),
+			);
+			if (anyZones) {
+				let acc = 0;
+				for (const child of slot.children) {
+					const base = acc + slot.rowsBeforeChild(child);
+					const height = child.render(width).length;
+					if (row >= base && row < base + height) {
+						if (!(focused !== null && this.containsComponent(child, focused)) && hasHitZones(child)) {
+							const col = event.col - (this.colInsetWithin(slot, child) ?? 0);
+							const zone = hitZoneAt(resolveHitZones(child, width), row - base, col, "hover");
+							if (zone !== null) next = { owner: zone.owner, id: zone.id };
+						}
+						break;
+					}
+					acc = base + height;
+				}
+			}
+		}
+		const prev = this.lastSlotPanelHoveredZone;
+		if (prev === null && next === null) return;
+		if (prev !== null && next !== null && prev.owner === next.owner && prev.id === next.id) return;
+		let renderNeeded = false;
+		if (prev !== null && (next === null || prev.owner !== next.owner)) {
+			renderNeeded = prev.owner.setHoveredZone?.(null) !== false;
+		}
+		if (next !== null) {
+			renderNeeded = next.owner.setHoveredZone?.(next.id) !== false || renderNeeded;
+		}
+		this.lastSlotPanelHoveredZone = next;
+		if (renderNeeded) this.requestRender();
+	}
+
+	/** Whether a visible overlay of the focused component covers the 1-based cell. */
+	private isPointShieldedByOverlay(row: number, col: number): boolean {
+		const overlay = this.visibleOverlayEntryFor(this.focusedComponent);
+		return overlay !== undefined && this.isPointInOverlayRect(overlay, row, col);
 	}
 
 	private handleInput(data: string): void {
@@ -2739,6 +2832,7 @@ export class TUI extends Container {
 			this.transcriptScrollbarDrag = false;
 			this.transcriptScrollbarGrabOffset = null;
 			this.clearTranscriptZoneHover();
+			this.clearSlotPanelZoneHover();
 			this.stickyHeaderVisible = false;
 			this.stickyJumpTo = null;
 			const lines = this.render(width).slice(0, height);

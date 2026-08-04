@@ -1,6 +1,8 @@
 import chalk from 'chalk';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { MouseEvent } from '@cloud-code/pi-tui';
+
 import { CompactionComponent } from '#/tui/components/dialogs/compaction';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 
@@ -261,6 +263,90 @@ describe('CompactionComponent — progress bar', () => {
         cancelled.dispose();
       }
     } finally {
+      component.dispose();
+    }
+  });
+});
+
+describe('CompactionComponent — click/hover affordance', () => {
+  const mouse = undefined as unknown as MouseEvent;
+
+  it('declares a hit zone only once a completed compaction has a summary', () => {
+    const now = 1_000_000;
+    const running = new CompactionComponent(undefined, undefined, undefined, 100_000, () => now);
+    try {
+      running.render(120);
+      expect([...running.hitZones()]).toEqual([]);
+
+      // Done without a summary: nothing to reveal — no zone.
+      running.markDone(100_000, 12_000);
+      running.render(120);
+      expect([...running.hitZones()]).toEqual([]);
+    } finally {
+      running.dispose();
+    }
+
+    const cancelled = new CompactionComponent(undefined, undefined, undefined, 100_000, () => now);
+    try {
+      cancelled.markCanceled();
+      cancelled.render(120);
+      expect([...cancelled.hitZones()]).toEqual([]);
+    } finally {
+      cancelled.dispose();
+    }
+
+    const done = new CompactionComponent(undefined, undefined, undefined, 100_000, () => now);
+    try {
+      done.markDone(100_000, 12_000, 'Keep the compaction notes.');
+      done.render(120);
+      expect([...done.hitZones()]).toHaveLength(1);
+    } finally {
+      done.dispose();
+    }
+  });
+
+  it('toggles the summary via clicks on the zone', () => {
+    const component = new CompactionComponent();
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      component.render(120);
+      const zone = [...component.hitZones()][0]!;
+      expect(strip(component.render(120).join('\n'))).not.toContain(
+        'Keep the src/tui compaction notes.',
+      );
+
+      component.onHitZone(zone.id, mouse);
+      expect(strip(component.render(120).join('\n'))).toContain(
+        'Keep the src/tui compaction notes.',
+      );
+
+      // The zone stays while expanded so a click can fold the summary back.
+      expect([...component.hitZones()]).toHaveLength(1);
+      component.onHitZone(zone.id, mouse);
+      expect(strip(component.render(120).join('\n'))).not.toContain(
+        'Keep the src/tui compaction notes.',
+      );
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('whitens the block on hover and restores on leave', () => {
+    // Force truecolor so the hover whiten shows up as changed ANSI codes.
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    const component = new CompactionComponent();
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      const normal = component.render(120);
+      const zone = [...component.hitZones()][0]!;
+      expect(component.setHoveredZone(zone.id)).not.toBe(false);
+      const hovered = component.render(120);
+      expect(hovered[1]).not.toBe(normal[1]);
+      expect(component.setHoveredZone(null)).not.toBe(false);
+      expect(component.render(120)[1]).toBe(normal[1]);
+    } finally {
+      chalk.level = previousLevel;
       component.dispose();
     }
   });

@@ -604,4 +604,41 @@ describe("slot panel zone press (unfocused chrome)", () => {
 		assert.strictEqual(chrome.hits[0]!.id, "z3");
 		assert.strictEqual(chrome.hits[0]!.row, 3);
 	});
+
+	it("tracks hover over unfocused chrome zones, clearing on leave", async () => {
+		const { terminal, chrome } = await setupChromePanel();
+		// Motion (button 35 = button-free) over the zone: terminal row 9 =
+		// chrome row 0; zone col 3 composes to terminal col 4 through the gutter.
+		terminal.sendInput("\x1b[<35;4;9M");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(chrome.hovers, ["z0"]);
+
+		// Moving within the same zone keeps the hover — no re-notification.
+		terminal.sendInput("\x1b[<35;6;9M");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(chrome.hovers, ["z0"]);
+
+		// Sliding off the zone (still on the panel) clears it.
+		terminal.sendInput("\x1b[<35;20;9M");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(chrome.hovers, ["z0", null]);
+	});
+
+	it("never hovers unfocused chrome zones from the transcript or focused subtree", async () => {
+		const { terminal, chrome } = await setupChromePanel();
+		terminal.sendInput("\x1b[<35;5;3M"); // transcript viewport
+		await terminal.waitForRender();
+		terminal.sendInput("\x1b[<35;5;8M"); // editor rows (focused subtree)
+		await terminal.waitForRender();
+		assert.deepStrictEqual(chrome.hovers, []);
+	});
+
+	it("accounts for the slot-top clip when hovering chrome zones", async () => {
+		// Same clip geometry as the press case: visible slot starts at slot
+		// line 6 on terminal row 2 → chrome row 3 (zone z3).
+		const { terminal, chrome } = await setupChromePanel({ chromeLines: 12 });
+		terminal.sendInput("\x1b[<35;4;2M");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(chrome.hovers, ["z3"]);
+	});
 });

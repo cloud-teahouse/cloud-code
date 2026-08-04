@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 
+import type { MouseEvent } from '@cloud-code/pi-tui';
+import chalk from 'chalk';
+
 import {
   TodoPanelComponent,
   formatHiddenCounts,
@@ -410,5 +413,70 @@ describe('activeForm', () => {
     panel.setTodos([{ title: 'Add tests', status: 'in_progress' }]);
     const out = strip(panel.render(80).join('\n'));
     expect(out).toMatch(/● Add tests/);
+  });
+});
+
+describe('TodoPanelComponent — click/hover affordance', () => {
+  const mouse = undefined as unknown as MouseEvent;
+
+  // No in_progress rows: the collapsed view picks the latest done + the
+  // earliest pending, hiding 'task six' behind the overflow footer.
+  const sixTodos: TodoItem[] = [
+    { title: 'task one', status: 'done' },
+    { title: 'task two', status: 'pending' },
+    { title: 'task three', status: 'pending' },
+    { title: 'task four', status: 'pending' },
+    { title: 'task five', status: 'pending' },
+    { title: 'task six', status: 'pending' },
+  ];
+
+  it('declares a hit zone only while the list overflows the collapsed cap', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(sixTodos);
+    panel.render(80);
+    expect([...panel.hitZones()]).toHaveLength(1);
+
+    // Five rows fit the cap: nothing hidden — no zone.
+    const short = new TodoPanelComponent();
+    short.setTodos(sixTodos.slice(0, 5));
+    short.render(80);
+    expect([...short.hitZones()]).toEqual([]);
+
+    // An empty panel renders no rows at all.
+    expect([...new TodoPanelComponent().hitZones()]).toEqual([]);
+  });
+
+  it('toggles expansion via clicks on the zone', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(sixTodos);
+    panel.render(80);
+    const zone = [...panel.hitZones()][0]!;
+    expect(strip(panel.render(80).join('\n'))).not.toContain('task six');
+
+    panel.onHitZone(zone.id, mouse);
+    expect(strip(panel.render(80).join('\n'))).toContain('task six');
+
+    // The zone stays while expanded so a click can collapse the list back.
+    expect([...panel.hitZones()]).toHaveLength(1);
+    panel.onHitZone(zone.id, mouse);
+    expect(strip(panel.render(80).join('\n'))).not.toContain('task six');
+  });
+
+  it('whitens gray rows on hover and restores on leave', () => {
+    // Force truecolor so the hover whiten shows up as changed ANSI codes.
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const panel = new TodoPanelComponent();
+      panel.setTodos(sixTodos);
+      const normal = panel.render(80);
+      const zone = [...panel.hitZones()][0]!;
+      expect(panel.setHoveredZone(zone.id)).not.toBe(false);
+      expect(panel.render(80).join('\n')).not.toBe(normal.join('\n'));
+      expect(panel.setHoveredZone(null)).not.toBe(false);
+      expect(panel.render(80).join('\n')).toBe(normal.join('\n'));
+    } finally {
+      chalk.level = previousLevel;
+    }
   });
 });

@@ -11,17 +11,34 @@
  *
  * Bullet animation mirrors `ToolCallComponent` (500ms blink) so the user
  * reads the same "work in progress" signal across the UI.
+ *
+ * A completed block with a summary is expandable: ctrl+o (shared with tool
+ * output) or a mouse click anywhere on the block; hovering whitens the gray
+ * rows, matching the thinking/tool-card affordance.
  */
 
-import { Container, Text, Spacer } from '@cloud-code/pi-tui';
-import type { TUI } from '@cloud-code/pi-tui';
+import {
+  Container,
+  Text,
+  Spacer,
+  type HitZone,
+  type HitZoneId,
+  type MouseEvent,
+  type TUI,
+} from '@cloud-code/pi-tui';
 
+import { SHIMMER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
+import { applyCardTone } from '#/tui/components/messages/card-tone';
 import { blinkPhaseOn, shimmerText } from '#/tui/utils/shimmer';
 
-const BLINK_INTERVAL = 500;
+/** Half-period of the bullet blink; the phase itself is wall-clock derived. */
+const BLINK_HALF_PERIOD_MS = 500;
+
+/** Hit-zone id of the block's single whole-region interactive area. */
+const COMPACTION_HIT_ZONE = 'card';
 
 /**
  * Placeholder interpolated for the bar so the progress line can be split
@@ -41,7 +58,7 @@ export class CompactionComponent extends Container {
   private readonly now: () => number;
   private readonly startedAt: number;
   private readonly estimatedTotalMs: number;
-  private blinkTimer: ReturnType<typeof setInterval> | null = null;
+  private animationTimer: ReturnType<typeof setInterval> | null = null;
   private done = false;
   private canceled = false;
   private tokensBeforeDone: number | undefined;
@@ -49,6 +66,10 @@ export class CompactionComponent extends Container {
   private summary: string | undefined;
   private summaryText: Text | undefined;
   private expanded = false;
+  /** Pointer hover over the block's zone: the gray rows render white. */
+  private hovered = false;
+  /** Geometry of the last render, captured for `hitZones()`. */
+  private zoneMeta: { width: number; lines: number } | undefined;
 
   constructor(ui?: TUI, instruction?: string | undefined, tip?: string, tokensBefore?: number, now?: () => number) {
     super();
@@ -75,7 +96,7 @@ export class CompactionComponent extends Container {
     this.addChild(this.progressText);
     this.addInstructionChild();
 
-    this.startBlink();
+    this.startAnimation();
   }
 
   private addInstructionChild(): void {
@@ -117,7 +138,7 @@ export class CompactionComponent extends Container {
     this.tokensBeforeDone = tokensBefore;
     this.tokensAfter = tokensAfter;
     this.summary = summary;
-    this.stopBlink();
+    this.stopAnimation();
     this.removeProgressChild();
     this.headerText.setText(this.buildHeader());
     if (this.expanded) {
@@ -129,7 +150,7 @@ export class CompactionComponent extends Container {
   markCanceled(): void {
     if (this.done || this.canceled) return;
     this.canceled = true;
-    this.stopBlink();
+    this.stopAnimation();
     this.removeProgressChild();
     this.headerText.setText(this.buildHeader());
     this.ui?.requestRender();
@@ -169,7 +190,7 @@ export class CompactionComponent extends Container {
   }
 
   dispose(): void {
-    this.stopBlink();
+    this.stopAnimation();
   }
 
   private buildHeader(): string {
@@ -200,7 +221,7 @@ export class CompactionComponent extends Container {
       const label = currentTheme.boldFg('warning', t('selectors.compaction.cancelled'));
       return `${bullet}${label}`;
     }
-    const bullet = blinkPhaseOn(this.now(), BLINK_INTERVAL)
+    const bullet = blinkPhaseOn(this.now(), BLINK_HALF_PERIOD_MS)
       ? currentTheme.fg('text', STATUS_BULLET)
       : '  ';
     const label = shimmerText(t('selectors.compaction.compacting'), this.now());
@@ -210,28 +231,62 @@ export class CompactionComponent extends Container {
     return `${bullet}${label}${tip}`;
   }
 
-  private startBlink(): void {
-    // The bullet phase derives from wall-clock at build time; the interval
-    // only schedules repaints, so timer drift never bends the rhythm.
-    this.blinkTimer = setInterval(() => {
+  private startAnimation(): void {
+    // Tick at the shared shimmer cadence: the bullet phase (500ms) and the
+    // shimmer wave (100ms) both derive from wall-clock at build time, so the
+    // interval only schedules repaints — timer drift never bends the rhythm,
+    // and the wave advances one bucket per frame instead of jumping several.
+    this.animationTimer = setInterval(() => {
       this.headerText.setText(this.buildHeader());
       this.progressText?.setText(this.buildProgressLine());
       this.ui?.requestRender();
-    }, BLINK_INTERVAL);
+    }, SHIMMER_INTERVAL_MS);
   }
 
   override render(width: number): string[] {
     // The progress line is time-derived — refresh it at render time, not only
-    // on the blink tick, so every repaint shows the current estimate.
+    // on the animation tick, so every repaint shows the current estimate.
     this.progressText?.setText(this.buildProgressLine());
-    return super.render(width);
+    const base = super.render(width);
+    this.zoneMeta = { width, lines: base.length };
+    if (!this.hovered) return base;
+    // Child 0 is the leading spacer — the hover whiten starts at the header.
+    return applyCardTone(base, { width, tone: 'hover', bgFrom: 1, toneFrom: 1 });
   }
 
-  private stopBlink(): void {
-    if (this.blinkTimer !== null) {
-      clearInterval(this.blinkTimer);
-      this.blinkTimer = null;
+  private stopAnimation(): void {
+    if (this.animationTimer !== null) {
+      clearInterval(this.animationTimer);
+      this.animationTimer = null;
     }
+  }
+
+  /** The block is mouse-expandable once a completed compaction has a summary. */
+  private isSummaryExpandable(): boolean {
+    return this.done && this.summary !== undefined && this.summary.length > 0;
+  }
+
+  /**
+   * The block's single hit zone: its rendered region below the leading
+   * spacer. Registered only while a finished block hides (or shows, so a
+   * click can fold it back) the summary — a running or summary-less block
+   * stays click/hover inert, matching the thinking blocks.
+   */
+  hitZones(): Iterable<HitZone> {
+    const meta = this.zoneMeta;
+    if (meta === undefined || !this.isSummaryExpandable() || meta.lines <= 1) return [];
+    return [{ id: COMPACTION_HIT_ZONE, row: 1, col: 1, width: meta.width, height: meta.lines - 1 }];
+  }
+
+  onHitZone(id: HitZoneId, _event: MouseEvent): void | boolean {
+    if (id !== COMPACTION_HIT_ZONE) return false;
+    this.setExpanded(!this.expanded);
+  }
+
+  setHoveredZone(id: HitZoneId | null): void | boolean {
+    const hovered = id === COMPACTION_HIT_ZONE;
+    if (hovered === this.hovered) return false;
+    this.hovered = hovered;
   }
 
   /**
