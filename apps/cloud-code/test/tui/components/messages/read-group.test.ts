@@ -47,6 +47,10 @@ describe('ReadGroupComponent hover and click interaction', () => {
   });
 
   const SENTINEL = '\u0001';
+  const hexOpen = (hex: string): string => {
+    const sampled = chalk.hex(hex)(SENTINEL);
+    return sampled.slice(0, sampled.indexOf(SENTINEL));
+  };
   const fgOpen = (token: 'text' | 'success'): string => {
     const sampled = currentTheme.fg(token, SENTINEL);
     return sampled.slice(0, sampled.indexOf(SENTINEL));
@@ -110,7 +114,7 @@ describe('ReadGroupComponent hover and click interaction', () => {
       expect(line).toContain(BG_OPEN);
     }
     expect(strip(expanded[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
-    expect(expanded[1]).toContain(fgOpen('success'));
+    expect(expanded[1]).toContain(hexOpen(currentTheme.palette.diffAddedStrong)); // success-hex bullet lifts to its Strong variant on click
 
     group.onHitZone('card', press);
     expect(group.render(120)).toEqual(base);

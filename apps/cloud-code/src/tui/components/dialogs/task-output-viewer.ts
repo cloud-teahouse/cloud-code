@@ -319,8 +319,8 @@ export class TaskOutputViewer extends Container implements Focusable {
     const scrollTop = Math.max(0, Math.min(this.scrollTop, this.maxScroll()));
 
     const viewRows = bodyHeight - 2; // inside top + bottom border
-    const top = currentTheme.fg('border', '┌' + '─'.repeat(Math.max(0, width - 2)) + '┐');
-    const bottom = currentTheme.fg('border', '└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
+    const top = currentTheme.fg('border', '╭' + '─'.repeat(Math.max(0, width - 2)) + '╮');
+    const bottom = currentTheme.fg('border', '╰' + '─'.repeat(Math.max(0, width - 2)) + '╯');
 
     const out: string[] = [top];
     for (let i = 0; i < viewRows; i++) {

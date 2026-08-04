@@ -172,8 +172,8 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
     if (this.scrollTop < 0) this.scrollTop = 0;
 
     const viewRows = bodyHeight - 2;
-    const top = currentTheme.fg('borderFocus', '┌' + '─'.repeat(Math.max(0, width - 2)) + '┐');
-    const bottom = currentTheme.fg('borderFocus', '└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
+    const top = currentTheme.fg('borderFocus', '╭' + '─'.repeat(Math.max(0, width - 2)) + '╮');
+    const bottom = currentTheme.fg('borderFocus', '╰' + '─'.repeat(Math.max(0, width - 2)) + '╯');
 
     const out: string[] = [top];
     for (let i = 0; i < viewRows; i++) {

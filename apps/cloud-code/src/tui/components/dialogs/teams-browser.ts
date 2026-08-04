@@ -668,8 +668,8 @@ export class TeamsBrowserApp extends Container implements Focusable {
           ' ' +
           currentTheme.fg('border', '─'.repeat(remainingDashes))
         : currentTheme.fg('border', '─'.repeat(innerWidth));
-    const top = currentTheme.fg('border', '┌') + topMid + currentTheme.fg('border', '┐');
-    const bottom = currentTheme.fg('border', '└' + '─'.repeat(innerWidth) + '┘');
+    const top = currentTheme.fg('border', '╭') + topMid + currentTheme.fg('border', '╮');
+    const bottom = currentTheme.fg('border', '╰' + '─'.repeat(innerWidth) + '╯');
 
     const lines: string[] = [top];
     for (let i = 0; i < innerHeight; i++) {

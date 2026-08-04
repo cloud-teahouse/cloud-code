@@ -31,7 +31,7 @@ import { SHIMMER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
-import { applyCardTone } from '#/tui/components/messages/card-tone';
+import { applyCardTone, type CardTone } from '#/tui/components/messages/card-tone';
 import { blinkPhaseOn, shimmerText } from '#/tui/utils/shimmer';
 
 /** Half-period of the bullet blink; the phase itself is wall-clock derived. */
@@ -66,6 +66,8 @@ export class CompactionComponent extends Container {
   private summary: string | undefined;
   private summaryText: Text | undefined;
   private expanded = false;
+  /** Set when the expansion came from a click: paints the gray region block. */
+  private clickExpanded = false;
   /** Pointer hover over the block's zone: the gray rows render white. */
   private hovered = false;
   /** Geometry of the last render, captured for `hitZones()`. */
@@ -159,6 +161,9 @@ export class CompactionComponent extends Container {
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
+    // The keyboard path (ctrl+o, collapse-all) always lands in the
+    // background-free form; a collapse also clears a click expansion's block.
+    this.clickExpanded = false;
     if (expanded) {
       this.addSummaryChild();
     } else {
@@ -249,9 +254,10 @@ export class CompactionComponent extends Container {
     this.progressText?.setText(this.buildProgressLine());
     const base = super.render(width);
     this.zoneMeta = { width, lines: base.length };
-    if (!this.hovered) return base;
-    // Child 0 is the leading spacer — the hover whiten starts at the header.
-    return applyCardTone(base, { width, tone: 'hover', bgFrom: 1 });
+    const tone: CardTone = this.clickExpanded ? 'click' : this.hovered ? 'hover' : 'normal';
+    if (tone === 'normal') return base;
+    // Child 0 is the leading spacer — the tone starts at the header.
+    return applyCardTone(base, { width, tone, bgFrom: 1 });
   }
 
   private stopAnimation(): void {
@@ -280,7 +286,17 @@ export class CompactionComponent extends Container {
 
   onHitZone(id: HitZoneId, _event: MouseEvent): void | boolean {
     if (id !== COMPACTION_HIT_ZONE) return false;
-    this.setExpanded(!this.expanded);
+    // Click expansion paints the gray region block (like the tool cards);
+    // clicking an expanded block folds it back, whatever the expansion path.
+    if (this.expanded) {
+      this.setExpanded(false);
+    } else {
+      this.expanded = true;
+      this.clickExpanded = true;
+      this.addSummaryChild();
+      this.headerText.setText(this.buildHeader());
+      this.ui?.requestRender();
+    }
   }
 
   setHoveredZone(id: HitZoneId | null): void | boolean {

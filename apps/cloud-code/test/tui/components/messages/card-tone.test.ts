@@ -70,13 +70,13 @@ describe('applyCardTone', () => {
     // palette: both gray-family runs whiten on hover.
     expect(out).toContain(`${TEXT_OPEN}   1 \x1b[39m`);
     expect(out).toContain(`${TEXT_OPEN} … meta\x1b[39m`);
-    // Semantic colors survive untouched.
-    expect(out).toContain(chalk.hex(palette.diffAdded)('+ added'));
+    // The added-run lifts to its Strong variant; syntax colors stay untouched.
+    expect(out).toContain(chalk.hex(palette.diffAddedStrong)('+ added'));
     expect(out).toContain('\x1b[34mconst\x1b[39m');
     expect(strip(out).trimEnd()).toBe(strip(line));
   });
 
-  it('hover never paints a background, keeping semantic colors intact', () => {
+  it('hover never paints a background; diff-toned colors lift to their Strong variants', () => {
     const palette = currentTheme.palette;
     const line = chalk.hex(palette.diffAdded)('+ added') + chalk.hex(palette.error)(' error');
     const image = '\u001B_Ga=T,f=100;payload\u001B\\';
@@ -89,8 +89,9 @@ describe('applyCardTone', () => {
     expect(out[0]).toBe('');
     expect(out[1]).not.toContain(HOVER_BG_OPEN);
     expect(out[1]).not.toContain(BG_OPEN);
-    expect(out[1]).toContain(chalk.hex(palette.diffAdded)('+ added'));
-    expect(out[1]).toContain(chalk.hex(palette.error)(' error'));
+    // diffAdded/error share their hexes with the diff tokens, so both lift.
+    expect(out[1]).toContain(chalk.hex(palette.diffAddedStrong)('+ added'));
+    expect(out[1]).toContain(chalk.hex(palette.diffRemovedStrong)(' error'));
     expect(strip(out[1]!)).toBe(strip(line));
     expect(out[2]).toBe(image);
   });

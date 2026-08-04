@@ -2826,6 +2826,10 @@ describe('ToolCallComponent', () => {
       const sampled = currentTheme.fg(token, SENTINEL);
       return sampled.slice(0, sampled.indexOf(SENTINEL));
     };
+    const hexOpen = (hex: string): string => {
+      const sampled = chalk.hex(hex)(SENTINEL);
+      return sampled.slice(0, sampled.indexOf(SENTINEL));
+    };
     const bgOpen = (): string => {
       const sampled = currentTheme.bg('userMessageBackground', SENTINEL);
       return sampled.slice(0, sampled.indexOf(SENTINEL));
@@ -2903,9 +2907,9 @@ describe('ToolCallComponent', () => {
       for (const line of expanded.slice(1)) {
         expect(line).toContain(BG_OPEN);
       }
-      // The header row keeps its foreground colors inside the block.
+      // The header row keeps its text and its (lifted) bullet inside the block.
       expect(strip(expanded[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
-      expect(expanded[1]).toContain(fgOpen('success'));
+      expect(expanded[1]).toContain(hexOpen(currentTheme.palette.diffAddedStrong));
       // The expanded content renders white, not gray.
       const body = expanded.slice(2).join('\n');
       expect(body).toContain(TEXT_OPEN);
@@ -3180,7 +3184,9 @@ describe('ToolCallComponent', () => {
       const hovered = component.render(100);
       expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
       const body = hovered.slice(2).join('\n');
-      expect(body).toContain(delOpen);
+      // The add/remove runs lift to their Strong variants on hover.
+      expect(body).not.toContain(delOpen);
+      expect(body).toContain(hexOpen(currentTheme.palette.diffRemovedStrong));
       // diffGutter shares textMuted's hex: the gray gutter whitens on hover.
       expect(body).not.toContain(gutterOpen);
       expect(body).toContain(hexOpen(currentTheme.palette.diffAddedStrong)); // diff header row
@@ -3236,8 +3242,9 @@ describe('ToolCallComponent', () => {
         expect(line).toContain(BG_OPEN);
       }
       const body = expanded.slice(2).join('\n');
-      expect(body).toContain(hexOpen(currentTheme.palette.diffAdded));
-      expect(body).toContain(hexOpen(currentTheme.palette.diffRemoved));
+      // The diff colors lift to their Strong variants inside the click block.
+      expect(body).toContain(hexOpen(currentTheme.palette.diffAddedStrong));
+      expect(body).toContain(hexOpen(currentTheme.palette.diffRemovedStrong));
 
       component.onHitZone('card', press);
       expect(component.render(100)).toEqual(base);
@@ -3403,8 +3410,11 @@ describe('ToolCallComponent', () => {
         expect(hovered[1]).not.toBe(normal[1]);
         // The dim argument run turns white…
         expect(hovered[1]).toContain(`${fgOpen('text')} (src/foo.ts)`);
-        // …while the success ● and the bold tool name keep their tones.
-        expect(hovered[1]).toContain(`${fgOpen('success')}${STATUS_BULLET}`);
+        // …while the success-hex ● (lifted to its Strong variant on hover)
+        // and the bold tool name keep their identity.
+        expect(hovered[1]).toContain(
+          chalk.hex(currentTheme.palette.diffAddedStrong)(STATUS_BULLET),
+        );
         expect(component.setHoveredZone(null)).not.toBe(false);
         expect(component.render(100)[1]).toBe(normal[1]);
         component.dispose();

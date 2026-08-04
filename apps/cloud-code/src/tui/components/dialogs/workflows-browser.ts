@@ -732,12 +732,12 @@ export class WorkflowsBrowserApp extends Container {
     const topMid = visibleWidth(titleSegment) <= innerWidth
       ? currentTheme.fg('border', '─ ') + titleStyled + currentTheme.fg('border', ` ${'─'.repeat(Math.max(0, innerWidth - visibleWidth(titleSegment)))}`)
       : currentTheme.fg('border', '─'.repeat(innerWidth));
-    const lines = [currentTheme.fg('border', '┌') + topMid + currentTheme.fg('border', '┐')];
+    const lines = [currentTheme.fg('border', '╭') + topMid + currentTheme.fg('border', '╮')];
     for (let index = 0; index < innerHeight; index++) {
       const line = content[index] ?? '';
       lines.push(currentTheme.fg('border', '│') + fitExactly(line, innerWidth) + currentTheme.fg('border', '│'));
     }
-    lines.push(currentTheme.fg('border', `└${'─'.repeat(innerWidth)}┘`));
+    lines.push(currentTheme.fg('border', `╰${'─'.repeat(innerWidth)}╯`));
     return lines;
   }
 }

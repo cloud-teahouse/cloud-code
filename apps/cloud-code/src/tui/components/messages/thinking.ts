@@ -34,6 +34,8 @@ export class ThinkingComponent implements Component {
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
   private expanded = false;
+  /** Set when the expansion came from a click: paints the gray region block. */
+  private clickExpanded = false;
   private readonly ui: TUI | undefined;
   private spinnerInterval: ReturnType<typeof setInterval> | undefined;
   /** Pointer hover over the block's zone: the gray text renders white. */
@@ -105,6 +107,9 @@ export class ThinkingComponent implements Component {
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
+    // The keyboard path (ctrl+o, collapse-all) always lands in the background-
+    // free form; a collapse also clears a click expansion's painted block.
+    this.clickExpanded = false;
     this.markRenderDirty();
   }
 
@@ -122,7 +127,16 @@ export class ThinkingComponent implements Component {
 
   onHitZone(id: HitZoneId, _event: MouseEvent): void | boolean {
     if (id !== THINKING_HIT_ZONE) return false;
-    this.setExpanded(!this.expanded);
+    // Click expansion paints the gray region block (like the tool cards);
+    // clicking an expanded block folds it back, whatever the expansion path.
+    if (this.expanded) {
+      this.expanded = false;
+      this.clickExpanded = false;
+    } else {
+      this.expanded = true;
+      this.clickExpanded = true;
+    }
+    this.markRenderDirty();
     this.ui?.requestRender();
   }
 
@@ -213,11 +227,12 @@ export class ThinkingComponent implements Component {
 
   /**
    * Paint the interaction tone over the rendered base lines, like the tool
-   * cards: a hovered block whitens its gray rows (the leading blank row is
-   * excluded). Normal tone returns the base array untouched.
+   * cards: a click-expanded block sits on the gray region background with
+   * whitened content, a hovered one just whitens its gray rows (the leading
+   * blank row is excluded). Normal tone returns the base array untouched.
    */
   private applyTone(base: string[], width: number): string[] {
-    const tone: CardTone = this.hovered ? 'hover' : 'normal';
+    const tone: CardTone = this.clickExpanded ? 'click' : this.hovered ? 'hover' : 'normal';
     if (tone === 'normal') return base;
     const cached = this.toneCache;
     if (cached !== undefined && cached.base === base && cached.width === width && cached.tone === tone) {

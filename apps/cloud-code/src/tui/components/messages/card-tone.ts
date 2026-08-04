@@ -15,17 +15,18 @@
  * rendered output, so hover never rebuilds child components. The gray family
  * is replaced by sampled theme open sequences (`textDim`/`textMuted` — the
  * diff gutter/meta tokens share those exact hex values and are covered by
- * the same sequences) plus `chalk.dim` (SGR 2) runs. Lines made only from
- * plain text and other inline styles receive the text foreground around
- * their unstyled spans, while nested syntax/link colors remain intact, so
- * every detail row gets a readable hover change without washing its
- * semantic colors away.
+ * the same sequences) plus `chalk.dim` (SGR 2) runs, and the diff red/green
+ * runs lift to their Strong palette variants so a mostly-diff card still
+ * shows a visible hover change. Lines made only from plain text and other
+ * inline styles receive the text foreground around their unstyled spans,
+ * while nested syntax/link colors remain intact, so every detail row gets a
+ * readable hover change without washing its semantic colors away.
  */
 
 import chalk from 'chalk';
 import { isImageLine, visibleWidth } from '@cloud-code/pi-tui';
 
-import { currentTheme } from '#/tui/theme';
+import { currentTheme, type ColorToken } from '#/tui/theme';
 
 export type CardTone = 'normal' | 'hover' | 'click';
 
@@ -46,8 +47,16 @@ export interface CardToneOptions {
 export function applyCardTone(lines: string[], options: CardToneOptions): string[] {
   const { width, tone, bgFrom } = options;
   if (tone === 'normal' || lines.length === 0) return lines;
-  const grayFgOpens = [sampledFgOpen('textDim'), sampledFgOpen('textMuted')];
   const textFgOpen = sampledFgOpen('text');
+  // The gray family whitens; the diff red/green lift to their Strong variants
+  // (same-hex tokens like the success bullet share the lift — a subtle raise
+  // that reads as one coherent highlight across the card).
+  const liftPairs: readonly (readonly [string, string])[] = [
+    [sampledFgOpen('textDim'), textFgOpen],
+    [sampledFgOpen('textMuted'), textFgOpen],
+    [sampledFgOpen('diffAdded'), sampledFgOpen('diffAddedStrong')],
+    [sampledFgOpen('diffRemoved'), sampledFgOpen('diffRemovedStrong')],
+  ];
   const whiten = textFgOpen.length > 0;
   // Hover is foreground-only: gray text brightens to white, never a
   // background wash. Only the click tone paints the gray block.
@@ -61,7 +70,7 @@ export function applyCardTone(lines: string[], options: CardToneOptions): string
     // inline image's escape payload, so image rows keep their raw form even
     // inside the block.
     if (whiten && i >= bgFrom && !image) {
-      line = brightenDetailLine(line, grayFgOpens, textFgOpen);
+      line = brightenDetailLine(line, liftPairs, textFgOpen);
     }
     if (paint && i >= bgFrom && !image) {
       line = paintBackground(line, width);
@@ -82,7 +91,7 @@ function paintBackground(line: string, width: number): string {
  * sampled through the theme itself so any palette and any chalk color level
  * (truecolor/256/16/none) is matched verbatim. Empty when colors are off.
  */
-function sampledFgOpen(token: 'textDim' | 'textMuted' | 'text'): string {
+function sampledFgOpen(token: ColorToken): string {
   const sentinel = '\u0001';
   const sampled = currentTheme.fg(token, sentinel);
   const index = sampled.indexOf(sentinel);
@@ -90,10 +99,11 @@ function sampledFgOpen(token: 'textDim' | 'textMuted' | 'text'): string {
 }
 
 /**
- * Turn a rendered line's gray runs white: the gray-family foregrounds
- * (straight sequence swaps — the matching close is the shared SGR 39) and
- * `chalk.dim` segments (SGR 2 … 22). Bold shares the SGR 22 closer with dim,
- * so dim/bold opens are tracked on a stack to pair each close with the
+ * Turn a rendered line's gray runs white and lift the diff red/green: every
+ * `from` open sequence swaps to its `to` (straight sequence swaps — the
+ * matching close is the shared SGR 39), and `chalk.dim` segments (SGR 2 … 22)
+ * take the text foreground. Bold shares the SGR 22 closer with dim, so
+ * dim/bold opens are tracked on a stack to pair each close with the
  * attribute it actually ends; chalk reopens the outer style after an inner
  * close, which the stack model absorbs unchanged. If a line has no gray run,
  * its plain spans are wrapped in the text foreground instead, re-opening that
@@ -101,12 +111,12 @@ function sampledFgOpen(token: 'textDim' | 'textMuted' | 'text'): string {
  */
 function brightenDetailLine(
   line: string,
-  grayFgOpens: readonly string[],
+  liftPairs: readonly (readonly [string, string])[],
   textFgOpen: string,
 ): string {
   let out = line;
-  for (const open of grayFgOpens) {
-    if (open.length > 0) out = out.split(open).join(textFgOpen);
+  for (const [from, to] of liftPairs) {
+    if (from.length > 0) out = out.split(from).join(to);
   }
   if (!out.includes('\x1b[2m')) {
     return out === line ? addHoverForeground(out, textFgOpen) : out;
