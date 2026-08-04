@@ -126,6 +126,17 @@ describe('TeamTracker', () => {
     expect(seen.length).toBe(3);
   });
 
+  it('resolves the active task subject through a teammate claim', () => {
+    const tracker = new TeamTracker();
+    tracker.handleEvent(ev({ type: 'team.updated', team: team() }));
+
+    expect(tracker.getAgentAssignment('agent-1')).toEqual({
+      teamName: 'core',
+      taskSubject: 'Map the ingestion surface',
+    });
+    expect(tracker.getAgentAssignment('unknown')).toBeUndefined();
+  });
+
   it('records mailbox activity, deduplicates by id, and filters per team', () => {
     const tracker = new TeamTracker();
     tracker.handleEvent(ev({ type: 'mailbox.activity', message: activity() }));

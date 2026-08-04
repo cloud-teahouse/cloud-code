@@ -147,15 +147,15 @@ export interface SessionEventHost {
 export class SessionEventHandler {
   readonly subAgentEventHandler: SubAgentEventHandler;
   /**
-   * Feeds the `/workflows` browser: sees every session event before child
-   * events are routed away, so it can rebuild the full agent tree.
-   */
-  readonly workflowTracker = new WorkflowTracker();
-  /**
    * Feeds the `/teams` browser: team snapshots and
    * mailbox activity, from the same every-event attach point.
    */
   readonly teamTracker = new TeamTracker();
+  /**
+   * Feeds the `/workflows` browser: sees every session event before child
+   * events are routed away, so it can rebuild the full agent tree.
+   */
+  readonly workflowTracker = new WorkflowTracker(this.teamTracker);
   private readonly pluginUpdateNotifier: PluginUpdateNotifier;
 
   constructor(
@@ -369,8 +369,8 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
-    this.workflowTracker.handleEvent(event);
     this.teamTracker.handleEvent(event);
+    this.workflowTracker.handleEvent(event);
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     // Only turn.started may (re)open a turn id. After turn.ended cleared it,

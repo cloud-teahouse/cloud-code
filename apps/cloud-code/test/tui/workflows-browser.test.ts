@@ -11,6 +11,7 @@ import {
 } from '@/tui/components/dialogs/workflows-browser';
 import { MAIN_AGENT_ID } from '@/tui/constant/cloud-code-tui';
 import { WorkflowsBrowserController } from '@/tui/controllers/workflows-browser';
+import { TeamTracker } from '@/tui/controllers/teams-tracker';
 import {
   WorkflowTracker,
   workflowNodeTotalTokens,
@@ -20,7 +21,7 @@ import {
 import { setLocalePreference, t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 
-const ANSI_SGR = /\[[0-9;]*m/g;
+const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
@@ -546,6 +547,179 @@ describe('WorkflowTracker', () => {
     );
     expect(tracker.getAgent('a3')?.status).toBe('lost');
   });
+
+  it('tracks activity, output tail, progress, retry, approval, and task id', () => {
+    const tracker = new WorkflowTracker();
+    const before = Date.now();
+
+    tracker.handleEvent(
+      ev({ type: 'thinking.delta', agentId: 'a1', turnId: 1, delta: 'planning' }),
+    );
+    const afterThinking = tracker.getAgent('a1');
+    expect(afterThinking?.lastEventAt).toBeGreaterThanOrEqual(before);
+    expect(afterThinking?.currentActivity).toEqual({ kind: 'thinking', label: 'Thinking' });
+
+    tracker.handleEvent(
+      ev({
+        type: 'tool.call.started',
+        agentId: 'a1',
+        turnId: 1,
+        toolCallId: 'tc-progress',
+        name: 'Bash',
+        args: {},
+      }),
+    );
+    expect(tracker.getAgent('a1')?.currentActivity).toEqual({
+      kind: 'tool',
+      label: 'Bash',
+      toolName: 'Bash',
+    });
+
+    tracker.handleEvent(
+      ev({
+        type: 'tool.progress',
+        agentId: 'a1',
+        turnId: 1,
+        toolCallId: 'tc-progress',
+        update: { kind: 'progress', customData: { done: 3, total: 10 } },
+      }),
+    );
+    expect(tracker.getAgent('a1')?.progress).toEqual({ done: 3, total: 10 });
+
+    tracker.handleEvent(
+      ev({
+        type: 'turn.step.retrying',
+        agentId: 'a1',
+        turnId: 1,
+        step: 1,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        delayMs: 100,
+        errorName: 'TimeoutError',
+        errorMessage: 'timed out',
+      }),
+    );
+    expect(tracker.getAgent('a1')?.currentActivity).toEqual({
+      kind: 'retry',
+      label: 'Retrying',
+    });
+
+    tracker.handleEvent(
+      ev({
+        type: 'event.approval.requested',
+        agentId: 'a1',
+        approval_id: 'approval-1',
+        tool_call_id: 'tc-progress',
+      }),
+    );
+    expect(tracker.getAgent('a1')?.currentActivity).toEqual({
+      kind: 'waiting-approval',
+      label: 'Waiting for approval',
+    });
+
+    tracker.handleEvent(
+      ev({
+        type: 'event.approval.resolved',
+        agentId: 'a1',
+        approval_id: 'approval-1',
+      }),
+    );
+    expect(tracker.getAgent('a1')?.currentActivity).toEqual({ kind: 'idle', label: 'Idle' });
+
+    tracker.handleEvent(
+      ev({
+        type: 'assistant.delta',
+        agentId: 'a1',
+        turnId: 1,
+        delta: `${'x'.repeat(250)}\\nfinal output`,
+      }),
+    );
+    const node = tracker.getAgent('a1');
+    expect(node?.lastOutput?.length).toBeLessThanOrEqual(200);
+    expect(node?.lastOutput).not.toContain('\\n');
+    expect(node?.lastOutput?.endsWith('final output')).toBe(true);
+    expect(node?.currentActivity).toEqual({ kind: 'thinking', label: 'Thinking' });
+
+    tracker.handleEvent(
+      ev({
+        type: 'task.started',
+        info: agentTask('a1', 'running', { taskId: 'background-a1' }),
+      }),
+    );
+    expect(tracker.getAgent('a1')?.taskId).toBe('background-a1');
+  });
+
+  it('derives activity and status from agent status phase', () => {
+    const tracker = new WorkflowTracker();
+    tracker.handleEvent(
+      ev({
+        type: 'agent.status.updated',
+        agentId: 'a1',
+        phase: {
+          kind: 'awaiting_approval',
+          turnId: 1,
+          since: Date.now(),
+        },
+      }),
+    );
+    expect(tracker.getAgent('a1')).toMatchObject({
+      status: 'waiting',
+      currentActivity: { kind: 'waiting-approval', label: 'Waiting for approval' },
+    });
+
+    tracker.handleEvent(
+      ev({
+        type: 'agent.status.updated',
+        agentId: 'a1',
+        phase: {
+          kind: 'streaming',
+          turnId: 1,
+          step: 1,
+          stepId: 'step-1',
+          stream: 'tool_call',
+          toolCallId: 'tc-1',
+          toolName: 'Read',
+          since: Date.now(),
+        },
+      }),
+    );
+    expect(tracker.getAgent('a1')).toMatchObject({
+      status: 'running',
+      currentActivity: { kind: 'tool', toolName: 'Read' },
+    });
+  });
+
+  it('joins team name and claimed task subject for a teammate', () => {
+    const teamTracker = new TeamTracker();
+    teamTracker.handleEvent(
+      ev({
+        type: 'team.updated',
+        team: {
+          name: 'core',
+          createdBy: 'main',
+          members: [{ name: 'researcher', agentId: 'a1' }],
+          tasks: [
+            {
+              id: 1,
+              subject: 'Map the ingestion surface',
+              status: 'in_progress',
+              owner: 'researcher',
+              createdBy: 'main',
+              createdAt: 1,
+            },
+          ],
+        },
+      }),
+    );
+    const tracker = new WorkflowTracker(teamTracker);
+    tracker.handleEvent(ev({ type: 'thinking.delta', agentId: 'a1', turnId: 1, delta: 'work' }));
+
+    expect(tracker.getAgent('a1')).toMatchObject({
+      teamName: 'core',
+      taskSubject: 'Map the ingestion surface',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -562,12 +736,19 @@ function node(overrides: Partial<WorkflowAgentNode> & { agentId: string }): Work
     description: undefined,
     status: 'running',
     statusDetail: undefined,
+    lastEventAt: undefined,
+    currentActivity: undefined,
     model: undefined,
     step: 0,
     startedAt: Date.now() - 65_000,
     endedAt: undefined,
     usage: undefined,
     contextTokens: undefined,
+    lastOutput: undefined,
+    progress: undefined,
+    taskId: undefined,
+    teamName: undefined,
+    taskSubject: undefined,
     thinkingText: '',
     thinkingTruncated: false,
     tools: [],
@@ -654,113 +835,65 @@ function makeApp(
 }
 
 // ---------------------------------------------------------------------------
-// WorkflowsBrowserApp — rendering
+// WorkflowsBrowserApp — run-dashboard rendering
 // ---------------------------------------------------------------------------
 
-describe('WorkflowsBrowserApp — rendering', () => {
+describe('WorkflowsBrowserApp — run-dashboard rendering', () => {
   it('fills exactly terminal.rows lines (height takeover)', () => {
     expect(makeApp({}, 30).render(120).length).toBe(30);
   });
 
-  it('shows the header with title and status counts', () => {
-    const out = strip(makeApp({ agents: sampleAgents() }).render(120).join('\n'));
-    expect(out).toContain('WORKFLOWS');
-    expect(out).toContain('2 running');
-    expect(out).toContain('1 done');
-    expect(out).toContain('1 failed');
-    expect(out).toContain('5 total');
-  });
-
-  it('renders the agent tree with hierarchy, status, step, tokens and duration', () => {
-    const out = strip(makeApp({ agents: sampleAgents() }).render(120).join('\n'));
-    expect(out).toContain('main');
-    expect(out).toContain('coder');
-    expect(out).toContain('explore');
-    // Swarm workers carry their index badge.
-    expect(out).toContain('#0 worker');
-    expect(out).toContain('#1 worker');
-    // Step / token / duration readouts for the running coder.
-    expect(out).toContain('step 2');
-    expect(out).toContain('4k tok');
-    expect(out).toMatch(/1m 5s/);
-  });
-
-  it('indents child agents under their parent', () => {
-    const lines = makeApp({ agents: sampleAgents() }).render(120).map(strip);
-    const coderLine = lines.find((l) => l.includes('coder'));
-    const exploreLine = lines.find((l) => l.includes('explore'));
-    expect(coderLine).toBeDefined();
-    expect(exploreLine).toBeDefined();
-    const coderIndent = coderLine!.indexOf('coder');
-    const exploreIndent = exploreLine!.indexOf('explore');
-    expect(exploreIndent).toBeGreaterThan(coderIndent);
-  });
-
-  it('shows the chain-of-thought pane for the selected agent', () => {
-    const out = strip(
-      makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' }).render(120).join('\n'),
-    );
-    expect(out).toContain('Chain of Thought');
-    // Interleaved stream: dim thinking line (✻), then tool calls in order.
-    expect(out).toContain('✻ second thought');
-    // Tool-use count moved into the header status line.
-    expect(out).toContain('8 tools');
-    expect(out).toContain('Read');
-    expect(out).toContain('src/a.ts');
-    expect(out).toContain('export const a = 1;');
-    expect(out).toContain('Bash');
-    // Truncation hint: thinkingTruncated is set and toolCallCount > kept tools.
-    expect(out).toContain('use Read / TaskOutput');
-  });
-
-  it('renders the interleaved stream in activity order', () => {
-    const lines = strip(
-      makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' }).render(120).join('\n'),
-    ).split('\n');
-    const thinkingIdx = lines.findIndex((l) => l.includes('✻ second thought'));
-    const readIdx = lines.findIndex((l) => l.includes('Read'));
-    const bashIdx = lines.findIndex((l) => l.includes('Bash'));
-    expect(thinkingIdx).toBeGreaterThanOrEqual(0);
-    expect(readIdx).toBeGreaterThan(thinkingIdx);
-    expect(bashIdx).toBeGreaterThan(readIdx);
-  });
-
-  it('renders the killed status with the error icon and stop reason', () => {
+  it('summarizes status and renders actionable roster fields', () => {
     const agents = [
-      node({ agentId: 'main', name: 'main' }),
       node({
-        agentId: 'a1',
-        name: 'coder',
-        parentAgentId: 'main',
-        status: 'killed',
-        statusDetail: 'Stopped by user',
+        agentId: 'main',
+        name: 'main',
+        status: 'running',
+        currentActivity: { kind: 'tool', label: 'Read', toolName: 'Read' },
+        taskId: 'task-main',
+        teamName: 'core',
+        taskSubject: 'Inspect files',
+      }),
+      node({
+        agentId: 'worker',
+        name: 'worker',
+        status: 'waiting',
+        currentActivity: { kind: 'waiting-approval', label: 'Approve release' },
+        taskId: 'task-worker',
+        teamName: 'core',
+        taskSubject: 'Review release',
+      }),
+      node({
+        agentId: 'done',
+        name: 'done',
+        status: 'done',
         endedAt: Date.now() - 1000,
+        teamName: 'core',
+        resultSummary: 'finished',
       }),
     ];
-    const out = strip(makeApp({ agents, selectedAgentId: 'a1' }).render(120).join('\n'));
-    expect(out).toContain('✗ killed');
-    expect(out).toContain('Stopped by user');
-    // Killed agents roll up into the header's failed tally.
-    expect(out).toContain('1 failed');
+    const out = strip(
+      makeApp({ agents, selectedAgentId: 'worker' }).render(120).join('\n'),
+    );
+    expect(out).toContain('core · alive 2 · waiting 1 · attention 1 · done 1');
+    expect(out).toContain('@worker');
+    expect(out).toContain('Approve release');
+    expect(out).toContain('Review release');
   });
 
-  it('shows the model in the agent header when the tracker knows it', () => {
-    const agents = [
-      node({ agentId: 'main', name: 'main', model: 'kimi-for-coding' }),
-      node({ agentId: 'a1', name: 'coder', parentAgentId: 'main' }),
-    ];
-    const withModel = strip(
-      makeApp({ agents, selectedAgentId: 'main' }).render(120).join('\n'),
-    );
-    expect(withModel).toContain('kimi-for-coding');
-    // Unknown model: no placeholder, the segment is simply absent.
-    const withoutModel = strip(
-      makeApp({ agents, selectedAgentId: 'a1' }).render(120).join('\n'),
-    );
-    expect(withoutModel).not.toContain('kimi-for-coding');
+  it('keeps thinking hidden until t while showing the activity timeline', () => {
+    const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' });
+    let out = strip(app.render(120).join('\n'));
+    expect(out).toContain('Agent detail');
+    expect(out).toContain('ACTIVITY');
+    expect(out).toContain('Read');
+    expect(out).not.toContain('second thought');
+    app.handleInput('t');
+    out = strip(app.render(120).join('\n'));
+    expect(out).toContain('second thought');
   });
 
-  it('shows the failure detail for a failed agent', () => {
+  it('shows terminal failure details in the selected agent view', () => {
     const out = strip(
       makeApp({ agents: sampleAgents(), selectedAgentId: 'w1' }).render(120).join('\n'),
     );
@@ -769,45 +902,22 @@ describe('WorkflowsBrowserApp — rendering', () => {
 
   it('shows the empty state when no agent activity exists', () => {
     const out = strip(makeApp().render(120).join('\n'));
-    expect(out).toContain('No agent activity in this session yet');
-    expect(out).toContain('Select an agent to inspect its chain of thought');
+    expect(out).toContain('No workflows are running yet');
+    expect(out).toContain('Start an Agent or AgentSwarm');
+    expect(out).toContain('here');
+    expect(out).toContain('Select an agent to inspect its run details');
   });
 
-  it('hints that subagents will appear when only the main agent exists', () => {
-    const out = strip(
-      makeApp({ agents: [node({ agentId: 'main', name: 'main' })] }).render(120).join('\n'),
-    );
-    expect(out).toContain('No subagents yet');
-  });
-
-  it('renders zh-CN copy when the zh-CN locale is active', () => {
+  it('renders the redesigned zh-CN copy', () => {
     setLocalePreference('zh-CN');
     const out = strip(
       makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' }).render(120).join('\n'),
     );
-    expect(out).toContain('工作流');
-    expect(out).toContain('Agent 树');
-    expect(out).toContain('思维链');
+    expect(out).toContain('Agent 列表');
+    expect(out).toContain('Agent 详情');
     expect(out).toContain('运行中');
-    expect(out).toContain('主 agent');
-    expect(out).toContain('8 次工具调用');
-    expect(t('workflows.command.description')).toBe('查看 agent 树与子代理思维链');
-  });
-
-  it('renders the killed status in zh-CN', () => {
-    setLocalePreference('zh-CN');
-    const agents = [
-      node({
-        agentId: 'a1',
-        name: 'coder',
-        status: 'killed',
-        statusDetail: '用户停止',
-        endedAt: Date.now() - 1000,
-      }),
-    ];
-    const out = strip(makeApp({ agents, selectedAgentId: 'a1' }).render(120).join('\n'));
-    expect(out).toContain('已终止');
-    expect(out).toContain('用户停止');
+    expect(out).toContain('思维链');
+    expect(t('workflows.command.description')).toBe('查看 agent 实时运行并安全干预');
   });
 
   it('falls back to a single line when the terminal is too small', () => {
@@ -836,20 +946,26 @@ describe('WorkflowsBrowserApp — input handling', () => {
     app.handleInput('[B'); // ↓
     expect(onSelect).toHaveBeenLastCalledWith('a1');
     app.handleInput('j');
-    expect(onSelect).toHaveBeenLastCalledWith('b1');
+    // Completed agents are folded into the done group, so the next live row is w0.
+    expect(onSelect).toHaveBeenLastCalledWith('w0');
     app.handleInput('[A'); // ↑
     expect(onSelect).toHaveBeenLastCalledWith('a1');
   });
 
-  it('Enter collapses and re-expands a node with children', () => {
+  it('Enter collapses and re-expands the selected team roster', () => {
     const agents = sampleAgents();
     const app = makeApp({ agents, selectedAgentId: 'a1' });
-    // explore (child of a1) is visible initially.
-    expect(strip(app.render(120).join('\n'))).toContain('explore');
+    const visibleRows = (): number =>
+      [...app.hitZones()].filter((zone) => String(zone.id).startsWith('row:')).length;
+    app.render(120);
+    const expandedRows = visibleRows();
+    expect(expandedRows).toBeGreaterThan(1);
     app.handleInput('\r');
-    expect(strip(app.render(120).join('\n'))).not.toContain('explore');
+    app.render(120);
+    expect(visibleRows()).toBeLessThan(expandedRows);
     app.handleInput('\r');
-    expect(strip(app.render(120).join('\n'))).toContain('explore');
+    app.render(120);
+    expect(visibleRows()).toBe(expandedRows);
   });
 
   it('Enter on a leaf node does nothing', () => {
@@ -870,18 +986,22 @@ describe('WorkflowsBrowserApp — input handling', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('PgUp/PgDn scrolls the list-mode preview pane (teams-browser idiom)', () => {
+  it('mouse wheel scrolls the list-mode detail preview', () => {
     const app = makeApp({ agents: longContentAgents(), selectedAgentId: 'a1' }, 12, 70);
-    // Tail-pinned by default: the latest tool result is visible.
-    expect(strip(app.render(70).join('\n'))).toContain('long result body');
-    // Page up into history: the header scrolls into view, the tail leaves.
-    app.handleInput('\x1B[5~');
+    const wheel = (button: 64 | 65): MouseEvent => ({
+      type: 'wheel',
+      button,
+      col: 60,
+      row: 5,
+      slotRelative: false,
+    });
+    expect(strip(app.render(70).join('\n'))).toContain('long result b');
+    for (let i = 0; i < 8; i += 1) app.handleMouse(wheel(64));
     const scrolled = strip(app.render(70).join('\n'));
     expect(scrolled).toContain('coder');
-    expect(scrolled).not.toContain('long result body');
-    // Page down returns to the tail.
-    app.handleInput('\x1B[6~');
-    expect(strip(app.render(70).join('\n'))).toContain('long result body');
+    expect(scrolled).not.toContain('long result b');
+    for (let i = 0; i < 8; i += 1) app.handleMouse(wheel(65));
+    expect(strip(app.render(70).join('\n'))).toContain('long result b');
   });
 
   it('preview keeps a scrolled-up position when new activity streams in', () => {
@@ -1027,13 +1147,13 @@ describe('WorkflowsBrowserApp — hover-to-scroll', () => {
     const app = makeApp({ agents: longContentAgents(), selectedAgentId: 'a1' }, 12, 70);
     app.handleInput('\x1B[C'); // enter detail
     const opened = strip(app.render(70).join('\n'));
-    expect(opened).toContain('long result body');
+    expect(opened).toContain('long result b');
 
     for (let i = 0; i < 8; i++) app.handleMouse(wheel(64, 35)); // wheel up to the top
     const scrolled = strip(app.render(70).join('\n'));
     expect(scrolled).toContain('coder');
     for (let i = 0; i < 8; i++) app.handleMouse(wheel(65, 60)); // and back down
-    expect(strip(app.render(70).join('\n'))).toContain('long result body');
+    expect(strip(app.render(70).join('\n'))).toContain('long result b');
   });
 
   it('wheel over the tree column moves the agent selection', () => {
@@ -1056,15 +1176,15 @@ describe('WorkflowsBrowserApp — hover-to-scroll', () => {
   it('wheel over the chain pane scrolls the preview into history and back', () => {
     const app = makeApp({ agents: longContentAgents(), selectedAgentId: 'a1' }, 12, 70);
     const tail = strip(app.render(70).join('\n'));
-    expect(tail).toContain('long result body');
+    expect(tail).toContain('long result b');
 
     app.handleMouse(wheel(64, 60)); // wheel up over the preview pane
     const scrolled = strip(app.render(70).join('\n'));
-    expect(scrolled).not.toContain('long result body');
+    expect(scrolled).not.toContain('long result b');
     expect(scrolled).toContain('coder');
 
     app.handleMouse(wheel(65, 60)); // back to the tail
-    expect(strip(app.render(70).join('\n'))).toContain('long result body');
+    expect(strip(app.render(70).join('\n'))).toContain('long result b');
   });
 
   it('ignores release mouse events', () => {
@@ -1087,7 +1207,7 @@ describe('WorkflowsBrowserApp — hover-to-scroll', () => {
     app.handleInput('\x1B[B');
     app.setProps({ ...makeProps({}), agents, selectedAgentId: 'a1' });
     const out = strip(app.render(70).join('\n'));
-    expect(out).toContain('long result body');
+    expect(out).toContain('long result b');
   });
 });
 
@@ -1100,14 +1220,15 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     expect(out).toContain('back');
     expect(out).toContain('scroll');
     // Full-width frame: the tree pane is gone, no Agents title.
-    expect(out).not.toContain('Agents');
-    expect(out).toContain('Chain of Thought');
+    expect(out).not.toContain('Roster');
+    expect(out).toContain('Agent detail');
   });
 
   it('wraps long thinking and tool content instead of overflowing the width', () => {
     const columns = 70;
     const app = makeApp({ agents: longContentAgents(), selectedAgentId: 'a1' }, 24, columns);
     app.handleInput('\x1B[C');
+    app.handleInput('t');
     const rendered = app.render(columns);
     for (const line of rendered) {
       expect(strip(line).length).toBeLessThanOrEqual(columns);
@@ -1115,7 +1236,7 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     // Bottom-follow: the most recent chain entries are visible first.
     const out = strip(rendered.join('\n'));
     expect(out).toContain('second paragraph');
-    expect(out).toContain('long result body');
+    expect(out).toContain('long result b');
     // Nothing is truncated away: page up and the thought's start is there,
     // wrapped across lines rather than clipped.
     app.handleInput('\x1B[5~');
@@ -1128,7 +1249,7 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     app.handleInput('\x1B[C');
     // Opens at the bottom (most recent chain entries), not at the header.
     const opened = strip(app.render(70).join('\n'));
-    expect(opened).toContain('long result body');
+    expect(opened).toContain('long result b');
     expect(opened).not.toContain('Task:');
 
     // Page up three times: the agent header comes into view.
@@ -1140,7 +1261,7 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     app.handleInput('\x1B[6~');
     app.handleInput('\x1B[6~');
     app.handleInput('\x1B[6~');
-    expect(strip(app.render(70).join('\n'))).toContain('long result body');
+    expect(strip(app.render(70).join('\n'))).toContain('long result b');
     // Scrolling up past the top is a no-op (no crash).
     app.handleInput('\x1B[5~');
     app.handleInput('\x1B[5~');
@@ -1153,15 +1274,15 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     const onCancel = vi.fn();
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'a1', onCancel }, 30, 100);
     app.handleInput('\x1B[C');
-    expect(strip(app.render(100).join('\n'))).not.toContain('Agents');
+    expect(strip(app.render(100).join('\n'))).not.toContain('Roster');
 
     app.handleInput('\x1b'); // Esc in detail mode -> back, not close
     expect(onCancel).not.toHaveBeenCalled();
-    expect(strip(app.render(100).join('\n'))).toContain('Agents');
+    expect(strip(app.render(100).join('\n'))).toContain('Roster');
 
     app.handleInput('\x1B[C');
     app.handleInput('h'); // h also goes back
-    expect(strip(app.render(100).join('\n'))).toContain('Agents');
+    expect(strip(app.render(100).join('\n'))).toContain('Roster');
 
     app.handleInput('\x1b'); // Esc in list mode -> close
     expect(onCancel).toHaveBeenCalledTimes(1);
@@ -1172,7 +1293,7 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     const app = makeApp({ agents, selectedAgentId: 'a1' }, 10, 70);
     app.handleInput('\x1B[C');
     const before = strip(app.render(70).join('\n'));
-    expect(before).toContain('long result body');
+    expect(before).toContain('long result b');
     // Stream a new tool entry in via setProps; the tail stays visible.
     const a1 = agents[1]!;
     const newTool = {
@@ -1197,11 +1318,11 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     const agents = longContentAgents();
     const app = makeApp({ agents, selectedAgentId: 'a1' }, 10, 70);
     app.handleInput('\x1B[C');
-    // Scroll all the way to the top (past maxScroll; clamps to 0).
-    for (let i = 0; i < 5; i++) app.handleInput('\x1B[5~');
+    // `g` explicitly anchors the detail scroll at the first line.
+    app.handleInput('g');
     const atTop = strip(app.render(70).join('\n'));
     expect(atTop).toContain('coder');
-    expect(atTop).not.toContain('long result body');
+    expect(atTop).not.toContain('long result b');
     // New activity arrives while the user is reading history: the view must
     // not jump to the tail (live-update repaint preserves the position).
     const a1 = agents[1]!;
@@ -1231,9 +1352,9 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     const onCancel = vi.fn();
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'a1', onCancel }, 30, 100);
     app.handleInput('\t');
-    expect(strip(app.render(100).join('\n'))).not.toContain('Agents');
+    expect(strip(app.render(100).join('\n'))).not.toContain('Roster');
     app.handleInput('\t');
-    expect(strip(app.render(100).join('\n'))).toContain('Agents');
+    expect(strip(app.render(100).join('\n'))).toContain('Roster');
     // Tab never closes the browser.
     expect(onCancel).not.toHaveBeenCalled();
   });
@@ -1251,20 +1372,16 @@ describe('WorkflowsBrowserApp — click-to-select', () => {
     return Array.from({ length: count }, (_, i) => node({ agentId: `n${i}`, name: `agent-${i}` }));
   }
 
-  // Layout at rows=30, cols=100: header = row 0, tree frame top border =
-  // row 1, first tree row = row 2; innerHeight = 26; treeWidth = 36.
-  // sampleAgents() flattens to: main(0), a1(1), b1(2), w0(3), w1(4).
-
-  it('left-press on a tree row selects that agent, like the arrow keys', () => {
+  it('left-press on a roster row selects that agent, like the arrow keys', () => {
     const onSelect = vi.fn();
-    const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'main', onSelect }, 30, 100);
-    app.render(100); // populate lastTreeWidth (=36 at 100 cols)
-    app.handleMouse(press(3, 10)); // second tree row
-    expect(onSelect).toHaveBeenLastCalledWith('a1');
-    app.handleMouse(press(6, 10)); // last tree row
-    expect(onSelect).toHaveBeenLastCalledWith('w1');
-    app.handleMouse(press(2, 36)); // first row, on the frame's right border col
-    expect(onSelect).toHaveBeenLastCalledWith('main');
+    const app = makeApp({ agents: flatAgents(3), selectedAgentId: 'n0', onSelect }, 30, 100);
+    app.render(100);
+    const rows = [...app.hitZones()].filter((zone) => String(zone.id).startsWith('row:'));
+    expect(rows.length).toBe(4); // team toggle plus three agent rows
+    app.handleMouse(press(rows[2]!.row, rows[2]!.col + 1));
+    expect(onSelect).toHaveBeenLastCalledWith('n1');
+    app.handleMouse(press(rows[3]!.row, rows[3]!.col + 1));
+    expect(onSelect).toHaveBeenLastCalledWith('n2');
   });
 
   it('clicking the already-selected row is a no-op', () => {
@@ -1275,15 +1392,15 @@ describe('WorkflowsBrowserApp — click-to-select', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('accounts for listScroll when the window is scrolled', () => {
+  it('accounts for roster scroll when the window is scrolled', () => {
     const onSelect = vi.fn();
-    // rows=10 → innerHeight 6; 10 root agents with the last one selected
-    // scrolls the window to indices 4..9 on component rows 2..7.
     const app = makeApp({ agents: flatAgents(10), selectedAgentId: 'n9', onSelect }, 10, 100);
     app.render(100);
-    app.handleMouse(press(2, 10));
+    const rows = [...app.hitZones()].filter((zone) => String(zone.id).startsWith('row:'));
+    expect(rows.length).toBe(6);
+    app.handleMouse(press(rows[0]!.row, rows[0]!.col + 1));
     expect(onSelect).toHaveBeenLastCalledWith('n4');
-    app.handleMouse(press(4, 10));
+    app.handleMouse(press(rows[2]!.row, rows[2]!.col + 1));
     expect(onSelect).toHaveBeenLastCalledWith('n6');
   });
 
@@ -1304,7 +1421,7 @@ describe('WorkflowsBrowserApp — click-to-select', () => {
     const onSelect = vi.fn();
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'main', onSelect }, 30, 100);
     app.render(100);
-    app.handleMouse(press(3, 37)); // just past treeWidth (36)
+    app.handleMouse(press(3, 40)); // inside the detail pane (roster width is 38)
     app.handleMouse(press(3, 80));
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -1417,25 +1534,19 @@ describe('WorkflowsBrowserApp — render memoization', () => {
     expect(strip(app.render(120).join('\n'))).toContain('Glob');
   });
 
-  it('rebuilds memoized lines after invalidate() (theme-change path)', () => {
+  it('keeps render parity after invalidate() when the theme changes', () => {
     const agents = sampleAgents();
     const props = makeProps({ agents, selectedAgentId: 'a1' });
     const app = new WorkflowsBrowserApp(props, fakeTerminal(30, 120));
     app.render(120);
 
-    const caches = app as unknown as { activityCache: object; treeRowCache: object };
-    const activityCacheBefore = caches.activityCache;
-    const treeRowCacheBefore = caches.treeRowCache;
-
     const previousPalette = currentTheme.palette;
     try {
       currentTheme.setPalette({ ...previousPalette, primary: '#ff0000' });
       app.invalidate();
-      // The memo caches were dropped (they hold palette-baked strings)…
-      expect(caches.activityCache).not.toBe(activityCacheBefore);
-      expect(caches.treeRowCache).not.toBe(treeRowCacheBefore);
-      // …and the re-render matches a fresh component on the new palette.
-      expect(app.render(120)).toEqual(makeApp({ agents, selectedAgentId: 'a1' }, 30, 120).render(120));
+      expect(app.render(120)).toEqual(
+        makeApp({ agents, selectedAgentId: 'a1' }, 30, 120).render(120),
+      );
     } finally {
       currentTheme.setPalette(previousPalette);
     }
@@ -1472,6 +1583,9 @@ describe('WorkflowsBrowserApp — render memoization', () => {
     const host = {
       state,
       workflowTracker: tracker,
+      teamTracker: new TeamTracker(),
+      backgroundTasks: new Map(),
+      session: undefined,
       hasBlockingEditorSlotPanel: () => false,
       setWorkflowsBrowser(value: unknown) {
         state.workflowsBrowser = value;

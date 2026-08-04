@@ -23,6 +23,11 @@ import type { Event, MailboxActivityMessage, TeamWire } from '@cloud-code/sdk';
 
 export type { TeamTaskWire, TeamWire } from '@cloud-code/sdk';
 
+export interface TeamAgentAssignment {
+  readonly teamName: string;
+  readonly taskSubject: string | undefined;
+}
+
 /** How many mailbox activity entries are kept across all teams. */
 export const MAX_TEAM_ACTIVITY_ENTRIES = 50;
 
@@ -53,6 +58,23 @@ export class TeamTracker {
 
   getTeam(name: string): TeamWire | undefined {
     return this.teams.get(name);
+  }
+
+  /** Resolve a teammate to its team and the task currently claimed by it. */
+  getAgentAssignment(agentId: string): TeamAgentAssignment | undefined {
+    for (const team of this.teams.values()) {
+      const member = team.members.find((entry) => entry.agentId === agentId);
+      const memberName = member?.name;
+      const claimed = team.tasks.filter(
+        (task) => (memberName !== undefined && task.owner === memberName) || task.owner === agentId,
+      );
+      if (member === undefined && claimed.length === 0) continue;
+      const task =
+        claimed.find((entry) => entry.status === 'in_progress') ??
+        claimed.find((entry) => entry.status === 'pending') ?? claimed.at(-1);
+      return { teamName: team.name, taskSubject: task?.subject };
+    }
+    return undefined;
   }
 
   /** Recent mailbox activity, oldest first; filtered by team when given. */
