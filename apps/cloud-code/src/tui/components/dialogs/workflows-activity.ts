@@ -18,7 +18,12 @@ export interface WorkflowsActivityProps {
 
 function clockTime(timestamp: number): string {
   const date = new Date(timestamp);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  // UTC, not local time: render-parity snapshots must render identically on
+  // every machine (CI runs in a different timezone than dev boxes).
+  const hh = String(date.getUTCHours()).padStart(2, '0');
+  const mm = String(date.getUTCMinutes()).padStart(2, '0');
+  const ss = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
 }
 
 function activityStage(entry: WorkflowActivityEntry): { label: string; summary: string; token: 'text' | 'textDim' | 'success' | 'error' } {
