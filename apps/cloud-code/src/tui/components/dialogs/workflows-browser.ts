@@ -714,7 +714,7 @@ export class WorkflowsBrowserApp extends Container {
     const nav = this.mode === 'detail'
       ? [`${key('←/Esc')} ${dim(t('workflows.hint.back'))}`, `${key('↑↓')} ${dim(t('workflows.hint.scroll'))}`, `${key('q')} ${dim(t('workflows.hint.close'))}`]
       : [`${key('↑↓')} ${dim(t('workflows.hint.select'))}`, `${key('Enter/→')} ${dim(t('workflows.hint.detail'))}`, `${key('q/Esc')} ${dim(t('workflows.hint.close'))}`];
-    return [...wrapHint([...nav, ...actionHints], width, '  ').map((line) => fitExactly(line, width))];
+    return wrapHint([...nav, ...actionHints], width, '  ').map((line) => fitExactly(line, width));
   }
 
   private canForeground(agent: WorkflowAgentInfo): boolean {

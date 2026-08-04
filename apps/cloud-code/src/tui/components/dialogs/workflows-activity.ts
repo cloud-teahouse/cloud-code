@@ -3,12 +3,7 @@ import { truncateToWidth, visibleWidth } from '@cloud-code/pi-tui';
 import { renderRow } from '#/tui/components/primitives';
 import { getLocalePreference, t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
-import {
-  asWorkflowAgentInfo,
-  singleLine,
-  statusColor,
-  type WorkflowAgentInfo,
-} from './workflows-agent-content';
+import { asWorkflowAgentInfo, singleLine, type WorkflowAgentInfo } from './workflows-agent-content';
 import type { WorkflowActivityEntry } from '#/tui/controllers/workflows-tracker';
 
 export interface WorkflowsActivityProps {
