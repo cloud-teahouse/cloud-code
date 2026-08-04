@@ -34,13 +34,13 @@ describe('Agent config — sandboxMode override', () => {
     expect(ctx.agent.config.data().sandboxMode).toBeUndefined();
   });
 
-  it('is reachable through the agent RPC surface', () => {
+  it('is reachable through the agent RPC surface', async () => {
     const ctx = testAgent();
 
-    ctx.rpc.setSandboxMode({ mode: 'enforce' });
+    await ctx.rpc.setSandboxMode({ mode: 'enforce' });
     expect(ctx.agent.config.sandboxMode).toBe('enforce');
 
-    ctx.rpc.setSandboxMode({ mode: null });
+    await ctx.rpc.setSandboxMode({ mode: null });
     expect(ctx.agent.config.sandboxMode).toBeUndefined();
   });
 });
