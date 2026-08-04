@@ -420,15 +420,13 @@ describe('browser footers', () => {
         {
           agents: [],
           selectedAgentId: undefined,
-          previewOutput: undefined,
-          previewLoading: false,
-          onSelectAgent: vi.fn(),
+          onSelect: vi.fn(),
           onCancel: vi.fn(),
         } as never,
         stubTerminal(),
       );
     for (const width of [60, 48]) {
-      expectWrappedHint(make(), width, ['↑↓ select', 'Enter expand', '→/Tab detail', 'PgUp/PgDn page', 'Q/Esc close']);
+      expectWrappedHint(make(), width, ['↑↓ select', 'Enter/→ detail', 'q/Esc close']);
     }
   });
 });
