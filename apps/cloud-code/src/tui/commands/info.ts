@@ -281,6 +281,8 @@ export async function showStatusPanel(
       maxContextTokens: appState.maxContextTokens,
       mcpServers: undefined,
       mcpServersLoading: true,
+      sandbox: undefined,
+      sandboxLoading: host.session !== undefined,
     },
     kimi: {
       account: undefined,
@@ -359,6 +361,17 @@ export async function showStatusPanel(
   void loadMcpServerList(host).then((mcpServers) => {
     update({ status: { mcpServers, mcpServersLoading: false } });
   });
+  const statusSession = host.session;
+  if (statusSession !== undefined) {
+    void statusSession.getSandboxStatus().then(
+      (sandbox) => {
+        update({ status: { sandbox, sandboxLoading: false } });
+      },
+      () => {
+        update({ status: { sandboxLoading: false } });
+      },
+    );
+  }
   void tokenActivityMemo().then(
     (tokenActivity) => {
       update({ stats: { buckets: tokenActivity.buckets } });

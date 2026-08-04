@@ -1,5 +1,5 @@
 import { uniq } from '@antfu/utils';
-import { SandboxedKaos, type Kaos } from '@cloud-code/kaos';
+import { SandboxedKaos, type Kaos, type SandboxMode } from '@cloud-code/kaos';
 import { canonicalizeToolSchema, type ChatProvider, type Tool } from '@cloud-code/kosong';
 import { backgroundTaskStructuredSchema } from '@cloud-code/protocol';
 
@@ -1009,8 +1009,14 @@ export class ToolManager {
     cwd: string,
   ): { kaos: Kaos; sandboxOptions: b.BashSandboxOptions | undefined } {
     const sandboxConfig = this.agent.kimiConfig?.sandbox;
-    const mode = sandboxConfig?.mode ?? 'auto';
-    if (mode === 'off') return { kaos, sandboxOptions: undefined };
+    // The mode resolves per spawn: the session override (/sandbox on|off)
+    // wins over the file config, so a runtime toggle applies to the very next
+    // command with no tool rebuild. `SandboxManager.resolvePlan` short-
+    // circuits `off` per call, so wrapping unconditionally costs nothing when
+    // the sandbox is disabled.
+    const effectiveMode = (): SandboxMode =>
+      this.agent.config.sandboxMode ?? sandboxConfig?.mode ?? 'auto';
+    const mode = effectiveMode();
 
     if (kaos.name !== 'local') {
       if (mode === 'enforce') {
@@ -1036,7 +1042,10 @@ export class ToolManager {
       kaos,
       this.agent.sandbox,
       {
-        mode,
+        // Live read: resolvePlan consults this on every exec.
+        get mode() {
+          return effectiveMode();
+        },
         network: sandboxConfig?.network ?? 'allow',
         workspaceCwd: cwd,
         writableRoots: sandboxConfig?.writableRoots ?? [],

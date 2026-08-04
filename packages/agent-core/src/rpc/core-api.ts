@@ -1,4 +1,5 @@
 import type { AgentConfigData, ServiceTier } from '#/agent/config';
+import type { SandboxMode } from '@cloud-code/kaos';
 import type { AgentContextData } from '#/agent/context';
 import type { BackgroundTaskInfo } from '#/agent/background';
 import type { CronTaskSnapshot } from '#/agent/cron';
@@ -253,6 +254,10 @@ export interface SetThinkingPayload {
 export interface SetServiceTierPayload {
   /** `'priority'` enables the fast tier; `null` restores the default tier. */
   readonly serviceTier: ServiceTier | null;
+}
+export interface SetSandboxModePayload {
+  /** Session override for the Bash sandbox; `null` follows `[sandbox]` config. */
+  readonly mode: SandboxMode | null;
 }
 export interface SetPermissionPayload {
   readonly mode: PermissionMode;
@@ -540,6 +545,7 @@ export interface AgentAPI {
   rewindFiles: (payload: RewindFilesPayload) => Promise<RewindFilesResult>;
   setThinking: (payload: SetThinkingPayload) => void;
   setServiceTier: (payload: SetServiceTierPayload) => void;
+  setSandboxMode: (payload: SetSandboxModePayload) => void;
   setPermission: (payload: SetPermissionPayload) => void;
   setModel: (payload: SetModelPayload) => SetModelResult;
   getModel: (payload: EmptyPayload) => string;

@@ -29,6 +29,7 @@ import type {
   SetModelPayload,
   SetOutputStylePayload,
   SetPermissionPayload,
+  SetSandboxModePayload,
   SetServiceTierPayload,
   SetThinkingPayload,
   SkillSummary,
@@ -177,6 +178,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async setServiceTier({ agentId, ...payload }: AgentScopedPayload<SetServiceTierPayload>) {
     return (await this.getAgent(agentId)).setServiceTier(payload);
+  }
+
+  async setSandboxMode({ agentId, ...payload }: AgentScopedPayload<SetSandboxModePayload>) {
+    return (await this.getAgent(agentId)).setSandboxMode(payload);
   }
 
   async setPermission({ agentId, ...payload }: AgentScopedPayload<SetPermissionPayload>) {

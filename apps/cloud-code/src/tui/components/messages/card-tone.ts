@@ -3,13 +3,15 @@
  * card hover/click contract:
  *
  *   normal: keyboard-only flow; renders byte-identical to the base lines.
- *   hover:  every gray run in the card turns white, header rows included —
- *           colored parts (status bullets, tool names, diff red/green) keep
- *           their tones. Anything gray on an interactive block must lift;
- *           a partially-whitening card reads as broken.
- *   click:  additionally the card region sits on a gray background block
- *           (from `bgFrom` down, so the leading spacer stays unpainted and
- *           the block reads as separated from surrounding content).
+ *   hover:  every gray run in the card turns white, header rows included,
+ *           and the diff red/green lift to their Strong variants — the only
+ *           state that brightens text. Colored parts (status bullets, tool
+ *           names, syntax) keep their tones.
+ *   click:  the card region sits on a gray background block (from `bgFrom`
+ *           down, so the leading spacer stays unpainted) with the TEXT LEFT
+ *           AS-IS — the block marks the expanded state, it is not a
+ *           highlight. A click-expanded card under the pointer gets both:
+ *           the gray block and the hover whiten.
  *
  * The base lines keep their own styling; the tone is a post-process over the
  * rendered output, so hover never rebuilds child components. The gray family
@@ -36,6 +38,12 @@ export interface CardToneOptions {
   readonly tone: CardTone;
   /** First line index the interaction covers (the leading spacer stays plain). */
   readonly bgFrom: number;
+  /**
+   * Pointer state, consulted only for the click tone: a click-expanded card
+   * whitens its text while hovered (block + whiten), and shows the plain gray
+   * block otherwise. Hover tone always whitens regardless of this flag.
+   */
+  readonly hovered?: boolean;
 }
 
 /**
@@ -57,9 +65,10 @@ export function applyCardTone(lines: string[], options: CardToneOptions): string
     [sampledFgOpen('diffAdded'), sampledFgOpen('diffAddedStrong')],
     [sampledFgOpen('diffRemoved'), sampledFgOpen('diffRemovedStrong')],
   ];
-  const whiten = textFgOpen.length > 0;
-  // Hover is foreground-only: gray text brightens to white, never a
-  // background wash. Only the click tone paints the gray block.
+  const whiten =
+    textFgOpen.length > 0 && (tone === 'hover' || options.hovered === true);
+  // Text brightens on hover only — the click block marks expansion, it is
+  // not a highlight; a hovered click-expanded card gets both.
   const paint = tone === 'click' && chalk.level > 0;
   if (!whiten && !paint) return lines;
   const out = lines.slice();

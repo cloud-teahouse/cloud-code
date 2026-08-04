@@ -66,7 +66,7 @@ export class ReadGroupComponent extends Container {
    * frames (the differential renderer skips unchanged rows by identity).
    */
   private toneCache:
-    | { refs: string[][]; width: number; tone: CardTone; out: string[] }
+    | { refs: string[][]; width: number; tone: CardTone; hovered: boolean; out: string[] }
     | undefined;
   private lastFlushPhases = new Map<string, ToolCallReadSnapshot['phase']>();
   private _invalidating = false;
@@ -285,6 +285,7 @@ export class ReadGroupComponent extends Container {
       cached !== undefined &&
       cached.width === safeWidth &&
       cached.tone === tone &&
+      cached.hovered === this.hovered &&
       cached.refs.length === childLines.length &&
       cached.refs.every((ref, i) => ref === childLines[i])
     ) {
@@ -294,8 +295,9 @@ export class ReadGroupComponent extends Container {
       width: safeWidth,
       tone,
       bgFrom: spacerRows,
+      hovered: this.hovered,
     });
-    this.toneCache = { refs: childLines, width: safeWidth, tone, out };
+    this.toneCache = { refs: childLines, width: safeWidth, tone, hovered: this.hovered, out };
     return out;
   }
 

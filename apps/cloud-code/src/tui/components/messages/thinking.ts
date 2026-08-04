@@ -48,7 +48,7 @@ export class ThinkingComponent implements Component {
    * the differential renderer keeps skipping its untouched rows.
    */
   private toneCache:
-    | { base: string[]; width: number; tone: CardTone; out: string[] }
+    | { base: string[]; width: number; tone: CardTone; hovered: boolean; out: string[] }
     | undefined;
   // Hold a single Text instance so pi-tui's (text, width) → lines cache
   // actually survives across renders. Re-constructing per render destroys
@@ -235,11 +235,17 @@ export class ThinkingComponent implements Component {
     const tone: CardTone = this.clickExpanded ? 'click' : this.hovered ? 'hover' : 'normal';
     if (tone === 'normal') return base;
     const cached = this.toneCache;
-    if (cached !== undefined && cached.base === base && cached.width === width && cached.tone === tone) {
+    if (
+      cached !== undefined &&
+      cached.base === base &&
+      cached.width === width &&
+      cached.tone === tone &&
+      cached.hovered === this.hovered
+    ) {
       return cached.out;
     }
-    const out = applyCardTone(base, { width, tone, bgFrom: 1 });
-    this.toneCache = { base, width, tone, out };
+    const out = applyCardTone(base, { width, tone, bgFrom: 1, hovered: this.hovered });
+    this.toneCache = { base, width, tone, hovered: this.hovered, out };
     return out;
   }
 

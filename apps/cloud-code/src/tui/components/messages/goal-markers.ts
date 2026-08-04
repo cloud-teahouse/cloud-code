@@ -117,7 +117,7 @@ export class GoalMarkerComponent implements Component {
     const tone: CardTone = this.clickExpanded ? 'click' : this.hovered ? 'hover' : 'normal';
     if (tone === 'normal') return base;
     const start = this.leadingBlank ? 1 : 0;
-    return applyCardTone(base, { width, tone, bgFrom: start });
+    return applyCardTone(base, { width, tone, bgFrom: start, hovered: this.hovered });
   }
 
   private renderBase(width: number): string[] {

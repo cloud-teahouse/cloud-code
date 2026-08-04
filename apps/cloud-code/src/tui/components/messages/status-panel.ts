@@ -7,7 +7,7 @@
  * over from the old Usage tab.
  */
 
-import type { McpServerInfo, ModelAlias, PermissionMode } from '@cloud-code/sdk';
+import type { McpServerInfo, ModelAlias, PermissionMode, SandboxStatusData } from '@cloud-code/sdk';
 
 import { PRODUCT_NAME } from '#/constant/app';
 import { columnWidth, renderRow } from '#/tui/components/primitives';
@@ -45,6 +45,10 @@ export interface StatusTabOptions {
   readonly mcpServers?: readonly McpServerInfo[] | undefined;
   /** true while the MCP server list RPC is still in flight. */
   readonly mcpServersLoading?: boolean | undefined;
+  /** Sandbox snapshot for the one-line summary; undefined → RPC failed/omitted. */
+  readonly sandbox?: SandboxStatusData | undefined;
+  /** true while the sandbox status RPC is still in flight. */
+  readonly sandboxLoading?: boolean | undefined;
 }
 
 type Colorize = (text: string) => string;
@@ -173,6 +177,27 @@ export function buildStatusTabLines(options: StatusTabOptions): string[] {
     rows.push({
       label: t('panels.status.label.mcpServers'),
       value: mcpSummary(options.mcpServers),
+    });
+  }
+
+  if (options.sandboxLoading === true) {
+    rows.push({
+      label: t('panels.status.label.sandbox'),
+      value: t('common.loading'),
+      tone: 'muted',
+    });
+  } else if (options.sandbox !== undefined) {
+    const sandbox = options.sandbox;
+    const sandboxValue =
+      sandbox.mode === 'off'
+        ? t('panels.status.sandbox.disabled')
+        : sandbox.plan.kind === 'sandboxed'
+          ? t('panels.status.sandbox.active', { backend: sandbox.plan.backend })
+          : t('panels.status.sandbox.inactive', { mode: sandbox.mode });
+    rows.push({
+      label: t('panels.status.label.sandbox'),
+      value: sandboxValue,
+      tone: sandbox.mode === 'off' ? 'muted' : undefined,
     });
   }
 

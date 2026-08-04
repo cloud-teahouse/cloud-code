@@ -57,7 +57,7 @@ import type { BuiltinSlashCommandName } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import { resolveSlashCommandInput, slashBusyMessage } from './resolve';
 import { handleRewindCommand } from './rewind';
-import { showSandboxStatus } from './sandbox';
+import { handleSandboxCommand } from './sandbox';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -111,7 +111,7 @@ export {
 } from './session';
 export { handleUndoCommand } from './undo';
 export { handleRewindCommand } from './rewind';
-export { showSandboxStatus } from './sandbox';
+export { handleSandboxCommand, showSandboxStatus } from './sandbox';
 export { handleUpdateCommand } from './update';
 
 // ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ async function handleBuiltInSlashCommand(
       void showMcpServers(host);
       return;
     case 'sandbox':
-      void showSandboxStatus(host);
+      void handleSandboxCommand(host, args);
       return;
     case 'plugins':
       void handlePluginsCommand(host, args);

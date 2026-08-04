@@ -58,6 +58,7 @@ export type {
   ReloadSummary,
   ResumedAgentState,
   RewindFilesResult,
+  SandboxMode,
   SandboxStatusData,
   ServiceTier,
   ServicesConfig,

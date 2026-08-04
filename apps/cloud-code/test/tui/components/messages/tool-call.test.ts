@@ -2893,7 +2893,7 @@ describe('ToolCallComponent', () => {
       component.dispose();
     });
 
-    it('click expands with gray background and white content; re-click collapses', () => {
+    it('click expands on a gray background with text as-is, whitening only under the pointer; re-click collapses', () => {
       const component = makeCard();
       const base = component.render(100);
       expect(strip(base.join('\n'))).not.toContain('output line 20');
@@ -2907,13 +2907,19 @@ describe('ToolCallComponent', () => {
       for (const line of expanded.slice(1)) {
         expect(line).toContain(BG_OPEN);
       }
-      // The header row keeps its text and its (lifted) bullet inside the block.
+      // Text keeps its resting tones inside the block — no whiten without hover.
       expect(strip(expanded[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
-      expect(expanded[1]).toContain(hexOpen(currentTheme.palette.diffAddedStrong));
-      // The expanded content renders white, not gray.
+      expect(expanded[1]).toContain(fgOpen('success'));
       const body = expanded.slice(2).join('\n');
-      expect(body).toContain(TEXT_OPEN);
-      expect(body).not.toContain(DIM_OPEN);
+      expect(body).toContain(DIM_OPEN);
+
+      // Hovering the expanded block adds the whiten on top of it.
+      component.setHoveredZone('card');
+      const hoveredExpanded = component.render(100);
+      expect(hoveredExpanded[1]).toContain(BG_OPEN);
+      expect(hoveredExpanded[1]).toContain(hexOpen(currentTheme.palette.diffAddedStrong));
+      expect(hoveredExpanded.slice(2).join('\n')).toContain(TEXT_OPEN);
+      component.setHoveredZone(null);
 
       component.onHitZone('card', press);
       expect(component.render(100)).toEqual(base);
@@ -3139,9 +3145,10 @@ describe('ToolCallComponent', () => {
         expect(line).toContain(BG_OPEN);
       }
       const body = expanded.slice(2).join('\n');
-      expect(body).toContain(TEXT_OPEN); // white line numbers on the block
-      expect(body).not.toContain('\x1b[2m');
-      expect(body).toContain('\x1b[34m'); // syntax colors survive the click state
+      // Click alone keeps the resting tones: dim line numbers stay dim on
+      // the block; syntax colors are untouched either way.
+      expect(body).toContain('\x1b[2m');
+      expect(body).toContain('\x1b[34m');
       expect(body).toContain('\x1b[32m');
 
       component.onHitZone('card', press);
@@ -3251,7 +3258,7 @@ describe('ToolCallComponent', () => {
       component.dispose();
     });
 
-    it('Read expands from a header-only card to the full output, white on gray; re-click collapses', () => {
+    it('Read expands from a header-only card to the full output, gray on the gray block; re-click collapses', () => {
       const component = makeReadCard();
       const base = component.render(100);
       expect(base).toHaveLength(2); // spacer + header; the body stays empty while collapsed
@@ -3262,9 +3269,9 @@ describe('ToolCallComponent', () => {
       const text = strip(expanded.join('\n'));
       expect(text).toContain('file line 1');
       expect(text).toContain('file line 8');
+      // Click alone keeps the resting gray text on the gray block.
       const body = expanded.slice(2).join('\n');
-      expect(body).toContain(TEXT_OPEN);
-      expect(body).not.toContain(DIM_OPEN);
+      expect(body).toContain(DIM_OPEN);
       for (const line of expanded.slice(1)) {
         expect(line).toContain(BG_OPEN);
       }

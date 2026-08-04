@@ -62,6 +62,7 @@ import type {
   RewindFilesResult,
   SandboxStatusData,
   ServiceTier,
+  SandboxMode,
   SessionSummary,
   SkillSummary,
   PluginCommandDef,
@@ -115,6 +116,10 @@ export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
 
 export interface SetSessionServiceTierRpcInput extends SessionIdRpcInput {
   readonly serviceTier: ServiceTier | null;
+}
+
+export interface SetSessionSandboxModeRpcInput extends SessionIdRpcInput {
+  readonly mode: SandboxMode | null;
 }
 
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
@@ -523,6 +528,15 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
       serviceTier: input.serviceTier,
+    });
+  }
+
+  async setSandboxMode(input: SetSessionSandboxModeRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setSandboxMode({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      mode: input.mode,
     });
   }
 

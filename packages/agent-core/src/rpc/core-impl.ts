@@ -138,6 +138,7 @@ import type {
   SetPermissionPayload,
   SetPluginEnabledPayload,
   SetPluginMcpServerEnabledPayload,
+  SetSandboxModePayload,
   SetServiceTierPayload,
   SetThinkingPayload,
   SkillSummary,
@@ -1011,6 +1012,10 @@ export class CloudCodeCore implements PromisableMethods<CoreAPI> {
 
   setServiceTier({ sessionId, ...payload }: SessionAgentPayload<SetServiceTierPayload>) {
     return this.sessionApi(sessionId).setServiceTier(payload);
+  }
+
+  setSandboxMode({ sessionId, ...payload }: SessionAgentPayload<SetSandboxModePayload>) {
+    return this.sessionApi(sessionId).setSandboxMode(payload);
   }
 
   setPermission({ sessionId, ...payload }: SessionAgentPayload<SetPermissionPayload>) {

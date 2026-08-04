@@ -28,6 +28,7 @@ import type {
   ResumedSessionState,
   ResumedSessionSummary,
   RewindFilesResult,
+  SandboxMode,
   SandboxStatusData,
   SessionPlan,
   SessionStatus,
@@ -227,6 +228,22 @@ export class Session {
       );
     }
     await this.rpc.setServiceTier({ sessionId: this.id, serviceTier });
+  }
+
+  /**
+   * Session-scoped Bash sandbox override (`/sandbox on|off`). Applies to the
+   * next command spawn — no tool rebuild; `null` follows the persisted
+   * `[sandbox]` config again.
+   */
+  async setSandboxMode(mode: SandboxMode | null): Promise<void> {
+    this.ensureOpen();
+    if (mode !== null && mode !== 'off' && mode !== 'auto' && mode !== 'enforce') {
+      throw new CloudCodeError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session sandbox mode must be "off", "auto", "enforce" or null',
+      );
+    }
+    await this.rpc.setSandboxMode({ sessionId: this.id, mode });
   }
 
   /**

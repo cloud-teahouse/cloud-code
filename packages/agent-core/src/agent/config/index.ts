@@ -12,9 +12,9 @@ import {
   applyCloudCodeEnvThinkingKeep,
   resolveCloudCodeEnvThinkingEffort,
 } from '#/config/cloud-code-env-params';
-
 import type { Agent } from '..';
 import { ErrorCodes, CloudCodeError } from '../../errors';
+import type { SandboxMode } from '@cloud-code/kaos';
 import { applyServiceTier, serviceTierFromConfig } from './service-tier';
 import type { AgentConfigData, AgentConfigUpdateData, ServiceTier } from './types';
 import {
@@ -49,6 +49,7 @@ export class ConfigState {
   private _thinkingEffort: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
   private _serviceTier: ServiceTier | undefined;
+  private _sandboxMode: SandboxMode | undefined;
 
   constructor(protected readonly agent: Agent) {
     this._cwd = agent.kaos.getcwd();
@@ -134,6 +135,10 @@ export class ConfigState {
     if ('serviceTier' in changed) {
       this._serviceTier = changed.serviceTier ?? undefined;
     }
+    // Same null-as-clear contract for the session sandbox override.
+    if ('sandboxMode' in changed) {
+      this._sandboxMode = changed.sandboxMode ?? undefined;
+    }
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
@@ -161,6 +166,21 @@ export class ConfigState {
     this.update({ serviceTier: serviceTier ?? null });
   }
 
+  /**
+   * Session-scoped sandbox override (`/sandbox on|off`). The Bash/ExecSession
+   * sandbox wrapper reads it live on every spawn, so a toggle applies to the
+   * next command without a tool rebuild; `undefined` follows `[sandbox]`
+   * config again.
+   */
+  setSandboxMode(mode: SandboxMode | undefined): void {
+    this.update({ sandboxMode: mode ?? null });
+  }
+
+  /** The session override only; undefined means the file config governs. */
+  get sandboxMode(): SandboxMode | undefined {
+    return this._sandboxMode;
+  }
+
   data(): AgentConfigData {
     const resolved = this.tryResolvedProviderConfig();
     return {
@@ -173,6 +193,7 @@ export class ConfigState {
       thinkingEffort: this.thinkingEffort,
       systemPrompt: this.systemPrompt,
       serviceTier: this._serviceTier,
+      sandboxMode: this._sandboxMode,
     };
   }
 

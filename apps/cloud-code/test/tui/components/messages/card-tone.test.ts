@@ -165,19 +165,32 @@ describe('applyCardTone', () => {
     expect(out[2]).toContain(`${TEXT_OPEN}body\x1b[39m`);
   });
 
-  it('paints the background from bgFrom down and pads rows to the width', () => {
+  it('paints the click background from bgFrom down, text untouched until hovered', () => {
     const out = applyCardTone(['', 'hdr', chalk.dim('body')], {
       width: 10,
       tone: 'click',
       bgFrom: 1,
     });
     expect(out[0]).toBe('');
+    // Click alone: the gray block marks expansion; the text keeps its tones.
     expect(out[1]).toContain(BG_OPEN);
-    expect(out[1]).toContain(`${TEXT_OPEN}hdr\x1b[39m`);
+    expect(out[1]).toContain('hdr');
+    expect(out[1]).not.toContain(TEXT_OPEN);
     expect(visibleWidth(strip(out[1]!))).toBe(10);
     expect(out[2]).toContain(BG_OPEN);
-    expect(out[2]).toContain(`${TEXT_OPEN}body`);
+    expect(out[2]).toContain('\x1b[2mbody\x1b[22m');
     expect(visibleWidth(strip(out[2]!))).toBe(10);
+
+    // Click + hover: the block stays and the text whitens.
+    const hovered = applyCardTone(['', 'hdr', chalk.dim('body')], {
+      width: 10,
+      tone: 'click',
+      bgFrom: 1,
+      hovered: true,
+    });
+    expect(hovered[1]).toContain(BG_OPEN);
+    expect(hovered[1]).toContain(`${TEXT_OPEN}hdr\x1b[39m`);
+    expect(hovered[2]).toContain(`${TEXT_OPEN}body\x1b[39m`);
   });
 
   it('leaves inline image rows untouched during hover and click tones', () => {

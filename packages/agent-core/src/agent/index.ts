@@ -17,3 +17,4 @@ export type {
   SandboxStatusData,
   SandboxStatusSource,
 } from './sandbox-status';
+export type { SandboxMode } from '@cloud-code/kaos';

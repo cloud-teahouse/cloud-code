@@ -804,7 +804,7 @@ export class ToolCallComponent extends Container {
    * frames and the differential renderer keeps skipping its untouched rows.
    */
   private toneCache:
-    | { base: string[]; width: number; tone: CardTone; out: string[] }
+    | { base: string[]; width: number; tone: CardTone; hovered: boolean; out: string[] }
     | undefined;
   private toolCall: ToolCallBlockData;
   private readonly markdownTheme = createMarkdownTheme();
@@ -1053,15 +1053,22 @@ export class ToolCallComponent extends Container {
       this.expansion === 'click' ? 'click' : this.hovered ? 'hover' : 'normal';
     if (tone === 'normal') return base;
     const cached = this.toneCache;
-    if (cached !== undefined && cached.base === base && cached.width === width && cached.tone === tone) {
+    if (
+      cached !== undefined &&
+      cached.base === base &&
+      cached.width === width &&
+      cached.tone === tone &&
+      cached.hovered === this.hovered
+    ) {
       return cached.out;
     }
     const out = applyCardTone(base, {
       width,
       tone,
       bgFrom: this.zoneMeta?.spacerRows ?? 0,
+      hovered: this.hovered,
     });
-    this.toneCache = { base, width, tone, out };
+    this.toneCache = { base, width, tone, hovered: this.hovered, out };
     return out;
   }
 

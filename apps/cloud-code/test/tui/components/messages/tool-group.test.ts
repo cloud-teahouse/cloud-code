@@ -389,8 +389,8 @@ describe('ToolGroupComponent', () => {
         expect(line).toContain(BG_OPEN);
       }
       expect(strip(expanded[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
-      // The success-hex bullet lifts to its Strong variant inside the click block.
-      expect(expanded[1]).toContain(chalk.hex(currentTheme.palette.diffAddedStrong)(STATUS_BULLET));
+      // Click alone leaves the text tones as-is — the block is not a highlight.
+      expect(expanded[1]).toContain(fgOpen('success') + STATUS_BULLET);
 
       group.onHitZone('card', press);
       expect(group.render(120)).toEqual(base);

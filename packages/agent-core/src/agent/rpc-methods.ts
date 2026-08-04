@@ -48,6 +48,9 @@ export function buildRpcMethods(agent: Agent): PromisableMethods<AgentAPI> {
     setServiceTier: (payload) => {
       agent.config.setServiceTier(payload.serviceTier ?? undefined);
     },
+    setSandboxMode: (payload) => {
+      agent.config.setSandboxMode(payload.mode ?? undefined);
+    },
     setPermission: (payload) => {
       agent.permission.setMode(payload.mode);
     },

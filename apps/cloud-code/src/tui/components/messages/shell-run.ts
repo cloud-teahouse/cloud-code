@@ -119,7 +119,7 @@ export class ShellRunComponent extends Container {
   private zoneMeta: { width: number; lines: number; expandable: boolean } | undefined;
   private renderCache: { width: number; lines: string[] } | undefined;
   private toneCache:
-    | { base: string[]; width: number; tone: CardTone; out: string[] }
+    | { base: string[]; width: number; tone: CardTone; hovered: boolean; out: string[] }
     | undefined;
 
   constructor(private readonly requestRender: () => void) {
@@ -280,20 +280,27 @@ export class ShellRunComponent extends Container {
 
   /**
    * Paint the interaction tone over the rendered base lines, like the tool
-   * cards: a click-expanded card gets white content on the gray region
-   * background, a hovered one just whitens its detail body. The card has no
-   * leading spacer or header, so the tone covers every row.
+   * cards: a click-expanded card sits on the gray region background with its
+   * text as-is (whitening only if the pointer is also over it), a hovered
+   * one whitens its gray rows. The card has no leading spacer or header, so
+   * the tone covers every row.
    */
   private applyTone(base: string[], width: number): string[] {
     const tone: CardTone =
       this.expansion === 'click' ? 'click' : this.hovered ? 'hover' : 'normal';
     if (tone === 'normal') return base;
     const cached = this.toneCache;
-    if (cached !== undefined && cached.base === base && cached.width === width && cached.tone === tone) {
+    if (
+      cached !== undefined &&
+      cached.base === base &&
+      cached.width === width &&
+      cached.tone === tone &&
+      cached.hovered === this.hovered
+    ) {
       return cached.out;
     }
-    const out = applyCardTone(base, { width, tone, bgFrom: 0 });
-    this.toneCache = { base, width, tone, out };
+    const out = applyCardTone(base, { width, tone, bgFrom: 0, hovered: this.hovered });
+    this.toneCache = { base, width, tone, hovered: this.hovered, out };
     return out;
   }
 

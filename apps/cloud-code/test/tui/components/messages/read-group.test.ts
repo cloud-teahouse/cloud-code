@@ -114,7 +114,15 @@ describe('ReadGroupComponent hover and click interaction', () => {
       expect(line).toContain(BG_OPEN);
     }
     expect(strip(expanded[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
-    expect(expanded[1]).toContain(hexOpen(currentTheme.palette.diffAddedStrong)); // success-hex bullet lifts to its Strong variant on click
+    // Click alone leaves the text tones as-is — the block is not a highlight.
+    expect(expanded[1]).toContain(fgOpen('success'));
+
+    // Hovering the expanded block adds the whiten on top of it.
+    group.setHoveredZone('card');
+    const hoveredExpanded = group.render(120);
+    expect(hoveredExpanded[1]).toContain(BG_OPEN);
+    expect(hoveredExpanded[1]).toContain(hexOpen(currentTheme.palette.diffAddedStrong));
+    group.setHoveredZone(null);
 
     group.onHitZone('card', press);
     expect(group.render(120)).toEqual(base);

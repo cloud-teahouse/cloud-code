@@ -1,4 +1,5 @@
 import type { ModelCapability, ProviderConfig } from '@cloud-code/kosong';
+import type { SandboxMode } from '@cloud-code/kaos';
 
 /**
  * Runtime service tier requested from the provider. `'priority'` is the wire
@@ -19,6 +20,8 @@ export interface AgentConfigData {
   thinkingEffort: string;
   systemPrompt: string;
   serviceTier?: ServiceTier | undefined;
+  /** Session-scoped sandbox override; undefined follows `[sandbox]` config. */
+  sandboxMode?: SandboxMode | undefined;
 }
 
 export type AgentConfigUpdateData = Partial<{
@@ -30,4 +33,6 @@ export type AgentConfigUpdateData = Partial<{
   systemPrompt: string;
   /** `null` explicitly clears the tier (JSON/record-safe "off"). */
   serviceTier: ServiceTier | null;
+  /** `null` explicitly clears the override (JSON/record-safe "follow config"). */
+  sandboxMode: SandboxMode | null;
 }>;

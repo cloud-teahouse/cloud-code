@@ -257,7 +257,7 @@ export class CompactionComponent extends Container {
     const tone: CardTone = this.clickExpanded ? 'click' : this.hovered ? 'hover' : 'normal';
     if (tone === 'normal') return base;
     // Child 0 is the leading spacer — the tone starts at the header.
-    return applyCardTone(base, { width, tone, bgFrom: 1 });
+    return applyCardTone(base, { width, tone, bgFrom: 1, hovered: this.hovered });
   }
 
   private stopAnimation(): void {

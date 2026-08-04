@@ -126,7 +126,9 @@ export function renderDiffLines(
   let header = '';
   if (added > 0) header += s.addBold(`+${String(added)} `);
   if (removed > 0) header += s.delBold(`-${String(removed)} `);
-  header += path;
+  // The path is meta chrome, not content: gray at rest so hover lifts it
+  // with the rest of the card instead of sitting white and inert.
+  header += s.meta(path);
   output.push(header);
 
   const shown =
@@ -224,7 +226,9 @@ function formatDiffRow(line: DiffLine, s: DiffStyles): string {
   const gutter = s.gutter(String(line.lineNum).padStart(4) + ' ');
   if (line.kind === 'add') return gutter + s.add('+ ' + line.code);
   if (line.kind === 'delete') return gutter + s.del('- ' + line.code);
-  return gutter + '  ' + line.code;
+  // Context code rests in the meta gray so the hover lift reaches it too —
+  // a white-at-rest context line would show no change on hover.
+  return gutter + s.meta('  ' + line.code);
 }
 
 function clusteredBodyRowCount(clusters: Cluster[]): number {
@@ -288,7 +292,7 @@ export function renderDiffLinesClusteredWithMeta(
   let header = '';
   if (addedCount > 0) header += s.addBold(`+${String(addedCount)} `);
   if (removedCount > 0) header += s.delBold(`-${String(removedCount)} `);
-  header += path;
+  header += s.meta(path);
   output.push(header);
 
   if (clusters.length === 0) return { lines: output, truncated: false };
