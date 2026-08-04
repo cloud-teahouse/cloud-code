@@ -4,7 +4,7 @@ import type { workflows as enDomain } from '../en/workflows';
 
 export const workflows: Record<keyof typeof enDomain, string> = {
   // ── 斜杠命令 ──
-  'workflows.command.description': '查看 agent 树与子代理思维链',
+  'workflows.command.description': '查看 agent 实时运行并安全干预',
 
   // ── 标题栏 ──
   'workflows.title': '工作流',
@@ -21,6 +21,28 @@ export const workflows: Record<keyof typeof enDomain, string> = {
   'workflows.hint.back': '返回',
   'workflows.hint.scroll': '滚动',
   'workflows.hint.page': '翻页',
+  'workflows.hint.stop': '停止',
+  'workflows.hint.output': '输出',
+  'workflows.hint.foreground': '切前台',
+  'workflows.hint.thinking': '思维链',
+
+  // ── 运行摘要 ──
+  'workflows.summary.alive': '存活 {count}',
+  'workflows.summary.waiting': '等待 {count}',
+  'workflows.summary.attention': '注意 {count}',
+  'workflows.summary.done': '完成 {count}',
+  'workflows.scope.session': '会话',
+  'workflows.scope.swarm': 'swarm',
+
+  // ── agent roster ──
+  'workflows.roster.title': 'Agent 列表',
+  'workflows.roster.defaultTeam': '默认组',
+  'workflows.roster.empty': '暂无运行中的 workflow',
+  'workflows.roster.emptyHint': '启动 Agent 或 AgentSwarm 任务后会显示在这里',
+  'workflows.roster.attention': '{count} 项需关注',
+  'workflows.roster.agentCount': '{count} 个 agent',
+  'workflows.roster.doneGroup': '已完成（{count}）',
+  'workflows.roster.noTask': '未分配任务',
 
   // ── agent 树面板 ──
   'workflows.tree.title': 'Agent 树',
@@ -41,8 +63,8 @@ export const workflows: Record<keyof typeof enDomain, string> = {
   'workflows.status.lost': '失联',
 
   // ── 思维链面板 ──
-  'workflows.detail.title': '思维链',
-  'workflows.detail.empty': '选择一个 agent 查看其思维链',
+  'workflows.detail.title': 'Agent 详情',
+  'workflows.detail.empty': '选择一个 agent 查看运行详情',
   'workflows.detail.step': '第 {step} 步',
   'workflows.detail.tokens': '{tokens} tok',
   'workflows.detail.toolCount': '{count} 次工具调用',
@@ -54,6 +76,34 @@ export const workflows: Record<keyof typeof enDomain, string> = {
   'workflows.detail.toolRunning': '运行中',
   'workflows.detail.truncatedHint': '……已截断——用 Read / TaskOutput 查看全文',
   'workflows.detail.scrollInfo': ' {from}-{to}/{total}',
+  'workflows.detail.noTask': '未分配任务',
+  'workflows.detail.taskLabel': '任务：',
+  'workflows.detail.nowLabel': '当前：',
+  'workflows.detail.noOutput': '暂无输出',
+  'workflows.detail.lastOutputLabel': '最近输出：',
+  'workflows.detail.notAvailable': '—',
+  'workflows.detail.statStep': '第 {step} 步',
+  'workflows.detail.statTools': '工具 {count}',
+  'workflows.detail.statTokens': '令牌 {tokens}',
+  'workflows.detail.statContext': '上下文 {tokens}',
+  'workflows.detail.chainTitle': '思维链（已折叠）',
+
+  // ── 活动时间线 ──
+  'workflows.activity.title': '活动',
+  'workflows.activity.thinking': '思考',
+  'workflows.activity.thinkingSummary': '思考更新',
+  'workflows.activity.running': '运行中',
+  'workflows.activity.progress': '{done}/{total}',
+  'workflows.activity.empty': '暂无活动记录',
+  'workflows.activity.stage': '阶段',
+  'workflows.activity.noResult': '暂无结果',
+  'workflows.activity.result': '结果',
+  'workflows.activity.errorStage': '错误',
+  'workflows.activity.approvalStage': '审批',
+  'workflows.activity.idle': '空闲',
+
+  // ── 干预 ──
+  'workflows.intervention.confirmStop': '停止此 agent？y/N',
 
   // ── 耗时 ──
   'workflows.duration.seconds': '{count}秒',

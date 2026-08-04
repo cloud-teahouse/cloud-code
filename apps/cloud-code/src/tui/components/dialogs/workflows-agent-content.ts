@@ -6,11 +6,10 @@
  * detail) and the chain-of-thought activity stream (thinking segments
  * interleaved with tool calls, replayed by `WorkflowTracker`).
  *
- * Both consumers live in `workflows-browser.ts`: the list-mode preview
- * pane renders the "flat" variant (dense, one line per piece — the frame
- * truncates), the full-width detail view renders the "wrapped" variant.
- * Pure string builders, no layout or input state, so they stay trivially
- * unit-testable.
+ * The run dashboard uses these helpers for the roster/detail views, while
+ * the legacy chain renderer is only exposed when the user explicitly expands
+ * thinking. Pure string builders, no layout or input state, so they stay
+ * trivially unit-testable.
  */
 
 import { visibleWidth, wrapTextWithAnsi } from '@cloud-code/pi-tui';
@@ -75,6 +74,50 @@ export function statusColor(
     case 'waiting':
       return 'textMuted';
   }
+}
+
+/** Additive fields supplied by the workflow tracker for the run dashboard. */
+export interface WorkflowAgentInfoFields {
+  readonly lastEventAt: number | undefined;
+  readonly currentActivity:
+    | {
+        readonly kind: 'thinking' | 'tool' | 'retry' | 'waiting-approval' | 'idle';
+        readonly label: string;
+        readonly toolName?: string;
+      }
+    | undefined;
+  readonly lastOutput: string | undefined;
+  readonly progress: { readonly done: number; readonly total: number } | undefined;
+  readonly taskId: string | undefined;
+  readonly teamName: string | undefined;
+  readonly taskSubject: string | undefined;
+}
+
+/**
+ * WorkflowAgentNode is kept as the public tracker shape while the dashboard
+ * consumes the additive runtime fields. The cast is intentionally centralized
+ * so every view reads the contract fields directly and old snapshots remain
+ * renderable during replay.
+ */
+export type WorkflowAgentInfo = WorkflowAgentNode & WorkflowAgentInfoFields;
+
+export function asWorkflowAgentInfo(node: WorkflowAgentNode): WorkflowAgentInfo {
+  return node as WorkflowAgentInfo;
+}
+
+export function isWorkflowAgentTerminal(node: WorkflowAgentNode): boolean {
+  return ['done', 'failed', 'killed', 'timed_out', 'lost'].includes(node.status);
+}
+
+export function isWorkflowAgentAttention(node: WorkflowAgentNode): boolean {
+  const info = asWorkflowAgentInfo(node);
+  return (
+    info.currentActivity?.kind === 'waiting-approval' ||
+    info.status === 'failed' ||
+    info.status === 'killed' ||
+    info.status === 'timed_out' ||
+    info.status === 'lost'
+  );
 }
 
 export function singleLine(text: string): string {

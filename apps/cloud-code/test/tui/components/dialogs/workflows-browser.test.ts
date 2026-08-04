@@ -27,14 +27,21 @@ function workflowNode(agentId: string, overrides: Partial<WorkflowAgentNode> = {
     swarmIndex: undefined,
     runInBackground: false,
     description: undefined,
-    status: 'done',
+    status: 'running',
     statusDetail: undefined,
+    lastEventAt: undefined,
+    currentActivity: undefined,
     model: 'kimi-k2',
     step: 3,
     startedAt: FIXED_NOW - 120_000,
-    endedAt: FIXED_NOW - 60_000,
+    endedAt: undefined,
     usage: undefined,
     contextTokens: undefined,
+    lastOutput: undefined,
+    progress: undefined,
+    taskId: undefined,
+    teamName: undefined,
+    taskSubject: undefined,
     thinkingText: '',
     thinkingTruncated: false,
     tools: [],
@@ -99,14 +106,15 @@ describe('WorkflowsBrowserApp keyboard', () => {
     });
 
     browser.handleInput(`${ESC}[C`); // → drills into the detail view
+    browser.handleInput('t'); // expand the preserved chain view
     // Tail-pinned on entry.
     let out = strip(browser.render(80).join('\n'));
     expect(out).toContain('entry 39');
     expect(out).not.toContain('entry 0');
 
-    browser.handleInput('g'); // top of the stream
+    browser.handleInput('g'); // top of the detail view
     out = strip(browser.render(80).join('\n'));
-    expect(out).toContain('entry 0');
+    expect(out).toContain('ACTIVITY');
     expect(out).not.toContain('entry 39');
 
     browser.handleInput(`${ESC}[F`); // End → back to the tail

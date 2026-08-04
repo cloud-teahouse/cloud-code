@@ -1,16 +1,14 @@
-/**
- * WorkflowsBrowserController — mounts/closes the `/workflows` overlay and
- * keeps it live. Data comes from the `WorkflowTracker` attached to the
- * session event stream (see `session-event-handler.ts`): the controller
- * pushes a fresh snapshot on every tracker change and on a 1s tick so
- * elapsed times of running agents keep advancing while no events flow.
- */
-
+import type { BackgroundTaskInfo, Session } from '@cloud-code/sdk';
 import type { Component, ProcessTerminal, TUI } from '@cloud-code/pi-tui';
 
 import type { EditorSlotContainer } from '../components/chrome/gutter-container';
-import { WorkflowsBrowserApp } from '../components/dialogs/workflows-browser';
+import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
+import {
+  WorkflowsBrowserApp,
+  type WorkflowsBrowserProps,
+} from '../components/dialogs/workflows-browser';
 import type { CustomEditor } from '../components/editor/custom-editor';
+import type { TeamTracker } from './teams-tracker';
 import type { WorkflowTracker } from './workflows-tracker';
 
 export interface WorkflowsBrowserHost {
@@ -22,9 +20,30 @@ export interface WorkflowsBrowserHost {
     readonly editorContainer: EditorSlotContainer;
   };
   readonly workflowTracker: WorkflowTracker;
+  readonly teamTracker: TeamTracker;
+  readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
+  readonly session: Session | undefined;
+  /** Optional bridges exposed by the host when the task RPC controller owns them. */
+  readonly stopTask?: (taskId: string) => Promise<void> | void;
+  readonly openOutput?: (taskId: string) => Promise<void> | void;
+  readonly foregroundTask?: (taskId: string) => Promise<void> | void;
   /** True while a blocking panel (approval/question) owns the editor slot. */
   hasBlockingEditorSlotPanel(): boolean;
   setWorkflowsBrowser(value: WorkflowsBrowserState | undefined): void;
+}
+
+/** Bridges the dashboard actions to existing task/output RPC channels. */
+export interface WorkflowsBrowserActions {
+  readonly stopTask?: (taskId: string) => Promise<void> | void;
+  readonly openOutput?: (taskId: string) => Promise<void> | void;
+  readonly foregroundTask?: (taskId: string) => Promise<void> | void;
+}
+
+export interface WorkflowsOutputViewerState {
+  component: TaskOutputViewer;
+  savedChildren: readonly Component[];
+  taskId: string;
+  pollTimer: NodeJS.Timeout;
 }
 
 export interface WorkflowsBrowserState {
@@ -33,10 +52,14 @@ export interface WorkflowsBrowserState {
   selectedAgentId: string | undefined;
   unsubscribe: () => void;
   tickTimer: NodeJS.Timeout | undefined;
+  viewer?: WorkflowsOutputViewerState;
 }
 
 export class WorkflowsBrowserController {
-  constructor(private readonly host: WorkflowsBrowserHost) {}
+  constructor(
+    private readonly host: WorkflowsBrowserHost,
+    private readonly actions: WorkflowsBrowserActions = {},
+  ) {}
 
   show(): void {
     const { state } = this.host;
@@ -51,19 +74,7 @@ export class WorkflowsBrowserController {
     const selectedAgentId =
       agents.find((a) => a.status === 'running')?.agentId ?? agents[0]?.agentId;
 
-    const component = new WorkflowsBrowserApp(
-      {
-        agents,
-        selectedAgentId,
-        onSelect: (agentId) => {
-          this.handleSelect(agentId);
-        },
-        onCancel: () => {
-          this.close();
-        },
-      },
-      state.terminal,
-    );
+    const component = new WorkflowsBrowserApp(this.buildProps(agents, selectedAgentId), state.terminal);
 
     const savedChildren = [...state.ui.children];
     state.ui.clear();
@@ -74,14 +85,11 @@ export class WorkflowsBrowserController {
     const unsubscribe = tracker.subscribe(() => {
       this.repaint();
     });
-    // The tick only exists to advance elapsed-time readouts. Durations are
-    // computed from `endedAt ?? Date.now()`, so once every agent has an
-    // endedAt (terminal or reconciled state) the rendered frame is frozen
-    // and repainting would produce byte-identical output — skip it. Any real
-    // change still arrives through the tracker subscription above.
+    // Durations are computed from `endedAt ?? Date.now()`, so this channel is
+    // deliberately limited to one repaint per second while work is alive.
     const tickTimer = setInterval(() => {
-      const agents = tracker.getAgents();
-      if (agents.every((a) => a.endedAt !== undefined)) return;
+      const currentAgents = tracker.getAgents();
+      if (currentAgents.every((agent) => agent.endedAt !== undefined)) return;
       this.repaint();
     }, 1000);
 
@@ -101,18 +109,15 @@ export class WorkflowsBrowserController {
 
     browser.unsubscribe();
     if (browser.tickTimer !== undefined) clearInterval(browser.tickTimer);
+    if (browser.viewer !== undefined) clearInterval(browser.viewer.pollTimer);
+    browser.viewer = undefined;
 
     state.ui.clear();
     for (const child of browser.savedChildren) {
       state.ui.addChild(child);
     }
     this.host.setWorkflowsBrowser(undefined);
-    // Focus returns to the surface beneath the takeover: the slot's current
-    // content (a mounted panel, or the editor) — not blindly the editor, which
-    // may have been swapped out for a panel while the takeover was open.
     state.ui.setFocus(state.editorContainer.children[0] ?? state.editor);
-    // Takeover close: repaint the viewport in place so the session's native
-    // scrollback survives (a destructive full clear would wipe it).
     state.ui.requestCollapseRender();
   }
 
@@ -124,21 +129,57 @@ export class WorkflowsBrowserController {
     const agents = this.host.workflowTracker.getAgents();
     if (
       browser.selectedAgentId !== undefined &&
-      !agents.some((a) => a.agentId === browser.selectedAgentId)
+      !agents.some((agent) => agent.agentId === browser.selectedAgentId)
     ) {
       browser.selectedAgentId = agents[0]?.agentId;
     }
-    browser.component.setProps({
+    browser.component.setProps(this.buildProps(agents, browser.selectedAgentId));
+    state.ui.requestRender();
+  }
+
+  private buildProps(
+    agents: readonly WorkflowAgentNodeLike[],
+    selectedAgentId: string | undefined,
+  ): WorkflowsBrowserProps {
+    return {
       agents,
-      selectedAgentId: browser.selectedAgentId,
+      selectedAgentId,
+      scope: this.resolveScope(agents),
+      backgroundTasks: this.host.backgroundTasks,
       onSelect: (agentId) => {
         this.handleSelect(agentId);
       },
       onCancel: () => {
         this.close();
       },
-    });
-    state.ui.requestRender();
+      onStopConfirmed: (taskId) => {
+        void this.handleStop(taskId);
+      },
+      onOpenOutput: (taskId) => {
+        void this.handleOpenOutput(taskId);
+      },
+      onForeground: this.hasForegroundBridge()
+        ? (taskId) => {
+            void this.handleForeground(taskId);
+          }
+        : undefined,
+    };
+  }
+
+  private resolveScope(agents: readonly WorkflowAgentNodeLike[]): string | undefined {
+    const teamNames = new Set<string>();
+    for (const agent of agents) {
+      const teamName = agent.teamName;
+      if (teamName !== undefined && teamName.length > 0) teamNames.add(teamName);
+    }
+    if (teamNames.size === 1) return [...teamNames][0];
+    const trackedTeams = this.host.teamTracker.getTeams();
+    if (teamNames.size === 0 && trackedTeams.length === 1) return trackedTeams[0]?.name;
+    return undefined;
+  }
+
+  private hasForegroundBridge(): boolean {
+    return this.actions.foregroundTask !== undefined || this.host.foregroundTask !== undefined;
   }
 
   private handleSelect(agentId: string): void {
@@ -148,4 +189,102 @@ export class WorkflowsBrowserController {
     browser.selectedAgentId = agentId;
     this.repaint();
   }
+
+  private async handleStop(taskId: string): Promise<void> {
+    const stopTask = this.actions.stopTask ?? this.host.stopTask;
+    if (stopTask !== undefined) {
+      await stopTask(taskId);
+      return;
+    }
+    await this.host.session?.stopBackgroundTask(taskId, { reason: 'user workflow dashboard stop' });
+  }
+
+  private async handleOpenOutput(taskId: string): Promise<void> {
+    const openOutput = this.actions.openOutput ?? this.host.openOutput;
+    if (openOutput !== undefined) {
+      await openOutput(taskId);
+      return;
+    }
+    await this.openOutputViewer(taskId);
+  }
+
+  private async openOutputViewer(taskId: string): Promise<void> {
+    const { state } = this.host;
+    const browser = state.workflowsBrowser;
+    const session = this.host.session;
+    if (browser === undefined || browser.viewer !== undefined || session === undefined) return;
+
+    let output: string;
+    try {
+      output = await session.getBackgroundTaskOutput(taskId);
+    } catch {
+      return;
+    }
+    const current = this.host.state.workflowsBrowser;
+    if (current === undefined || current !== browser) return;
+
+    const viewer = new TaskOutputViewer(
+      {
+        taskId,
+        info: this.host.backgroundTasks.get(taskId),
+        output,
+        onClose: () => {
+          this.closeOutputViewer();
+        },
+      },
+      state.terminal,
+    );
+    const savedChildren = [...state.ui.children];
+    state.ui.clear();
+    state.ui.addChild(viewer);
+    state.ui.setFocus(viewer);
+    state.ui.requestRender(true);
+
+    const pollTimer = setInterval(() => {
+      void this.refreshOutputViewer(browser, taskId, viewer);
+    }, 1000);
+    browser.viewer = { component: viewer, savedChildren, taskId, pollTimer };
+  }
+
+  private async refreshOutputViewer(
+    browser: WorkflowsBrowserState,
+    taskId: string,
+    viewer: TaskOutputViewer,
+  ): Promise<void> {
+    const session = this.host.session;
+    if (session === undefined) return;
+    try {
+      const output = await session.getBackgroundTaskOutput(taskId);
+      const current = this.host.state.workflowsBrowser;
+      if (current !== browser || browser.viewer?.component !== viewer) return;
+      viewer.setProps({
+        taskId,
+        info: this.host.backgroundTasks.get(taskId),
+        output,
+        onClose: () => this.closeOutputViewer(),
+      });
+      this.host.state.ui.requestRender();
+    } catch {
+      // The snapshot remains useful when the task disappears between polls.
+    }
+  }
+
+  private closeOutputViewer(): void {
+    const browser = this.host.state.workflowsBrowser;
+    if (browser === undefined || browser.viewer === undefined) return;
+    const viewer = browser.viewer;
+    clearInterval(viewer.pollTimer);
+    browser.viewer = undefined;
+    this.host.state.ui.clear();
+    for (const child of viewer.savedChildren) this.host.state.ui.addChild(child);
+    this.host.state.ui.setFocus(browser.component);
+    this.host.state.ui.requestCollapseRender();
+  }
+
+  private async handleForeground(taskId: string): Promise<void> {
+    const foregroundTask = this.actions.foregroundTask ?? this.host.foregroundTask;
+    await foregroundTask?.(taskId);
+  }
 }
+
+type WorkflowAgentNodeLike = WorkflowsBrowserProps['agents'][number];

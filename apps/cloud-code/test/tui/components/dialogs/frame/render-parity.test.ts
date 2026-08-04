@@ -10,7 +10,9 @@
  * notice below 48 columns) under the en and zh-CN locales. Migrating these
  * dialogs onto the shared dialog frame / declarative hit zones must not
  * change a single rendered byte, so the snapshots were recorded against the
- * pre-migration implementations.
+ * pre-migration implementations. The workflows browser is an intentional
+ * run-dashboard redesign; its four cases are baselines for the new
+ * roster/detail/activity layout rather than unchanged-byte parity.
  */
 
 import type {
@@ -1151,12 +1153,19 @@ describe('wave-2c dialog render parity', () => {
         description: undefined,
         status: 'done',
         statusDetail: undefined,
+        lastEventAt: undefined,
+        currentActivity: undefined,
         model: 'kimi-k2',
         step: 3,
         startedAt: FIXED_NOW - 120_000,
         endedAt: FIXED_NOW - 60_000,
         usage: undefined,
         contextTokens: undefined,
+        lastOutput: undefined,
+        progress: undefined,
+        taskId: undefined,
+        teamName: undefined,
+        taskSubject: undefined,
         thinkingText: '',
         thinkingTruncated: false,
         tools: [],
