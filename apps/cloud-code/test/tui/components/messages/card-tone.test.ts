@@ -75,7 +75,7 @@ describe('applyCardTone', () => {
     expect(strip(out).trimEnd()).toBe(strip(line));
   });
 
-  it('paints hoverBackground behind semantic-color rows without changing their foreground', () => {
+  it('hover never paints a background, keeping semantic colors intact', () => {
     const palette = currentTheme.palette;
     const line = chalk.hex(palette.diffAdded)('+ added') + chalk.hex(palette.error)(' error');
     const image = '\u001B_Ga=T,f=100;payload\u001B\\';
@@ -87,11 +87,11 @@ describe('applyCardTone', () => {
     });
 
     expect(out[0]).toBe('');
-    expect(out[1]).toContain(HOVER_BG_OPEN);
+    expect(out[1]).not.toContain(HOVER_BG_OPEN);
     expect(out[1]).not.toContain(BG_OPEN);
     expect(out[1]).toContain(chalk.hex(palette.diffAdded)('+ added'));
     expect(out[1]).toContain(chalk.hex(palette.error)(' error'));
-    expect(visibleWidth(strip(out[1]!))).toBe(20);
+    expect(strip(out[1]!)).toBe(strip(line));
     expect(out[2]).toBe(image);
   });
 
@@ -156,10 +156,7 @@ describe('applyCardTone', () => {
       bgFrom: 0,
       toneFrom: 1,
     });
-    // Its text and styling survive; the hover background paints it too
-    // (the whole block highlights), padded to width.
-    expect(strip(out[0]!).trimEnd()).toBe('header');
-    expect(out[0]).toContain(HOVER_BG_OPEN);
+    expect(out[0]).toBe(header);
   });
 
   it('paints the background from bgFrom down and pads rows to the width', () => {

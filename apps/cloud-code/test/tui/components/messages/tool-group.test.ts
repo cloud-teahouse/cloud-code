@@ -405,21 +405,8 @@ describe('ToolGroupComponent', () => {
       group.setHoveredZone('card');
       const hovered = group.render(120);
       expect(hovered[0]).toBe(base[0]); // spacer untouched
-      // The header is painted by the hover background but keeps its text and
-      // foreground colors.
-      expect(hovered[1]).not.toBe(base[1]);
-      expect(strip(hovered[1]!).trimEnd()).toBe(strip(base[1]!).trimEnd());
-      expect(
-        hovered
-          .slice(1)
-          .map((line) => strip(line).trimEnd())
-          .join('\n'),
-      ).toBe(
-        base
-          .slice(1)
-          .map((line) => strip(line).trimEnd())
-          .join('\n'),
-      );
+      expect(hovered[1]).toBe(base[1]); // header keeps its colors
+      expect(strip(hovered.join('\n'))).toBe(strip(base.join('\n')));
       const body = hovered.slice(2).join('\n');
       expect(body).toContain(TEXT_OPEN);
       expect(body).not.toContain('\x1b[2m');

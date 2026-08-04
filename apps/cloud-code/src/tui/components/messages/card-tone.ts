@@ -49,10 +49,9 @@ export function applyCardTone(lines: string[], options: CardToneOptions): string
   const dimFgOpen = sampledFgOpen('textDim');
   const textFgOpen = sampledFgOpen('text');
   const whiten = textFgOpen.length > 0;
-  // Hover paints the subtler hoverBackground so rows made entirely of
-  // semantic colors (diff/error/syntax) still read as hovered; click keeps
-  // the stronger userMessageBackground.
-  const paint = chalk.level > 0;
+  // Hover is foreground-only: gray text brightens to white, never a
+  // background wash. Only the click tone paints the gray block.
+  const paint = tone === 'click' && chalk.level > 0;
   if (!whiten && !paint) return lines;
   // A hover over a header-only card has no body rows to whiten; lift the
   // boundary to the header row so its gray argument/chip runs still signal
@@ -69,21 +68,28 @@ export function applyCardTone(lines: string[], options: CardToneOptions): string
       line = brightenDetailLine(line, dimFgOpen, textFgOpen);
     }
     if (paint && i >= bgFrom && !image) {
-      line = paintBackground(line, width, tone === 'hover' ? 'hoverBackground' : 'userMessageBackground');
+      line = paintBackground(line, width);
     }
     out[i] = line;
   }
   return out;
 }
 
-/** Pad a row to the card width and wrap it in the given background token. */
-function paintBackground(
-  line: string,
-  width: number,
-  token: 'hoverBackground' | 'userMessageBackground',
-): string {
+/** Pad a row to the card width and wrap it in the gray block background. */
+function paintBackground(line: string, width: number): string {
   const pad = ' '.repeat(Math.max(0, width - visibleWidth(line)));
-  return currentTheme.bg(token, line + pad);
+  return currentTheme.bg('userMessageBackground', line + pad);
+}
+
+/**
+ * Foreground-only hover for zone-less transcript rows: gray runs turn white,
+ * everything else (semantic colors, backgrounds) is untouched.
+ */
+export function whitenHoverLine(line: string): string {
+  const dimFgOpen = sampledFgOpen('textDim');
+  const textFgOpen = sampledFgOpen('text');
+  if (textFgOpen.length === 0) return line;
+  return brightenDetailLine(line, dimFgOpen, textFgOpen);
 }
 
 /**
