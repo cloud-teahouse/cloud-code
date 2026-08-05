@@ -113,6 +113,8 @@ export type {
 const SUMMARY_MIN_LENGTH = 200;
 const SUMMARY_CONTINUATION_ATTEMPTS = 1;
 const HOOK_TEXT_PREVIEW_LENGTH = 500;
+/** Tail cap for the prompt carried by `subagent.spawned` (workflows detail view). */
+const SUBAGENT_PROMPT_EVENT_TAIL_CHARS = 4000;
 const SUBAGENT_MAX_TOKENS_ERROR =
   'Subagent turn failed before completing its final summary: reason=max_tokens';
 const TOOL_CALL_DISABLED_MESSAGE =
@@ -961,6 +963,12 @@ export class SessionSubagentHost {
       parentToolCallUuid: options.parentToolCallUuid,
       parentAgentId: this.ownerAgentId,
       description: options.description,
+      // The workflows detail view renders the prompt as the conversation's
+      // first user message; cap it so a huge fork prompt cannot bloat the wire.
+      prompt:
+        options.prompt.length > SUBAGENT_PROMPT_EVENT_TAIL_CHARS
+          ? options.prompt.slice(-SUBAGENT_PROMPT_EVENT_TAIL_CHARS)
+          : options.prompt,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
     });

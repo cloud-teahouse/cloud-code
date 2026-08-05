@@ -982,6 +982,10 @@ export interface SubagentSpawnedEvent {
   readonly parentAgentId?: string;
   readonly callerAgentId?: string;
   readonly description?: string;
+  /** The task prompt the parent handed the child (tail-capped at emit time);
+   * the /workflows detail view renders it as the conversation's first user
+   * message. */
+  readonly prompt?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
 }
@@ -1935,6 +1939,7 @@ export const subagentSpawnedEventSchema = z.object({
   parentAgentId: z.string().optional(),
   callerAgentId: z.string().optional(),
   description: z.string().optional(),
+  prompt: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
