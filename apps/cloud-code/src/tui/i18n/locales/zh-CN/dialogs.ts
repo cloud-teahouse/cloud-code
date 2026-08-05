@@ -7,6 +7,8 @@ export const dialogs: Record<keyof typeof enDialogs, string> = {
   'dialogs.settings.title': '设置',
   'dialogs.settings.model.label': '模型',
   'dialogs.settings.model.description': '切换当前模型与思考模式。',
+  'dialogs.settings.provider.label': '服务商',
+  'dialogs.settings.provider.description': '管理平台、自定义服务商与模型。',
   'dialogs.settings.permission.label': '权限',
   'dialogs.settings.permission.description': '选择工具操作的批准方式。',
   'dialogs.settings.theme.label': '主题',
@@ -91,8 +93,11 @@ export const dialogs: Record<keyof typeof enDialogs, string> = {
 
   // ── /provider 管理 ──
   'dialogs.provider.title': ' 服务商',
+  'dialogs.provider.hint.view': 'Enter 模型',
   'dialogs.provider.hint.edit': 'Alt+E 编辑',
+  'dialogs.provider.hint.addModel': 'Alt+A 添加模型',
   'dialogs.provider.hint.delete': 'Alt+D 删除',
+  'dialogs.provider.searchPlaceholder': '搜索服务商',
   'dialogs.provider.customBadge': '[自定义]',
   'dialogs.provider.addPlatform': '[ 添加新平台 ]',
   'dialogs.provider.empty': '  未配置服务商。',

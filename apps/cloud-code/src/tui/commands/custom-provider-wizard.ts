@@ -1,7 +1,8 @@
 /**
  * Custom provider wizard — the manual "add provider" flow behind /provider.
  *
- * Steps (Esc at any step aborts and resolves `undefined`; the caller reopens
+ * Steps (Esc past the first step goes back one step with the drafts kept;
+ * Esc at the first step aborts and resolves `undefined`; the caller reopens
  * the provider manager):
  *   1. API type        — kimi / anthropic / openai / openai_responses
  *   2. Base URL        — required except anthropic (empty = official default);
@@ -59,45 +60,91 @@ const PROBE_TIMEOUT_MS = 10_000;
 export async function runCustomProviderWizard(
   host: SlashCommandHost,
 ): Promise<string | undefined> {
-  const type = await promptCustomProviderType(host);
-  if (type === undefined) return undefined;
+  // Step loop: Esc past the first step returns to the previous step with the
+  // drafts preserved (the API key is re-entered — masked secrets are never
+  // prefilled); Esc at the first step aborts the wizard. The existing-ids
+  // list is fetched lazily at the id step so the first prompt mounts
+  // synchronously.
+  let step = 0;
+  let type: CustomProviderType | undefined;
+  let baseUrl: string | undefined;
+  let apiKey: string | undefined;
+  let providerId: string | undefined;
+  let verify = false;
 
-  const baseUrlAnswer = await promptCustomBaseUrl(host, type);
-  if (baseUrlAnswer.kind === 'cancel') return undefined;
-  const baseUrl = baseUrlAnswer.value;
+  for (;;) {
+    if (step === 0) {
+      const picked = await promptCustomProviderType(host, type);
+      if (picked === undefined) return undefined;
+      type = picked;
+      step = 1;
+      continue;
+    }
+    if (step === 1) {
+      const answer = await promptCustomBaseUrl(host, type!, baseUrl, true);
+      if (answer.kind === 'cancel') {
+        step = 0;
+        continue;
+      }
+      baseUrl = answer.value;
+      step = 2;
+      continue;
+    }
+    if (step === 2) {
+      const entered = await promptCustomApiKey(host, type!, 'required', true);
+      if (entered === undefined) {
+        step = 1;
+        continue;
+      }
+      apiKey = entered;
+      step = 3;
+      continue;
+    }
+    if (step === 3) {
+      const existingIds = await host.harness
+        .getConfig()
+        .then((config) => Object.keys(config.providers ?? {}));
+      const entered = await promptCustomProviderId(
+        host,
+        providerId ?? deriveProviderIdSuggestion(type!, baseUrl, existingIds),
+        existingIds,
+        true,
+      );
+      if (entered === undefined) {
+        step = 2;
+        continue;
+      }
+      providerId = entered;
+      step = 4;
+      continue;
+    }
+    const choice = await promptChoice(host, {
+      title: t('commands.provider.custom.verifyTitle'),
+      options: [
+        { value: 'yes', label: t('commands.provider.custom.verifyYes') },
+        { value: 'no', label: t('commands.provider.custom.verifyNo') },
+      ],
+      escBack: true,
+    });
+    if (choice === undefined) {
+      step = 3;
+      continue;
+    }
+    verify = choice === 'yes';
+    break;
+  }
 
-  const apiKey = await promptCustomApiKey(host, type);
-  if (apiKey === undefined) return undefined;
-
-  const existingIds = await host.harness
-    .getConfig()
-    .then((config) => Object.keys(config.providers ?? {}));
-  const providerId = await promptCustomProviderId(
-    host,
-    deriveProviderIdSuggestion(type, baseUrl, existingIds),
-    existingIds,
-  );
-  if (providerId === undefined) return undefined;
-
-  const verify = await promptChoice(host, {
-    title: t('commands.provider.custom.verifyTitle'),
-    options: [
-      { value: 'yes', label: t('commands.provider.custom.verifyYes') },
-      { value: 'no', label: t('commands.provider.custom.verifyNo') },
-    ],
-  });
-  if (verify === undefined) return undefined;
-  if (verify === 'yes') {
-    await verifyCustomProvider(host, type, baseUrl, apiKey);
+  if (verify) {
+    await verifyCustomProvider(host, type!, baseUrl, apiKey!);
   }
 
   try {
     const config = await host.harness.getConfig();
     const providers = { ...config.providers };
-    providers[providerId] = {
-      type,
+    providers[providerId!] = {
+      type: type!,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
-      apiKey,
+      apiKey: apiKey!,
     };
     await host.harness.setConfig({ providers });
     await host.authFlow.refreshConfigAfterLogin();
@@ -108,13 +155,14 @@ export async function runCustomProviderWizard(
     return undefined;
   }
 
-  host.showStatus(t('commands.provider.custom.added', { id: providerId }), 'success');
+  host.showStatus(t('commands.provider.custom.added', { id: providerId! }), 'success');
   return providerId;
 }
 
 function promptCustomProviderType(
   host: SlashCommandHost,
   currentValue?: CustomProviderType,
+  escBack = false,
 ): Promise<CustomProviderType | undefined> {
   return promptChoice(host, {
     title: t('commands.provider.custom.typeTitle'),
@@ -124,6 +172,7 @@ function promptCustomProviderType(
       description: t(`commands.provider.custom.type.${type}.description`),
     })),
     ...(currentValue !== undefined ? { currentValue } : {}),
+    escBack,
   }).then((value) =>
     CUSTOM_PROVIDER_TYPES.includes(value as CustomProviderType)
       ? (value as CustomProviderType)
@@ -140,6 +189,7 @@ function promptCustomBaseUrl(
   host: SlashCommandHost,
   type: CustomProviderType,
   initialValue?: string,
+  escBack = false,
 ): Promise<BaseUrlAnswer> {
   const optional = type === 'anthropic';
   return promptInput(host, {
@@ -157,6 +207,7 @@ function promptCustomBaseUrl(
     emptyHint: t('commands.provider.custom.baseUrlInvalid'),
     ...(initialValue !== undefined ? { initialValue } : {}),
     validate: (value) => (isValidHttpUrl(value) ? undefined : t('commands.provider.custom.baseUrlInvalid')),
+    escBack,
   }).then((value) => {
     if (value === undefined) return { kind: 'cancel' };
     // Anthropic only: empty means the official SDK default endpoint.
@@ -181,6 +232,7 @@ function promptCustomApiKey(
   host: SlashCommandHost,
   type: CustomProviderType,
   mode: 'required' | 'keep-current' = 'required',
+  escBack = false,
 ): Promise<string | undefined> {
   return promptInput(host, {
     title: t('commands.provider.custom.apiKeyTitle', { type }),
@@ -191,6 +243,7 @@ function promptCustomApiKey(
     ],
     mask: true,
     ...(mode === 'keep-current' ? { allowEmpty: true } : {}),
+    escBack,
   });
 }
 
@@ -227,6 +280,7 @@ export function buildCustomProviderEntry(
  * current one) → optional connectivity re-check → persist. The provider id
  * is immutable (model aliases hang off it). Only a real change is written —
  * wholesale, via `harness.setProvider`, so cleared fields actually clear.
+ * Esc past the first step goes back one step; Esc at the first step aborts.
  *
  * Resolves 'updated' / 'unchanged', or `undefined` when aborted or the
  * provider is not a custom one (managed providers get a guard message).
@@ -253,60 +307,91 @@ export async function runCustomProviderEditWizard(
   }
   const currentType = existing.type as CustomProviderType;
 
-  const type = await promptCustomProviderType(host, currentType);
-  if (type === undefined) return undefined;
+  let step = 0;
+  let type: CustomProviderType = currentType;
+  let baseUrl: string | undefined = existing.baseUrl;
+  let apiKey: string | undefined = existing.apiKey;
+  let verify = false;
 
-  const baseUrlAnswer = await promptCustomBaseUrl(host, type, existing.baseUrl);
-  if (baseUrlAnswer.kind === 'cancel') return undefined;
-  const baseUrl = baseUrlAnswer.value;
+  for (;;) {
+    if (step === 0) {
+      const picked = await promptCustomProviderType(host, type);
+      if (picked === undefined) return undefined;
+      type = picked;
+      step = 1;
+      continue;
+    }
+    if (step === 1) {
+      const answer = await promptCustomBaseUrl(host, type, baseUrl, true);
+      if (answer.kind === 'cancel') {
+        step = 0;
+        continue;
+      }
+      baseUrl = answer.value;
+      step = 2;
+      continue;
+    }
+    if (step === 2) {
+      const entered = await promptCustomApiKey(host, type, 'keep-current', true);
+      if (entered === undefined) {
+        step = 1;
+        continue;
+      }
+      apiKey = entered.length > 0 ? entered : existing.apiKey;
+      step = 3;
+      continue;
+    }
+    const entry = buildCustomProviderEntry(existing, { type, baseUrl, apiKey });
+    const changed =
+      type !== existing.type || baseUrl !== existing.baseUrl || apiKey !== existing.apiKey;
+    if (!changed) {
+      host.showStatus(t('commands.provider.edit.unchanged', { id: providerId }));
+      return 'unchanged';
+    }
+    const choice = await promptChoice(host, {
+      title: t('commands.provider.custom.verifyTitle'),
+      options: [
+        { value: 'yes', label: t('commands.provider.custom.verifyYes') },
+        { value: 'no', label: t('commands.provider.custom.verifyNo') },
+      ],
+      escBack: true,
+    });
+    if (choice === undefined) {
+      step = 2;
+      continue;
+    }
+    verify = choice === 'yes';
 
-  const apiKeyInput = await promptCustomApiKey(host, type, 'keep-current');
-  if (apiKeyInput === undefined) return undefined;
-  const apiKey = apiKeyInput.length > 0 ? apiKeyInput : existing.apiKey;
+    if (verify) {
+      await verifyCustomProvider(host, type, baseUrl, apiKey ?? '');
+    }
 
-  const entry = buildCustomProviderEntry(existing, { type, baseUrl, apiKey });
-  const changed =
-    type !== existing.type || baseUrl !== existing.baseUrl || apiKey !== existing.apiKey;
-  if (!changed) {
-    host.showStatus(t('commands.provider.edit.unchanged', { id: providerId }));
-    return 'unchanged';
+    try {
+      await host.harness.setProvider(providerId, entry);
+      await host.authFlow.refreshAvailableModels();
+    } catch (error) {
+      host.showError(
+        t('commands.provider.custom.saveFailed', { error: formatErrorMessage(error) }),
+      );
+      return undefined;
+    }
+
+    host.showStatus(t('commands.provider.edit.updated', { id: providerId }), 'success');
+    return 'updated';
   }
-
-  const verify = await promptChoice(host, {
-    title: t('commands.provider.custom.verifyTitle'),
-    options: [
-      { value: 'yes', label: t('commands.provider.custom.verifyYes') },
-      { value: 'no', label: t('commands.provider.custom.verifyNo') },
-    ],
-  });
-  if (verify === undefined) return undefined;
-  if (verify === 'yes') {
-    await verifyCustomProvider(host, type, baseUrl, apiKey ?? '');
-  }
-
-  try {
-    await host.harness.setProvider(providerId, entry);
-    await host.authFlow.refreshAvailableModels();
-  } catch (error) {
-    host.showError(
-      t('commands.provider.custom.saveFailed', { error: formatErrorMessage(error) }),
-    );
-    return undefined;
-  }
-
-  host.showStatus(t('commands.provider.edit.updated', { id: providerId }), 'success');
-  return 'updated';
 }
 
 function promptCustomProviderId(
   host: SlashCommandHost,
   suggestion: string,
   existingIds: readonly string[],
+  escBack = false,
 ): Promise<string | undefined> {
   return promptInput(host, {
     title: t('commands.provider.custom.idTitle'),
     subtitleLines: [t('commands.provider.custom.idSubtitle', { id: suggestion })],
     initialValue: suggestion,
+    escBack,
     validate: (value) => {
       if (!/^[a-z0-9][a-z0-9._-]*$/.test(value)) {
         return t('commands.provider.custom.idInvalid');

@@ -54,6 +54,9 @@ export interface ApiKeyInputDialogOptions {
   /** Inline validation: returns the error message to display, or `undefined`
    * when the value is accepted. The input stays open on rejection. */
   readonly validate?: (value: string) => string | undefined;
+  /** Overrides the footer hint line (e.g. wizard steps past the first read
+   * "Esc to go back" instead of "Esc to cancel"). */
+  readonly footerText?: string;
 }
 
 export class ApiKeyInputDialogComponent extends Container implements Focusable {
@@ -66,6 +69,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
   private readonly mask: boolean;
   private readonly emptyHint: string;
   private readonly allowEmpty: boolean;
+  private readonly footerText: string;
   private readonly validate: ((value: string) => string | undefined) | undefined;
   private done = false;
   /** Transient inline error (empty submit or `validate` rejection); replaces
@@ -85,6 +89,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     this.mask = options?.mask ?? true;
     this.emptyHint = options?.emptyHint ?? t('selectors.apiKey.empty');
     this.allowEmpty = options?.allowEmpty ?? false;
+    this.footerText = options?.footerText ?? t('selectors.inputDialog.footer');
     this.validate = options?.validate;
     if (options?.initialValue !== undefined) {
       this.input.setValue(options.initialValue);
@@ -132,8 +137,8 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     const subtitleLines = subtitleSource.map((line) =>
       truncateToWidth(currentTheme.fg('textDim', line), innerWidth, '…'),
     );
-    const footerLines = wrapHintText(t('selectors.inputDialog.footer'), innerWidth, '  ·  ').map(
-      (line) => currentTheme.fg('textDim', line),
+    const footerLines = wrapHintText(this.footerText, innerWidth, '  ·  ').map((line) =>
+      currentTheme.fg('textDim', line),
     );
 
     const titleLine = truncateToWidth(titleStyled, innerWidth, '…');

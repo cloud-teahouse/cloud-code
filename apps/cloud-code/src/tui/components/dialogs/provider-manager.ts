@@ -14,7 +14,14 @@
  * Keyboard:
  *   - ↑ / ↓             move highlight
  *   - ← / → · PgUp/PgDn page
- *   - Enter             on `[ Add New Platform ]` → `onAdd()`
+ *   - / or ↑ on the first row · click the box
+ *                       select the search box; typing filters the rows
+ *                       (fuzzy), Esc layers clear → unfocus → close
+ *   - Enter             on a source row → `onViewModels(providerId)`;
+ *                       on `[ Add New Platform ]` → `onAdd()`
+ *   - Alt+A             add a model under a custom (standalone) provider →
+ *                       `onAddModel(id)`; on a managed source →
+ *                       `onAddModelGuard(label)`
  *   - Alt+E             edit a custom (standalone) provider → `onEditProvider(id)`;
  *                       on a managed source → `onEditGuard(label)` (only when
  *                       the callbacks are set)
@@ -22,18 +29,19 @@
  *                         models the delete cascades to)
  *                         on a source row → `onDeleteSource(providerIds)`
  *                         on `[ Add New Platform ]` → ignored
- *   - Esc               `onClose()` (outside confirm)
+ *   - Esc               `onClose()` (outside confirm, search box unselected)
  *
  * Alt+E / Alt+D are the keyboard contract's canonical manage keys (same as
  * the /model picker); the pre-contract bare E/D stay as silent aliases for
- * one release, and the hint line advertises only the Alt keys.
+ * one release, and the hint line advertises only the Alt keys. While the
+ * search box is selected, printable keys edit the query instead.
  *
  * The `[y/N]` confirmation is a transient substate handled in-component:
  * while armed, only `y` / `Y` / `n` / `N` / `Esc` are honored and the
  * prompt replaces the footer hint.
  *
  * Custom (standalone, user-maintained) providers carry a `[custom]` badge —
- * they are the rows Alt+E can edit.
+ * they are the rows Alt+E/Alt+A act on.
  *
  * The component is pure-view: every CRUD side effect is dispatched back
  * through callbacks. The host (`CloudCodeTui`) is responsible for performing
@@ -67,9 +75,13 @@ import { isCustomProvider } from '#/tui/utils/custom-entries';
 import { normalizeLegacyMetaKey } from '#/tui/utils/legacy-meta-key';
 import { HoverState, underlineText } from '#/tui/utils/mouse-hover';
 import { printableChar } from '#/tui/utils/printable-key';
-import { pageView, type PageView } from '#/tui/utils/paging';
+import { SearchableList } from '#/tui/utils/searchable-list';
 
-import { DialogFrame, inlineDialogMinSize } from './frame/dialog-frame';
+import {
+  DIALOG_SEARCH_ZONE,
+  DialogFrame,
+  inlineDialogMinSize,
+} from './frame/dialog-frame';
 import { providerServiceName } from './model-selector';
 
 interface ConfirmState {
@@ -87,6 +99,12 @@ export interface ProviderManagerOptions {
   /** Provider id of the currently active model. */
   readonly activeProviderId?: string;
   readonly onAdd: () => void;
+  /** Enter on a source row: open the model picker on that provider's tab. */
+  readonly onViewModels?: (providerId: string) => void;
+  /** Alt+A on a custom source row: chain into the add-model wizard. */
+  readonly onAddModel?: (providerId: string) => void;
+  /** Alt+A on a managed source row — the host shows the guard message. */
+  readonly onAddModelGuard?: (label: string) => void;
   /** Delete all providers under a source (Open Platform / custom-registry
    *  fetch / standalone). Passed the full provider-id list so the host
    *  doesn't have to re-derive the source grouping. */
@@ -245,11 +263,15 @@ function buildRows(opts: ProviderManagerOptions): readonly Row[] {
   return [...sources, { kind: 'add', id: '__add__', label: ADD_ROW_LABEL_KEY }];
 }
 
+function rowSearchText(row: Row): string {
+  if (row.kind === 'add') return '';
+  return `${row.label} ${row.providerIds.join(' ')} ${row.baseUrl ?? ''}`;
+}
+
 export class ProviderManagerComponent extends Container implements Focusable {
   focused = false;
   private opts: ProviderManagerOptions;
-  private rows: readonly Row[];
-  private selectedIndex: number;
+  private readonly list: SearchableList<Row>;
   private confirm: ConfirmState | undefined;
   /** The dialog skeleton owning the chrome (divider/title/hint) and its row
    * math. The hint goes in as raw segments, so the frame wraps it at
@@ -270,51 +292,33 @@ export class ProviderManagerComponent extends Container implements Focusable {
   constructor(opts: ProviderManagerOptions) {
     super();
     this.opts = opts;
-    this.rows = buildRows(opts);
+    const rows = buildRows(opts);
     const activeIdx = opts.activeProviderId
-      ? this.rows.findIndex(
+      ? rows.findIndex(
           (row) => row.kind === 'source' && row.providerIds.includes(opts.activeProviderId ?? ''),
         )
       : -1;
-    this.selectedIndex = Math.max(activeIdx, 0);
+    this.list = new SearchableList<Row>({
+      items: rows,
+      toSearchText: rowSearchText,
+      pageSize: PAGE_SIZE,
+      initialIndex: Math.max(activeIdx, 0),
+      searchable: true,
+    });
     this.confirm = undefined;
   }
 
   /**
-   * Replace the props the component renders against. Existing selection
-   * is preserved when possible (by id or first provider id) so deletions
-   * don't visually jump. Any in-flight `[y/N]` substate is cleared because
-   * the underlying target may have changed.
+   * Replace the props the component renders against. The selection follows
+   * the previously selected row (by id) so deletions don't visually jump,
+   * and any in-flight `[y/N]` substate is cleared because the underlying
+   * target may have changed.
    */
   setOptions(next: ProviderManagerOptions): void {
-    const previousSelected = this.rows[this.selectedIndex];
-    const previousSelectedId = previousSelected?.id;
-    const previousFirstProviderId =
-      previousSelected?.kind === 'source' ? previousSelected.providerIds[0] : undefined;
-
     this.opts = next;
-    this.rows = buildRows(next);
     this.confirm = undefined;
-
-    let newIdx = -1;
-    if (previousSelectedId !== undefined) {
-      newIdx = this.rows.findIndex((row) => row.id === previousSelectedId);
-    }
-    if (newIdx < 0 && previousFirstProviderId !== undefined) {
-      newIdx = this.rows.findIndex(
-        (row) => row.kind === 'source' && row.providerIds.includes(previousFirstProviderId),
-      );
-    }
-    if (newIdx < 0) {
-      newIdx = Math.min(this.selectedIndex, Math.max(0, this.rows.length - 1));
-    }
-    this.selectedIndex = newIdx;
+    this.list.updateItems(buildRows(next), (row) => row.id);
     this.invalidate();
-  }
-
-  /** Rows after applying the active fuzzy filter; the add-row is always kept. */
-  private page(): PageView {
-    return pageView(this.rows.length, this.selectedIndex, PAGE_SIZE);
   }
 
   handleInput(data: string): void {
@@ -328,81 +332,64 @@ export class ProviderManagerComponent extends Container implements Focusable {
     const normalized = normalizeLegacyMetaKey(data);
 
     if (matchesKey(normalized, Key.escape)) {
-      this.opts.onClose();
-      return;
-    }
-
-    const rows = this.rows;
-
-    if (matchesKey(normalized, Key.up)) {
-      if (rows.length === 0) return;
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
-      this.invalidate();
-      return;
-    }
-    if (matchesKey(normalized, Key.down)) {
-      if (rows.length === 0) return;
-      this.selectedIndex = Math.min(rows.length - 1, this.selectedIndex + 1);
-      this.invalidate();
-      return;
-    }
-
-    if (matchesKey(normalized, Key.left) || matchesKey(normalized, Key.pageUp)) {
-      if (rows.length === 0) return;
-      this.selectedIndex = Math.max(0, this.selectedIndex - PAGE_SIZE);
-      this.invalidate();
-      return;
-    }
-    if (matchesKey(normalized, Key.right) || matchesKey(normalized, Key.pageDown)) {
-      if (rows.length === 0) return;
-      this.selectedIndex = Math.min(rows.length - 1, this.selectedIndex + PAGE_SIZE);
-      this.invalidate();
-      return;
-    }
-
-    if (matchesKey(normalized, Key.home)) {
-      if (rows.length === 0) return;
-      this.selectedIndex = 0;
-      this.invalidate();
-      return;
-    }
-    if (matchesKey(normalized, Key.end)) {
-      if (rows.length === 0) return;
-      this.selectedIndex = rows.length - 1;
+      // Searchable-dialog layering: clear the query → unselect the search
+      // box → close.
+      this.frame.handleEscape(this.list, this.opts.onClose);
       this.invalidate();
       return;
     }
 
     if (matchesKey(normalized, Key.enter)) {
-      const selected = rows[this.selectedIndex];
+      const selected = this.list.selected();
       if (selected?.kind === 'add') {
         this.opts.onAdd();
+      } else if (selected?.kind === 'source' && selected.providerIds[0] !== undefined) {
+        this.opts.onViewModels?.(selected.providerIds[0]);
       }
       return;
     }
 
     // Manage actions: Alt+D arms the inline delete confirm, Alt+E edits a
-    // custom provider (the keyboard contract's canonical Alt+letter manage
-    // keys, same as the /model picker). The pre-contract bare E/D stay as
-    // silent aliases for one release.
+    // custom provider, Alt+A adds a model under it (the keyboard contract's
+    // canonical Alt+letter manage keys, same as the /model picker). The
+    // pre-contract bare E/D stay as silent aliases for one release. While
+    // the search box is selected, printable keys edit the query instead.
+    const searchFocused = this.list.view().searchFocused;
     const ch = printableChar(normalized);
-    if (matchesKey(normalized, Key.alt('d')) || ch === 'd' || ch === 'D') {
+    if (matchesKey(normalized, Key.alt('d')) || (!searchFocused && (ch === 'd' || ch === 'D'))) {
       this.armDeleteConfirm();
       return;
     }
-    if (matchesKey(normalized, Key.alt('e')) || ch === 'e' || ch === 'E') {
+    if (matchesKey(normalized, Key.alt('e')) || (!searchFocused && (ch === 'e' || ch === 'E'))) {
       this.fireEdit();
+      return;
     }
+    if (matchesKey(normalized, Key.alt('a'))) {
+      this.fireAddModel();
+      return;
+    }
+
+    if (this.list.handleKey(normalized)) this.invalidate();
   }
 
   private fireEdit(): void {
-    const selected = this.rows[this.selectedIndex];
+    const selected = this.list.selected();
     if (selected === undefined || selected.kind === 'add') return;
     if (selected.custom && selected.providerIds[0] !== undefined) {
       this.opts.onEditProvider?.(selected.providerIds[0]);
       return;
     }
     this.opts.onEditGuard?.(selected.label);
+  }
+
+  private fireAddModel(): void {
+    const selected = this.list.selected();
+    if (selected === undefined || selected.kind === 'add') return;
+    if (selected.custom && selected.providerIds[0] !== undefined) {
+      this.opts.onAddModel?.(selected.providerIds[0]);
+      return;
+    }
+    this.opts.onAddModelGuard?.(selected.label);
   }
 
   /** Hover-to-scroll: the wheel moves the highlight one row per tick, clamped
@@ -416,10 +403,11 @@ export class ProviderManagerComponent extends Container implements Focusable {
     if (this.confirm !== undefined) return false;
     if (event.type === 'wheel') {
       const delta = event.button === 64 ? -1 : event.button === 65 ? 1 : 0;
-      if (delta === 0 || this.rows.length === 0) return false;
-      const next = Math.max(0, Math.min(this.rows.length - 1, this.selectedIndex + delta));
-      if (next === this.selectedIndex) return false;
-      this.selectedIndex = next;
+      if (delta === 0) return false;
+      const view = this.list.view();
+      if (delta < 0) this.list.moveUp();
+      else this.list.moveDown();
+      if (this.list.view().selectedIndex === view.selectedIndex) return false;
       this.invalidate();
       return;
     }
@@ -451,17 +439,30 @@ export class ProviderManagerComponent extends Container implements Focusable {
     return this.frameZones;
   }
 
-  /** Zone press: highlight the hit row; a press on the already-highlighted
-   * add-row fires it (Enter equivalent — other rows have no Enter action). */
+  /**
+   * Zone press: the search box selects it (the mouse counterpart of `/`); a
+   * row press moves the cursor onto it — a press on the already-highlighted
+   * row fires its Enter action (view the provider's models / fire the add
+   * row), the uniform re-click-confirms idiom.
+   */
   onHitZone(id: HitZoneId, _event: MouseEvent): void | boolean {
-    const hit = typeof id === 'number' ? id : null;
-    if (hit === null || hit < 0 || hit >= this.rows.length) return false;
-    if (hit === this.selectedIndex) {
-      const selected = this.rows[hit];
-      if (selected?.kind === 'add') this.opts.onAdd();
-      return false;
+    if (id === DIALOG_SEARCH_ZONE) {
+      this.list.focusSearch();
+      this.invalidate();
+      return;
     }
-    this.selectedIndex = hit;
+    const hit = typeof id === 'number' ? id : null;
+    const view = this.list.view();
+    if (hit === null || hit < 0 || hit >= view.items.length) return false;
+    if (hit === view.selectedIndex && !view.searchFocused) {
+      const selected = this.list.selected();
+      if (selected?.kind === 'add') this.opts.onAdd();
+      else if (selected?.kind === 'source' && selected.providerIds[0] !== undefined) {
+        this.opts.onViewModels?.(selected.providerIds[0]);
+      }
+      return;
+    }
+    this.list.selectIndex(hit);
     this.invalidate();
   }
 
@@ -473,7 +474,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
   }
 
   private armDeleteConfirm(): void {
-    const selected = this.rows[this.selectedIndex];
+    const selected = this.list.selected();
     if (selected === undefined || selected.kind === 'add') return;
     const models = this.opts.models ?? {};
     const providerIds = new Set(selected.providerIds);
@@ -512,27 +513,28 @@ export class ProviderManagerComponent extends Container implements Focusable {
       this.frameZones = [];
       return tooSmall;
     }
+    const view = this.list.view();
     const { lines, zones } = this.renderContent(width);
     // Header shape mirrors the model dialog (see model-selector.ts): a single
     // top border, the title, the keymap hint, then a blank line. No inner
     // border under the title.
     const hints = [t('common.hint.navigate')];
+    if (view.page.pageCount > 1) hints.push(t('common.hint.page'));
+    hints.push(t('dialogs.provider.hint.view'), t('common.hint.searchFocus'));
     if (this.opts.onEditProvider !== undefined) hints.push(t('dialogs.provider.hint.edit'));
+    if (this.opts.onAddModel !== undefined) hints.push(t('dialogs.provider.hint.addModel'));
     hints.push(t('dialogs.provider.hint.delete'), t('common.hint.cancel'));
 
     const footer: string[] = [''];
     if (this.confirm !== undefined) {
       footer.push(...this.renderConfirmLines(width));
-    } else {
-      const view = this.page();
-      if (view.pageCount > 1) {
-        footer.push(
-          currentTheme.fg(
-            'textMuted',
-            ` ${t('common.pageIndicator', { page: view.page + 1, total: view.pageCount })}`,
-          ),
-        );
-      }
+    } else if (view.page.pageCount > 1) {
+      footer.push(
+        currentTheme.fg(
+          'textMuted',
+          ` ${t('common.pageIndicator', { page: view.page.page + 1, total: view.page.pageCount })}`,
+        ),
+      );
     }
 
     const frameLines = this.frame.render(width, {
@@ -540,6 +542,17 @@ export class ProviderManagerComponent extends Container implements Focusable {
       hintParts: hints,
       content: lines,
       footer,
+      // While the delete confirm owns the dialog, the mouse is inert — so no
+      // search zone is declared either (zone dispatch bypasses handleMouse).
+      ...(this.confirm === undefined
+        ? {
+            search: {
+              query: view.query,
+              focused: view.searchFocused,
+              placeholder: t('dialogs.provider.searchPlaceholder'),
+            },
+          }
+        : {}),
     });
     this.frameZones = this.frame.zones(zones);
     return frameLines.map((line) => truncateToWidth(line, width));
@@ -556,17 +569,16 @@ export class ProviderManagerComponent extends Container implements Focusable {
   private renderContent(width: number): { lines: string[]; zones: HitZone[] } {
     const lines: string[] = [];
     const zones: HitZone[] = [];
-    const rows = this.rows;
-    if (rows.length === 0) {
+    const view = this.list.view();
+    if (view.items.length === 0) {
       lines.push(currentTheme.fg('textMuted', t('dialogs.provider.empty')));
       return { lines, zones };
     }
-    const view = this.page();
-    for (let i = view.start; i < view.end; i++) {
-      const row = rows[i];
+    for (let i = view.page.start; i < view.page.end; i++) {
+      const row = view.items[i];
       if (row === undefined) continue;
       const rowStart = lines.length;
-      const rowLines = renderRow(row, { isSelected: i === this.selectedIndex, width });
+      const rowLines = renderRow(row, { isSelected: i === view.selectedIndex, width });
       // Hover underline on the row's label line (mouse motion).
       if (this.hover.isHovered(i) && rowLines.length > 0) {
         rowLines[0] = underlineText(rowLines[0]!, true);

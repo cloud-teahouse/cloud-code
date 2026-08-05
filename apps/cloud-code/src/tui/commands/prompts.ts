@@ -137,6 +137,7 @@ export function promptApiKey(
   host: SlashCommandHost,
   platformName: string,
   subtitleLines: readonly string[] = [t('commands.login.apiKeyDefaultSubtitle')],
+  escBack = false,
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(
@@ -146,6 +147,7 @@ export function promptApiKey(
         host.restoreEditor(editorSlotHandle);
         resolve(result.kind === 'ok' ? result.value : undefined);
       },
+      escBack ? { footerText: t('selectors.inputDialog.footerBack') } : undefined,
     );
     const editorSlotHandle = host.mountEditorReplacement(dialog, {
       onPreempt: () => {
@@ -160,9 +162,10 @@ export function promptApiKey(
  * Asks for the provider endpoint the catalog did not declare (or declared
  * only as an env placeholder) — required for catalog imports whose protocol
  * was guessed, where the built-in default endpoint would point at the wrong
- * host. Esc cancels the import.
+ * host. Esc cancels the import (the catalog flow turns that into a step-back
+ * when `escBack` is set).
  */
-export function promptBaseUrl(host: SlashCommandHost, platformName: string): Promise<string | undefined> {
+export function promptBaseUrl(host: SlashCommandHost, platformName: string, escBack = false): Promise<string | undefined> {
   return new Promise((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(
       platformName,
@@ -175,6 +178,7 @@ export function promptBaseUrl(host: SlashCommandHost, platformName: string): Pro
         title: t('selectors.baseUrl.title', { platform: platformName }),
         mask: false,
         emptyHint: t('selectors.baseUrl.empty'),
+        ...(escBack ? { footerText: t('selectors.inputDialog.footerBack') } : {}),
       },
     );
     const editorSlotHandle = host.mountEditorReplacement(dialog, {
@@ -203,6 +207,9 @@ export interface InputPromptOptions {
   readonly emptyHint?: string;
   /** Inline validation; returns the error message or undefined when valid. */
   readonly validate?: (value: string) => string | undefined;
+  /** Wizard steps past the first: the footer reads "Esc to go back". Esc still
+   * resolves undefined — the wizard loop turns that into a step-back. */
+  readonly escBack?: boolean;
 }
 
 /** Single-line text input backed by ApiKeyInputDialogComponent. Esc resolves undefined. */
@@ -225,6 +232,9 @@ export function promptInput(
         ...(options.initialValue !== undefined ? { initialValue: options.initialValue } : {}),
         ...(options.emptyHint !== undefined ? { emptyHint: options.emptyHint } : {}),
         ...(options.validate !== undefined ? { validate: options.validate } : {}),
+        ...(options.escBack === true
+          ? { footerText: t('selectors.inputDialog.footerBack') }
+          : {}),
       },
     );
     const editorSlotHandle = host.mountEditorReplacement(dialog, {
@@ -240,6 +250,9 @@ export interface ChoicePromptOptions {
   readonly title: string;
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
+  /** Wizard steps past the first: the trailing hint reads "Esc back". Esc
+   * still resolves undefined — the wizard loop turns that into a step-back. */
+  readonly escBack?: boolean;
 }
 
 /** Single-select picker. Esc resolves undefined. */
@@ -256,6 +269,7 @@ export function promptChoice(
       title: options.title,
       options: options.options,
       ...(options.currentValue !== undefined ? { currentValue: options.currentValue } : {}),
+      ...(options.escBack === true ? { cancelHint: t('common.hint.back') } : {}),
       onSelect: (value) => {
         host.restoreEditor(editorSlotHandle);
         resolve(value);
@@ -277,6 +291,9 @@ export interface MultiChoicePromptOptions {
    * options/selection.
    */
   readonly customActionLabel?: string;
+  /** Wizard steps past the first: the trailing hint reads "Esc back". Esc
+   * still resolves undefined — the wizard loop turns that into a step-back. */
+  readonly escBack?: boolean;
 }
 
 /** Resolution shape when the picker's trailing custom action row fires. */
@@ -301,6 +318,7 @@ export function promptMultiChoice(
       ...(options.initialSelected !== undefined
         ? { initialSelected: options.initialSelected }
         : {}),
+      ...(options.escBack === true ? { cancelHint: t('common.hint.back') } : {}),
       ...(options.customActionLabel !== undefined
         ? {
             customAction: {

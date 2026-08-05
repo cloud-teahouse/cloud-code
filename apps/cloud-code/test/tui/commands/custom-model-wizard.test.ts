@@ -363,7 +363,9 @@ describe('runCustomModelWizard', () => {
     expect(ctx.panels.length).toBe(panelsBefore);
     expect(ctx.panelText()).toContain('already exists');
 
-    ctx.lastPanel().handleInput(KEY_ESC);
+    ctx.lastPanel().handleInput(KEY_ESC); // back to the provider step
+    await flush();
+    ctx.lastPanel().handleInput(KEY_ESC); // abort at the first step
     await expect(result).resolves.toBeUndefined();
     expect(ctx.setConfigCalls).toHaveLength(0);
   });
@@ -790,7 +792,9 @@ describe('runCustomModelEditWizard', () => {
     expect(ctx.panels.length).toBe(panelsBefore);
     expect(ctx.panelText()).toContain('positive integer');
 
-    ctx.lastPanel().handleInput(KEY_ESC);
+    ctx.lastPanel().handleInput(KEY_ESC); // back to the display-name step
+    await flush();
+    ctx.lastPanel().handleInput(KEY_ESC); // abort at the first step
     await expect(result).resolves.toBeUndefined();
     expect(ctx.host.harness.setModelAlias).not.toHaveBeenCalled();
   });

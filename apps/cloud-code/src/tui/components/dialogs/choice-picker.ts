@@ -66,6 +66,12 @@ export interface ChoicePickerOptions {
   /** When provided, Alt+S invokes this with the selected value instead of
    * onSelect — used to apply the choice to the current session only. */
   readonly onSessionOnlySelect?: (value: string) => void;
+  /** Replaces the trailing "Esc cancel" hint segment (e.g. wizard steps past
+   * the first read "Esc back"). Behavior is unchanged — Esc still cancels. */
+  readonly cancelHint?: string;
+  /** When true and the list fits on one page (paging is pointless), ← acts as
+   * a second cancel key — confirmation pickers advertise "←/Esc cancel". */
+  readonly leftCancels?: boolean;
   readonly onCancel: () => void;
 }
 
@@ -118,9 +124,18 @@ export class ChoicePickerComponent extends Container implements Focusable {
     }
     // Left/Right page through the list (this picker has no horizontal
     // control). While the search box is the selected option they stay inert:
-    // arrows never move the list highlight under a selected box.
+    // arrows never move the list highlight under a selected box. On a
+    // single-page picker with leftCancels (confirmations), ← cancels.
     if (matchesKey(normalized, Key.left) || matchesKey(normalized, Key.right)) {
       if (this.list.view().searchFocused) return;
+      if (
+        matchesKey(normalized, Key.left) &&
+        this.opts.leftCancels === true &&
+        this.list.view().page.pageCount <= 1
+      ) {
+        this.opts.onCancel();
+        return;
+      }
       if (matchesKey(normalized, Key.left)) this.list.pageUp();
       else this.list.pageDown();
       return;
@@ -222,7 +237,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
       navParts.push(t('common.hint.searchExit'));
     } else {
       if (searchable) navParts.push(t('common.hint.searchFocus'));
-      navParts.push(t('common.hint.cancel'));
+      navParts.push(this.opts.cancelHint ?? t('common.hint.cancel'));
     }
     return navParts;
   }

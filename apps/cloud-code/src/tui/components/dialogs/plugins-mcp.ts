@@ -306,6 +306,7 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
     super({
       title: t('plugins.remove.title', { name: opts.displayName, id: opts.id }),
       hint: t('plugins.confirm.hint'),
+      leftCancels: true,
       formatHint: mutedHintLine,
       options: [
         {
@@ -350,6 +351,7 @@ export class PluginInstallTrustConfirmComponent extends ChoicePickerComponent {
     super({
       title: t('plugins.trust.title', { label: opts.label }),
       hint: t('plugins.confirm.hint'),
+      leftCancels: true,
       formatHint: mutedHintLine,
       notice: t('plugins.trust.notice'),
       noticeTone: 'warning',
@@ -394,6 +396,7 @@ export class MarketplaceTrustConfirmComponent extends ChoicePickerComponent {
     super({
       title: t('plugins.marketplaceTrust.title', { label: opts.label }),
       hint: t('plugins.confirm.hint'),
+      leftCancels: true,
       formatHint: mutedHintLine,
       notice: t('plugins.marketplaceTrust.notice'),
       noticeTone: 'warning',
@@ -440,6 +443,7 @@ export class MarketplaceRemoveConfirmComponent extends ChoicePickerComponent {
     super({
       title: t('plugins.marketplaceRemove.title', { name: opts.name }),
       hint: t('plugins.confirm.hint'),
+      leftCancels: true,
       formatHint: mutedHintLine,
       notice:
         opts.affectedPlugins === undefined

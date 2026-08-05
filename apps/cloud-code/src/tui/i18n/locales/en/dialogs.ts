@@ -5,6 +5,8 @@ export const dialogs = {
   'dialogs.settings.title': 'Settings',
   'dialogs.settings.model.label': 'Model',
   'dialogs.settings.model.description': 'Switch the active model and thinking mode.',
+  'dialogs.settings.provider.label': 'Providers',
+  'dialogs.settings.provider.description': 'Manage platforms, custom providers, and models.',
   'dialogs.settings.permission.label': 'Permission',
   'dialogs.settings.permission.description': 'Choose how tool actions are approved.',
   'dialogs.settings.theme.label': 'Theme',
@@ -98,8 +100,11 @@ export const dialogs = {
 
   // ── /provider manager ──
   'dialogs.provider.title': ' Providers',
+  'dialogs.provider.hint.view': 'Enter models',
   'dialogs.provider.hint.edit': 'Alt+E edit',
+  'dialogs.provider.hint.addModel': 'Alt+A add model',
   'dialogs.provider.hint.delete': 'Alt+D delete',
+  'dialogs.provider.searchPlaceholder': 'Search providers',
   'dialogs.provider.customBadge': '[custom]',
   'dialogs.provider.addPlatform': '[ Add New Platform ]',
   'dialogs.provider.empty': '  No providers configured.',

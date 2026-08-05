@@ -305,4 +305,91 @@ describe('ProviderManagerComponent', () => {
     component.handleInput(ESC);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('fires onViewModels via Enter on a source row, never on the add row', () => {
+    const onViewModels = vi.fn();
+    const onAdd = vi.fn();
+    const component = makeComponent({
+      providers: {
+        acme: { baseUrl: 'https://acme.test' },
+      } as unknown as Record<string, ProviderConfig>,
+      onViewModels,
+      onAdd,
+    });
+    component.handleInput('\r'); // Enter on the acme row
+    expect(onViewModels).toHaveBeenCalledWith('acme');
+    expect(onAdd).not.toHaveBeenCalled();
+
+    component.handleInput(`${ESC}[B`); // ↓ to the add row
+    component.handleInput('\r');
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onViewModels).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires onAddModel via Alt+A on a custom row and the guard on a managed row', () => {
+    const onAddModel = vi.fn();
+    const onAddModelGuard = vi.fn();
+    const component = makeComponent({
+      providers: {
+        acme: { baseUrl: 'https://acme.test' },
+        registry: {
+          baseUrl: 'https://reg.test/v1',
+          source: { kind: 'apiJson', url: 'https://reg.test/api.json', apiKey: 'k' },
+        },
+      } as unknown as Record<string, ProviderConfig>,
+      onAddModel,
+      onAddModelGuard,
+    });
+    component.handleInput(`${ESC}[97;3u`); // alt+a on acme (custom)
+    expect(onAddModel).toHaveBeenCalledWith('acme');
+    expect(onAddModelGuard).not.toHaveBeenCalled();
+
+    component.handleInput(`${ESC}[B`); // ↓ to the registry row (managed)
+    component.handleInput(`${ESC}[97;3u`);
+    expect(onAddModel).toHaveBeenCalledTimes(1);
+    expect(onAddModelGuard).toHaveBeenCalledTimes(1);
+  });
+
+  it('filters rows through the search box and layers Esc clear → unfocus → close', () => {
+    const onClose = vi.fn();
+    const component = makeComponent({
+      providers: {
+        acme: { baseUrl: 'https://acme.test' },
+        globex: { baseUrl: 'https://globex.test' },
+      } as unknown as Record<string, ProviderConfig>,
+      onClose,
+    });
+    // Typing is inert until the box is selected.
+    component.handleInput('g');
+    expect(rendered(component)).toContain('globex');
+
+    component.handleInput('/'); // select the search box
+    component.handleInput('g');
+    const filtered = rendered(component);
+    expect(filtered).toContain('globex');
+    expect(filtered).not.toContain('acme');
+
+    component.handleInput(ESC); // clear the query
+    expect(rendered(component)).toContain('acme');
+    component.handleInput(ESC); // unselect the box
+    component.handleInput(ESC); // close
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirms a row via re-click (view models) and focuses the box via its zone', () => {
+    const onViewModels = vi.fn();
+    const component = makeComponent({
+      providers: {
+        acme: { baseUrl: 'https://acme.test' },
+      } as unknown as Record<string, ProviderConfig>,
+      onViewModels,
+    });
+    component.render(120); // populate the zone cache
+    // Click the selected acme row twice: first click already-selected → confirm.
+    component.onHitZone(0, { type: 'press' } as never);
+    expect(onViewModels).toHaveBeenCalledWith('acme');
+    // The search box zone selects the box.
+    component.onHitZone('search', { type: 'press' } as never);
+    expect(rendered(component)).toContain('Search providers');
+  });
 });

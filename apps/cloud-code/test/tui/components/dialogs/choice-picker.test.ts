@@ -239,7 +239,7 @@ describe('ChoicePickerComponent', () => {
     const settingsOutput = settings.render(120).map(strip);
     expect(settingsOutput).toContain('  ❯ Model');
     expect(settingsOutput).toContain('    Switch the active model and thinking mode.');
-    expect(settingsOutput).toContain('    Turn automatic CLI updates on or off.');
+    expect(settingsOutput).toContain('    Manage platforms, custom providers, and models.');
 
     const upgradePreference = new UpdatePreferenceSelectorComponent({
       currentValue: true,
@@ -444,6 +444,34 @@ describe('ChoicePickerComponent', () => {
       // Gamma starts selected; any of its rows (label or description) confirms.
       press(8);
       expect(onSelect).toHaveBeenCalledWith('c');
+    });
+
+    it('← cancels on a single-page picker with leftCancels, and pages otherwise', () => {
+      const ESC = String.fromCodePoint(27);
+      const onCancel = vi.fn();
+      const picker = new ChoicePickerComponent({
+        title: 'Pick one',
+        options: [
+          { value: 'a', label: 'Alpha' },
+          { value: 'b', label: 'Beta' },
+        ],
+        leftCancels: true,
+        onSelect: vi.fn(),
+        onCancel,
+      });
+      picker.handleInput(`${ESC}[D`); // ←
+      expect(onCancel).toHaveBeenCalledTimes(1);
+
+      // Multi-page lists keep ← as paging even with leftCancels set.
+      const many = new ChoicePickerComponent({
+        title: 'Pick one',
+        options: Array.from({ length: 20 }, (_, i) => ({ value: `v${i}`, label: `Item ${i}` })),
+        leftCancels: true,
+        onSelect: vi.fn(),
+        onCancel,
+      });
+      many.handleInput(`${ESC}[D`);
+      expect(onCancel).toHaveBeenCalledTimes(1);
     });
   });
 

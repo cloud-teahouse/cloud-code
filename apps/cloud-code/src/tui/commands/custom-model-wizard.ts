@@ -1,7 +1,8 @@
 /**
  * Custom model wizard — the "add custom model" flow behind /model.
  *
- * Steps (Esc at any step aborts and resolves `undefined`; the caller reopens
+ * Steps (Esc past the first step goes back one step with the drafts kept;
+ * Esc at the first step aborts and resolves `undefined`; the caller reopens
  * the model picker):
  *   a. Provider      — existing providers, plus a "new provider…" entry that
  *                      chains into the custom provider wizard
@@ -72,75 +73,134 @@ export async function runCustomModelWizard(
   host: SlashCommandHost,
   options: CustomModelWizardOptions = {},
 ): Promise<string | undefined> {
-  const providerId = await resolveWizardProvider(host, options.initialProviderId);
-  if (providerId === undefined) return undefined;
-
-  const providers = await host.harness.getConfig().then((config) => config.providers ?? {});
-  const providerType = providers[providerId]?.type ?? 'openai';
-
   const existingAliases = await host.harness
     .getConfig()
     .then((config) => new Set(Object.keys(config.models ?? {})));
 
-  // b. Model id — the alias `provider/model` it produces must be unique.
-  const modelId = await promptInput(host, {
-    title: t('commands.model.add.modelIdTitle'),
-    subtitleLines: [t('commands.model.add.modelIdSubtitle')],
-    emptyHint: t('commands.model.add.modelIdEmpty'),
-    validate: (value) =>
-      existingAliases.has(`${providerId}/${value}`)
-        ? t('commands.model.add.aliasTaken', { alias: `${providerId}/${value}` })
-        : undefined,
-  });
-  if (modelId === undefined) return undefined;
+  // Step loop: Esc past the first step returns to the previous step with the
+  // drafts preserved; Esc at the first step aborts the wizard. When the
+  // provider is preset (chained from the provider wizard) the model id step
+  // is the first one.
+  let step = options.initialProviderId !== undefined ? 1 : 0;
+  let providerId: string | undefined = options.initialProviderId;
+  let providerType = 'openai';
+  let modelId: string | undefined;
+  let displayName: string | undefined;
+  let contextRaw: string | undefined;
+  let efforts: readonly string[] | undefined;
+  let capabilities: readonly string[] | undefined;
 
-  // c. Display name — optional, falls back to the model id.
-  const displayNameInput = await promptInput(host, {
-    title: t('commands.model.add.displayNameTitle'),
-    subtitleLines: [t('commands.model.add.displayNameSubtitle')],
-    allowEmpty: true,
-    initialValue: modelId,
-  });
-  if (displayNameInput === undefined) return undefined;
-  const displayName = displayNameInput.length > 0 ? displayNameInput : modelId;
+  for (;;) {
+    if (step === 0) {
+      const picked = await resolveWizardProvider(host, providerId);
+      if (picked === undefined) return undefined;
+      providerId = picked;
+      step = 1;
+      continue;
+    }
+    if (step === 1) {
+      const providers = await host.harness
+        .getConfig()
+        .then((config) => config.providers ?? {});
+      providerType = providers[providerId!]?.type ?? 'openai';
+      const entered = await promptInput(host, {
+        title: t('commands.model.add.modelIdTitle'),
+        subtitleLines: [t('commands.model.add.modelIdSubtitle')],
+        emptyHint: t('commands.model.add.modelIdEmpty'),
+        ...(modelId !== undefined ? { initialValue: modelId } : {}),
+        escBack: options.initialProviderId === undefined,
+        validate: (value) =>
+          existingAliases.has(`${providerId!}/${value}`)
+            ? t('commands.model.add.aliasTaken', { alias: `${providerId!}/${value}` })
+            : undefined,
+      });
+      if (entered === undefined) {
+        if (options.initialProviderId !== undefined) return undefined;
+        step = 0;
+        continue;
+      }
+      modelId = entered;
+      step = 2;
+      continue;
+    }
+    if (step === 2) {
+      const entered = await promptInput(host, {
+        title: t('commands.model.add.displayNameTitle'),
+        subtitleLines: [t('commands.model.add.displayNameSubtitle')],
+        allowEmpty: true,
+        initialValue: displayName ?? modelId!,
+        escBack: true,
+      });
+      if (entered === undefined) {
+        step = 1;
+        continue;
+      }
+      displayName = entered;
+      step = 3;
+      continue;
+    }
+    if (step === 3) {
+      const contextDefault = CONTEXT_DEFAULT_BY_TYPE[providerType] ?? CONTEXT_DEFAULT_FALLBACK;
+      const entered = await promptInput(host, {
+        title: t('commands.model.add.contextTitle'),
+        subtitleLines: [
+          t('commands.model.add.contextSubtitle', { type: providerType, default: contextDefault }),
+        ],
+        allowEmpty: true,
+        initialValue: contextRaw ?? String(contextDefault),
+        emptyHint: t('commands.model.add.contextInvalid'),
+        escBack: true,
+        validate: (value) =>
+          /^[1-9]\d*$/.test(value) ? undefined : t('commands.model.add.contextInvalid'),
+      });
+      if (entered === undefined) {
+        step = 2;
+        continue;
+      }
+      contextRaw = entered;
+      step = 4;
+      continue;
+    }
+    if (step === 4) {
+      const picked = await promptEfforts(
+        host,
+        efforts ?? DEFAULT_EFFORTS_BY_TYPE[providerType] ?? DEFAULT_EFFORTS_FALLBACK,
+        true,
+      );
+      if (picked === undefined) {
+        step = 3;
+        continue;
+      }
+      efforts = picked;
+      step = 5;
+      continue;
+    }
+    const picked = await promptCapabilities(host, capabilities ?? ['tool_use'], true);
+    if (picked === undefined) {
+      step = 4;
+      continue;
+    }
+    capabilities = picked;
+    break;
+  }
 
-  // d. Context window — positive integer, prefilled with the type default.
+  // Persist — the shape mirrors ModelAliasBaseSchema exactly.
   const contextDefault = CONTEXT_DEFAULT_BY_TYPE[providerType] ?? CONTEXT_DEFAULT_FALLBACK;
-  const contextRaw = await promptInput(host, {
-    title: t('commands.model.add.contextTitle'),
-    subtitleLines: [
-      t('commands.model.add.contextSubtitle', { type: providerType, default: contextDefault }),
-    ],
-    allowEmpty: true,
-    initialValue: String(contextDefault),
-    emptyHint: t('commands.model.add.contextInvalid'),
-    validate: (value) =>
-      /^[1-9]\d*$/.test(value) ? undefined : t('commands.model.add.contextInvalid'),
-  });
-  if (contextRaw === undefined) return undefined;
-  const maxContextSize = contextRaw.length === 0 ? contextDefault : Number.parseInt(contextRaw, 10);
-
-  // e. Thinking efforts — multi-select with per-type preselection.
-  const efforts = await promptEfforts(
-    host,
-    DEFAULT_EFFORTS_BY_TYPE[providerType] ?? DEFAULT_EFFORTS_FALLBACK,
-  );
-  if (efforts === undefined) return undefined;
-
-  // f. Capabilities — multi-select; 'thinking' is implied by the effort step.
-  const capabilities = await promptCapabilities(host, ['tool_use']);
-  if (capabilities === undefined) return undefined;
-
-  // g. Persist — the shape mirrors ModelAliasBaseSchema exactly.
-  const alias = `${providerId}/${modelId}`;
+  const maxContextSize =
+    contextRaw === undefined || contextRaw.length === 0
+      ? contextDefault
+      : Number.parseInt(contextRaw, 10);
+  const finalDisplayName =
+    displayName === undefined || displayName.length === 0 ? modelId! : displayName;
+  const alias = `${providerId!}/${modelId!}`;
   try {
     const config = await host.harness.getConfig();
     const models = { ...config.models };
-    models[alias] = buildCustomModelEntry(providerId, modelId, {
-      displayName,
+    models[alias] = buildCustomModelEntry(providerId!, modelId!, {
+      displayName: finalDisplayName,
       maxContextSize,
-      efforts,
-      capabilities,
+      efforts: efforts!,
+      capabilities: capabilities!,
     });
     await host.harness.setConfig({ models });
     await host.authFlow.refreshConfigAfterLogin();
@@ -156,17 +216,14 @@ export async function runCustomModelWizard(
 /**
  * Provider step: pick an existing provider, or chain into the custom provider
  * wizard via the trailing "new provider…" option (aborting that wizard loops
- * back to the provider list). With no providers configured the only way
- * forward is the new-provider option.
+ * back to the provider list). `currentProviderId` preselects the row when the
+ * user stepped back from a later step.
  */
 async function resolveWizardProvider(
   host: SlashCommandHost,
-  initialProviderId: string | undefined,
+  currentProviderId: string | undefined,
 ): Promise<string | undefined> {
   let providers = await host.harness.getConfig().then((config) => config.providers ?? {});
-  if (initialProviderId !== undefined && providers[initialProviderId] !== undefined) {
-    return initialProviderId;
-  }
 
   for (;;) {
     const options = [
@@ -180,6 +237,7 @@ async function resolveWizardProvider(
     const picked = await promptChoice(host, {
       title: t('commands.model.add.providerTitle'),
       options,
+      ...(currentProviderId !== undefined ? { currentValue: currentProviderId } : {}),
     });
     if (picked === undefined) return undefined;
     if (picked !== NEW_PROVIDER_VALUE) return picked;
@@ -205,6 +263,7 @@ async function resolveWizardProvider(
 async function promptEfforts(
   host: SlashCommandHost,
   initialEfforts: readonly string[],
+  escBack = false,
 ): Promise<readonly string[] | undefined> {
   const customEffortOptions: Array<{ value: string; label: string }> = [];
   for (const name of initialEfforts) {
@@ -229,6 +288,7 @@ async function promptEfforts(
       ],
       initialSelected: effortSelection,
       customActionLabel: t('commands.model.add.customEffortsOption'),
+      escBack,
     });
     if (values === undefined) return undefined;
     if (typeof values === 'object' && 'custom' in values) {
@@ -280,6 +340,7 @@ async function promptEfforts(
 async function promptCapabilities(
   host: SlashCommandHost,
   initialSelected: readonly string[],
+  escBack = false,
 ): Promise<readonly string[] | undefined> {
   const capabilities = await promptMultiChoice(host, {
     title: t('commands.model.add.capsTitle'),
@@ -288,6 +349,7 @@ async function promptCapabilities(
       label: t(`commands.model.add.cap.${value}`),
     })),
     initialSelected,
+    escBack,
   });
   if (capabilities === undefined || 'custom' in capabilities) return undefined;
   return capabilities;
@@ -386,6 +448,7 @@ function modelEntryUnchanged(entry: ModelAlias, base: ModelAlias): boolean {
  * the current values prefilled: display name → context window → thinking
  * efforts (incl. custom names) → capabilities. Only a real change is written
  * — wholesale, via `harness.setModelAlias`, so cleared fields actually clear.
+ * Esc past the first step goes back one step; Esc at the first step aborts.
  *
  * Resolves 'updated' / 'unchanged', or `undefined` when aborted or the alias
  * is not a custom model (managed models get a guard message).
@@ -405,47 +468,80 @@ export async function runCustomModelEditWizard(
     return undefined;
   }
 
-  // Display name — optional, falls back to the model id (same as add).
-  const displayNameInput = await promptInput(host, {
-    title: t('commands.model.add.displayNameTitle'),
-    subtitleLines: [t('commands.model.add.displayNameSubtitle')],
-    allowEmpty: true,
-    initialValue: existing.displayName ?? existing.model,
-  });
-  if (displayNameInput === undefined) return undefined;
-  const displayName = displayNameInput.length > 0 ? displayNameInput : existing.model;
+  let step = 0;
+  let displayName: string | undefined = existing.displayName ?? existing.model;
+  let contextRaw: string | undefined = String(existing.maxContextSize);
+  let efforts: readonly string[] | undefined;
+  let capabilities: readonly string[] | undefined;
 
-  // Context window — positive integer, prefilled with the current value.
-  const contextRaw = await promptInput(host, {
-    title: t('commands.model.add.contextTitle'),
-    subtitleLines: [
-      t('commands.model.edit.contextSubtitle', { current: existing.maxContextSize }),
-    ],
-    initialValue: String(existing.maxContextSize),
-    emptyHint: t('commands.model.add.contextInvalid'),
-    validate: (value) =>
-      /^[1-9]\d*$/.test(value) ? undefined : t('commands.model.add.contextInvalid'),
-  });
-  if (contextRaw === undefined) return undefined;
-  const maxContextSize = Number.parseInt(contextRaw, 10);
-
-  // Thinking efforts — prefilled from the entry (custom names included).
-  const efforts = await promptEfforts(host, effortsOfEntry(existing));
-  if (efforts === undefined) return undefined;
-
-  // Capabilities — prefilled with the picker-known, non-derived entries.
-  const initialCapabilities = (existing.capabilities ?? []).filter(
-    (capability) =>
-      capability !== 'thinking' &&
-      (CAPABILITY_VALUES as readonly string[]).includes(capability),
-  );
-  const capabilities = await promptCapabilities(host, initialCapabilities);
-  if (capabilities === undefined) return undefined;
+  for (;;) {
+    if (step === 0) {
+      const entered = await promptInput(host, {
+        title: t('commands.model.add.displayNameTitle'),
+        subtitleLines: [t('commands.model.add.displayNameSubtitle')],
+        allowEmpty: true,
+        initialValue: displayName,
+      });
+      if (entered === undefined) return undefined;
+      displayName = entered.length > 0 ? entered : existing.model;
+      step = 1;
+      continue;
+    }
+    if (step === 1) {
+      const entered = await promptInput(host, {
+        title: t('commands.model.add.contextTitle'),
+        subtitleLines: [
+          t('commands.model.edit.contextSubtitle', { current: existing.maxContextSize }),
+        ],
+        initialValue: contextRaw,
+        emptyHint: t('commands.model.add.contextInvalid'),
+        escBack: true,
+        validate: (value) =>
+          /^[1-9]\d*$/.test(value) ? undefined : t('commands.model.add.contextInvalid'),
+      });
+      if (entered === undefined) {
+        step = 0;
+        continue;
+      }
+      contextRaw = entered;
+      step = 2;
+      continue;
+    }
+    if (step === 2) {
+      const picked = await promptEfforts(host, efforts ?? effortsOfEntry(existing), true);
+      if (picked === undefined) {
+        step = 1;
+        continue;
+      }
+      efforts = picked;
+      step = 3;
+      continue;
+    }
+    const initialCapabilities =
+      capabilities ??
+      (existing.capabilities ?? []).filter(
+        (capability) =>
+          capability !== 'thinking' &&
+          (CAPABILITY_VALUES as readonly string[]).includes(capability),
+      );
+    const picked = await promptCapabilities(host, initialCapabilities, true);
+    if (picked === undefined) {
+      step = 2;
+      continue;
+    }
+    capabilities = picked;
+    break;
+  }
 
   const entry = buildCustomModelEntry(
     existing.provider,
     existing.model,
-    { displayName, maxContextSize, efforts, capabilities },
+    {
+      displayName: displayName!,
+      maxContextSize: Number.parseInt(contextRaw!, 10),
+      efforts: efforts!,
+      capabilities: capabilities!,
+    },
     existing,
   );
   if (modelEntryUnchanged(entry, existing)) {
@@ -458,7 +554,7 @@ export async function runCustomModelEditWizard(
     await host.authFlow.refreshAvailableModels();
     // The context-window edit of the live model is reflected immediately.
     if (host.state.appState.model === alias) {
-      host.setAppState({ maxContextTokens: maxContextSize });
+      host.setAppState({ maxContextTokens: Number.parseInt(contextRaw!, 10) });
     }
   } catch (error) {
     host.showError(t('commands.model.add.saveFailed', { error: formatErrorMessage(error) }));

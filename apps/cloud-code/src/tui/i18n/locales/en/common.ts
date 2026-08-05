@@ -18,6 +18,7 @@ export const common = {
   'common.hint.toggle': 'Space toggle',
   'common.hint.confirm': 'Enter confirm',
   'common.hint.cancel': 'Esc cancel',
+  'common.hint.back': 'Esc back',
   'common.hint.searchFocus': '/ ↑ search',
   'common.hint.searchExit': 'Esc back to list',
   'common.currentMark': '← current',

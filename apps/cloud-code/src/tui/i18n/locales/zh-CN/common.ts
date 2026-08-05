@@ -14,6 +14,7 @@ export const common: Record<keyof typeof enCommon, string> = {
   'common.hint.toggle': '空格 切换',
   'common.hint.confirm': 'Enter 确认',
   'common.hint.cancel': 'Esc 取消',
+  'common.hint.back': 'Esc 返回',
   'common.hint.searchFocus': '/ ↑ 搜索',
   'common.hint.searchExit': 'Esc 返回列表',
   'common.currentMark': '← 当前',

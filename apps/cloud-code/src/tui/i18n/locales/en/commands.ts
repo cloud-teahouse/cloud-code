@@ -489,6 +489,10 @@ export const commands = {
   'commands.provider.edit.gone': 'Provider "{id}" no longer exists.',
   'commands.provider.edit.guard':
     'Provider "{id}" is built-in or managed — only custom providers can be edited.',
+  'commands.provider.addModel.guard':
+    'Provider "{id}" is built-in or managed — only custom providers take models this way.',
+  'commands.provider.deleted.one': 'Deleted provider: {id}.',
+  'commands.provider.deleted.other': 'Deleted {count} providers.',
   'commands.provider.edit.unsupportedType':
     'Provider "{id}" has API type "{type}", which the edit wizard does not support.',
   'commands.provider.edit.unchanged': 'Provider "{id}" unchanged.',

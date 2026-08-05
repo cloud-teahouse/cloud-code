@@ -332,14 +332,50 @@ describe('runCustomProviderWizard', () => {
     expect(ctx.current().providers['ok']?.['baseUrl' as never]).toBe('https://ok.test/v1');
   });
 
-  it('aborts on Esc at the URL step without writing config', async () => {
+  it('Esc at the URL step returns to the type step, and aborts from there', async () => {
     const ctx = makeHost();
     const result = runCustomProviderWizard(ctx.host as never);
 
     ctx.lastPanel().handleInput(KEY_ENTER); // kimi
     await flush();
-    ctx.lastPanel().handleInput(KEY_ESC);
+    ctx.lastPanel().handleInput(KEY_ESC); // back to the type step, not out
+    await flush();
+    expect(ctx.panelText()).toContain('Select API type');
 
+    ctx.lastPanel().handleInput(KEY_ESC); // abort at the first step
+    await expect(result).resolves.toBeUndefined();
+    expect(ctx.setConfigCalls).toHaveLength(0);
+  });
+
+  it('keeps the entered drafts when stepping back and forward again', async () => {
+    const ctx = makeHost();
+    const result = runCustomProviderWizard(ctx.host as never);
+
+    ctx.lastPanel().handleInput(KEY_DOWN); // anthropic
+    ctx.lastPanel().handleInput(KEY_ENTER);
+    await flush();
+    typeText(ctx.lastPanel(), 'https://api.anthropic.example');
+    ctx.lastPanel().handleInput(KEY_ENTER);
+    await flush();
+
+    // Back to the URL step: the typed value is prefilled.
+    ctx.lastPanel().handleInput(KEY_ESC);
+    await flush();
+    expect(ctx.panelText()).toContain('https://api.anthropic.example');
+
+    // Back to the type step: anthropic stays the current row.
+    ctx.lastPanel().handleInput(KEY_ESC);
+    await flush();
+    expect(ctx.panelText()).toContain('Select API type');
+
+    // Forward again: type kept (Enter accepts anthropic), URL still prefilled.
+    ctx.lastPanel().handleInput(KEY_ENTER);
+    await flush();
+    expect(ctx.panelText()).toContain('https://api.anthropic.example');
+
+    ctx.lastPanel().handleInput(KEY_ESC);
+    await flush();
+    ctx.lastPanel().handleInput(KEY_ESC);
     await expect(result).resolves.toBeUndefined();
     expect(ctx.setConfigCalls).toHaveLength(0);
   });
@@ -415,7 +451,14 @@ describe('runCustomProviderWizard', () => {
     await flush();
     expect(ctx.panels.length).toBe(panelsBefore);
 
-    ctx.lastPanel().handleInput(KEY_ESC);
+    ctx.lastPanel().handleInput(KEY_ESC); // back to the API-key step
+    await flush();
+    ctx.lastPanel().handleInput(KEY_ESC); // back to the base-URL step
+    await flush();
+    ctx.lastPanel().handleInput(KEY_ESC); // back to the type step
+    await flush();
+    expect(ctx.panelText()).toContain('Select API type');
+    ctx.lastPanel().handleInput(KEY_ESC); // abort at the first step
     await expect(result).resolves.toBeUndefined();
   });
 });

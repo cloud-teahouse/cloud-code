@@ -44,6 +44,9 @@ export interface MultiChoicePickerOptions {
   readonly title: string;
   /** Replaces the default key-hint line when provided. */
   readonly hint?: string;
+  /** Replaces the trailing "Esc cancel" hint segment (e.g. wizard steps past
+   * the first read "Esc back"). Ignored when `hint` is set. */
+  readonly cancelHint?: string;
   readonly options: readonly MultiChoiceOption[];
   /** Initially checked values; unknown values are ignored. */
   readonly initialSelected?: readonly string[];
@@ -198,7 +201,7 @@ export class MultiChoicePickerComponent extends Container implements Focusable {
         t('common.hint.navigate'),
         t('common.hint.toggle'),
         t('common.hint.confirm'),
-        t('common.hint.cancel'),
+        this.opts.cancelHint ?? t('common.hint.cancel'),
       ].join(' · ');
 
     // Wrap at segment boundaries so narrow widths keep every key segment.

@@ -11,6 +11,7 @@ import {
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
   type Catalog,
+  type ProviderType,
   type ThinkingEffort,
 } from '@cloud-code/sdk';
 
@@ -50,7 +51,21 @@ import type { SlashCommandHost } from './dispatch';
 // /provider command
 // ---------------------------------------------------------------------------
 
-export async function handleProviderCommand(host: SlashCommandHost): Promise<void> {
+/**
+ * Where the manager's close should land next — set by every entry through
+ * {@link handleProviderCommand} (undefined = the editor, the /provider
+ * default; /settings passes a reopen of its own menu). Internal sub-flows
+ * reopen the manager without touching it, so the destination survives the
+ * whole add/edit/delete flow, and onClose consumes it so nothing goes stale
+ * when the manager is torn down without closing.
+ */
+let providerManagerReturnTo: (() => void) | undefined;
+
+export async function handleProviderCommand(
+  host: SlashCommandHost,
+  returnTo?: () => void,
+): Promise<void> {
+  providerManagerReturnTo = returnTo;
   reopenProviderManager(host);
 }
 
@@ -68,6 +83,27 @@ function buildProviderManagerOptions(
       void handleProviderAdd(host).catch((error: unknown) => {
         host.showError(t('commands.provider.addFailed', { error: formatErrorMessage(error) }));
       });
+    },
+    onViewModels: (providerId) => {
+      openProviderModelsTab(host, providerId);
+    },
+    onAddModel: (providerId) => {
+      void runCustomModelWizard(host, { initialProviderId: providerId })
+        .catch((error: unknown) => {
+          host.showError(
+            t('commands.model.add.saveFailed', { error: formatErrorMessage(error) }),
+          );
+          return undefined;
+        })
+        .then((alias) => {
+          // A created alias opens the model picker on it (same unwind as the
+          // manual provider flow); an abort returns to the manager.
+          if (alias === undefined) reopenProviderManager(host);
+          else showModelPicker(host, alias);
+        });
+    },
+    onAddModelGuard: (label) => {
+      host.showStatus(t('commands.provider.addModel.guard', { id: label }), 'warning');
     },
     onDeleteSource: (providerIds) => {
       void handleProviderManagerDeleteSource(host, providerIds).catch((error: unknown) => {
@@ -89,6 +125,37 @@ function buildProviderManagerOptions(
 }
 
 /**
+ * Enter on a source row: the tabbed model picker opened on that provider's
+ * tab — browse its models, pick one to make it the default. Cancel returns
+ * to the provider manager.
+ */
+function openProviderModelsTab(host: SlashCommandHost, providerId: string): void {
+  const onCancel = (): void => {
+    host.restoreEditor(editorSlotHandle);
+    reopenProviderManager(host);
+  };
+  const selector = new TabbedModelSelectorComponent({
+    models: host.state.appState.availableModels,
+    currentValue: host.state.appState.model,
+    selectedValue: Object.keys(host.state.appState.availableModels).find((a) =>
+      a.startsWith(`${providerId}/`),
+    ),
+    currentThinkingEffort: host.state.appState.thinkingEffort,
+    initialTabId: providerId,
+    onSelect: ({ alias, thinking }) => {
+      host.restoreEditor(editorSlotHandle);
+      void setDefaultModel(host, alias, thinking).catch((error: unknown) => {
+        host.showError(
+          t('commands.provider.setDefaultFailed', { error: formatErrorMessage(error) }),
+        );
+      });
+    },
+    onCancel,
+  });
+  const editorSlotHandle = host.mountEditorReplacement(selector, { onPreempt: onCancel });
+}
+
+/**
  * E on a custom provider row: run the edit wizard (type → URL → key →
  * optional re-probe → persist), then reopen the manager either way — the
  * wizard already reported updated/unchanged/aborted through the status line.
@@ -105,13 +172,25 @@ async function handleProviderManagerDeleteSource(
   host: SlashCommandHost,
   providerIds: readonly string[],
 ): Promise<void> {
+  let failed = 0;
   for (const providerId of providerIds) {
     try {
       await handleProviderDelete(host, providerId);
     } catch (error) {
+      failed += 1;
       const msg = formatErrorMessage(error);
       host.showError(t('commands.provider.deleteFailed', { id: providerId, error: msg }));
     }
+  }
+  const deleted = providerIds.length - failed;
+  if (deleted > 0) {
+    host.showStatus(
+      t(deleted === 1 ? 'commands.provider.deleted.one' : 'commands.provider.deleted.other', {
+        id: providerIds[0] ?? '',
+        count: deleted,
+      }),
+      'success',
+    );
   }
   reopenProviderManager(host);
 }
@@ -202,6 +281,9 @@ async function handleManualProviderAdd(host: SlashCommandHost): Promise<void> {
 function reopenProviderManager(host: SlashCommandHost): void {
   const onClose = (): void => {
     host.restoreEditor(editorSlotHandle);
+    const returnTo = providerManagerReturnTo;
+    providerManagerReturnTo = undefined;
+    returnTo?.();
   };
   const component = new ProviderManagerComponent(buildProviderManagerOptions(host, onClose));
   const editorSlotHandle = host.mountEditorReplacement(component, { onPreempt: onClose });
@@ -274,68 +356,108 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
 
   if (catalog === undefined) return;
 
-  const providerId = await promptCatalogProviderSelection(host, catalog);
-  if (providerId === undefined) return;
-  const entry = catalog[providerId];
-  if (entry === undefined) return;
+  // Step loop: Esc at the base-URL / API-key steps goes back one step; Esc at
+  // the provider picker returns to the provider manager. Only the post-persist
+  // default-model pick aborts without unwinding (the provider stays, by design).
+  let step = 0;
+  let providerId: string | undefined;
+  let baseUrl: string | undefined;
+  let wire: ProviderType | undefined;
+  let guessed = false;
+  let needsBaseUrl = false;
 
-  const models = catalogProviderModels(entry);
-  if (models.length === 0) {
-    host.showError(t('commands.provider.noUsableModels', { id: providerId }));
-    return;
-  }
-
-  let resolution = resolveCatalogImport(entry);
-  if (resolution.kind === 'needs-base-url') {
-    const entered = await promptBaseUrl(host, entry.name ?? providerId);
-    if (entered === undefined) return;
-    resolution = resolveCatalogImport(entry, entered);
-  }
-  if (resolution.kind !== 'ok') {
-    if (resolution.kind === 'invalid') {
-      if (resolution.reason === 'unknown-explicit-type') {
-        host.showError(t('commands.provider.unknownExplicitType', { id: providerId, type: entry.type ?? 'unknown' }));
-      } else if (resolution.reason === 'proprietary-sdk') {
-        host.showError(t('commands.provider.proprietarySdk', { id: providerId }));
-      } else {
-        host.showError(t('commands.provider.baseUrlPlaceholder'));
+  for (;;) {
+    if (step === 0) {
+      const picked = await promptCatalogProviderSelection(host, catalog);
+      if (picked === undefined) {
+        reopenProviderManager(host);
+        return;
       }
+      const entry = catalog[picked];
+      if (entry === undefined) {
+        reopenProviderManager(host);
+        return;
+      }
+      const models = catalogProviderModels(entry);
+      if (models.length === 0) {
+        host.showError(t('commands.provider.noUsableModels', { id: picked }));
+        continue;
+      }
+      const resolution = resolveCatalogImport(entry);
+      if (resolution.kind === 'invalid') {
+        if (resolution.reason === 'unknown-explicit-type') {
+          host.showError(t('commands.provider.unknownExplicitType', { id: picked, type: entry.type ?? 'unknown' }));
+        } else if (resolution.reason === 'proprietary-sdk') {
+          host.showError(t('commands.provider.proprietarySdk', { id: picked }));
+        } else {
+          host.showError(t('commands.provider.baseUrlPlaceholder'));
+        }
+        continue;
+      }
+      providerId = picked;
+      wire = resolution.wire;
+      guessed = resolution.guessed;
+      needsBaseUrl = resolution.kind === 'needs-base-url';
+      baseUrl = resolution.kind === 'ok' ? resolution.baseUrl : undefined;
+      step = needsBaseUrl ? 1 : 2;
+      continue;
     }
-    return;
-  }
-  const { wire, baseUrl } = resolution;
+    if (step === 1) {
+      const entry = catalog[providerId!]!;
+      const entered = await promptBaseUrl(host, entry.name ?? providerId!, true);
+      if (entered === undefined) {
+        step = 0;
+        continue;
+      }
+      const resolution = resolveCatalogImport(entry, entered);
+      if (resolution.kind !== 'ok') {
+        host.showError(t('commands.provider.baseUrlPlaceholder'));
+        step = 0;
+        continue;
+      }
+      wire = resolution.wire;
+      guessed = resolution.guessed;
+      baseUrl = resolution.baseUrl;
+      step = 2;
+      continue;
+    }
+    const entry = catalog[providerId!]!;
+    const apiKey = await promptApiKey(host, entry.name ?? providerId!, undefined, true);
+    if (apiKey === undefined) {
+      step = needsBaseUrl ? 1 : 0;
+      continue;
+    }
 
-  const apiKey = await promptApiKey(host, entry.name ?? providerId);
-  if (apiKey === undefined) return;
+    // Persist the provider and all its models immediately after the api key is
+    // entered. The model selector that follows is just a convenience to pick the
+    // default model; ESC leaves the provider in place without a default selection.
+    const existingConfig = await host.harness.getConfig();
+    if (existingConfig.providers[providerId!] !== undefined) {
+      await host.harness.removeProvider(providerId!);
+    }
 
-  // Persist the provider and all its models immediately after the api key is
-  // entered. The model selector that follows is just a convenience to pick the
-  // default model; ESC leaves the provider in place without a default selection.
-  const existingConfig = await host.harness.getConfig();
-  if (existingConfig.providers[providerId] !== undefined) {
-    await host.harness.removeProvider(providerId);
-  }
+    const config = await host.harness.getConfig();
+    applyCatalogProvider(config, {
+      providerId: providerId!,
+      wire: wire!,
+      baseUrl,
+      apiKey,
+      models: catalogProviderModels(entry),
+      selectedModelId: '', // no default yet; user picks in the model selector
+      thinking: false,    // will be resolved by the model selector
+    });
 
-  const config = await host.harness.getConfig();
-  applyCatalogProvider(config, {
-    providerId,
-    wire,
-    baseUrl,
-    apiKey,
-    models,
-    selectedModelId: '', // no default yet; user picks in the model selector
-    thinking: false,    // will be resolved by the model selector
-  });
+    await host.harness.setConfig({
+      providers: config.providers,
+      models: config.models,
+    });
 
-  await host.harness.setConfig({
-    providers: config.providers,
-    models: config.models,
-  });
-
-  await host.authFlow.refreshConfigAfterLogin();
-  host.showStatus(t('commands.provider.added', { name: entry.name ?? providerId }));
-  if (resolution.guessed) {
-    host.showStatus(t('commands.provider.protocolGuessed', { id: providerId }));
+    await host.authFlow.refreshConfigAfterLogin();
+    host.showStatus(t('commands.provider.added', { name: entry.name ?? providerId! }));
+    if (guessed) {
+      host.showStatus(t('commands.provider.protocolGuessed', { id: providerId! }));
+    }
+    break;
   }
 
   // Build a merged model dictionary that includes existing models plus the
@@ -346,11 +468,12 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
 
   const onCancel = (): void => {
     host.restoreEditor(editorSlotHandle);
+    reopenProviderManager(host);
   };
   const selector = new TabbedModelSelectorComponent({
     models: mergedModels,
     currentValue: host.state.appState.model,
-    selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
+    selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId!}/`)),
     currentThinkingEffort: host.state.appState.thinkingEffort,
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {

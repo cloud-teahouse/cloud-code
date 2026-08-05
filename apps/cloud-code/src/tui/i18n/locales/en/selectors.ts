@@ -3,6 +3,7 @@
 export const selectors = {
   // ── shared input-dialog chrome ──
   'selectors.inputDialog.footer': 'Enter to submit  ·  Esc to cancel',
+  'selectors.inputDialog.footerBack': 'Enter to submit  ·  Esc to go back',
 
   // ── experiments selector ──
   'selectors.experiments.title': 'Experimental features',
@@ -24,6 +25,7 @@ export const selectors = {
   // ── goal queue manager & edit dialog ──
   'selectors.goalQueue.title': 'Upcoming goals',
   'selectors.goalQueue.hintNavigate': '↑↓ navigate · Space select · Alt+E edit · Alt+D delete · Esc cancel',
+  'selectors.goalQueue.confirmDelete': 'Delete goal "{label}"?',
   'selectors.goalQueue.hintReorder': '↑↓ reorder · Space done · Alt+E edit · Alt+D delete · Esc done',
   'selectors.goalQueue.empty': 'No upcoming goals.',
   'selectors.goalQueue.selected': 'selected',

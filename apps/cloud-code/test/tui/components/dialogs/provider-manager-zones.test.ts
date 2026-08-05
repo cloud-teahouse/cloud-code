@@ -66,50 +66,54 @@ describe('ProviderManagerComponent hit zones', () => {
     setLocalePreference('auto');
   });
 
-  // Layout (width 120): 0 divider, 1 title, 2 hint, 3 blank,
-  // 4-5 acme row (label + base URL), 6-7 registry row, 8 add row, 9 blank,
-  // 10 divider.
+  // Layout (width 120): 0 divider, 1 title, 2 hint, 3 blank, 4-6 search box,
+  // 7-8 acme row (label + base URL), 9-10 registry row, 11 add row, 12 blank,
+  // 13 divider.
   it('declares one zone per row spanning its base-URL row', () => {
     const { manager } = makeManager();
     const lines = manager.render(120).map(strip);
     const zones = [...manager.hitZones()];
-    expect(zones.map((zone) => zone.id)).toEqual([0, 1, 2]);
-    expect(zones[0]).toMatchObject({ row: 4, col: 1, width: 120, height: 2 });
-    expect(zones[1]).toMatchObject({ row: 6, col: 1, width: 120, height: 2 });
-    expect(zones[2]).toMatchObject({ row: 8, col: 1, width: 120, height: 1 });
-    expect(lines[4]).toContain('acme');
-    expect(lines[6]).toContain('reg.test/api.json');
-    expect(lines[8]).toContain('Add New Platform');
+    expect(zones.map((zone) => zone.id)).toEqual(['search', 0, 1, 2]);
+    expect(zones[1]).toMatchObject({ row: 7, col: 1, width: 120, height: 2 });
+    expect(zones[2]).toMatchObject({ row: 9, col: 1, width: 120, height: 2 });
+    expect(zones[3]).toMatchObject({ row: 11, col: 1, width: 120, height: 1 });
+    expect(lines[7]).toContain('acme');
+    expect(lines[9]).toContain('reg.test/api.json');
+    expect(lines[11]).toContain('Add New Platform');
     // A press on a row's base-URL line hits the same row.
-    expect(hitZoneAt([zones[0]!], 5, 1, 'action')?.id).toBe(0);
+    expect(hitZoneAt([zones[1]!], 8, 1, 'action')?.id).toBe(0);
   });
 
-  it('dispatches a row press: highlight only — re-click fires nothing on a source row', () => {
-    const { manager, onAdd } = makeManager();
+  it('dispatches a row press: highlight, then re-click views the provider models', () => {
+    const onViewModels = vi.fn();
+    const { manager, onAdd } = makeManager({ onViewModels });
     const text = (): string => strip(manager.render(120).join('\n'));
 
-    expect(dispatchPress(manager, 6)).not.toBe(false); // registry row
+    expect(dispatchPress(manager, 9)).not.toBe(false); // registry row
     expect(text()).toContain('❯ reg.test/api.json');
-    expect(onAdd).not.toHaveBeenCalled();
+    expect(onViewModels).not.toHaveBeenCalled();
 
-    // Source rows have no Enter action: the re-click is a no-op.
-    expect(dispatchPress(manager, 6)).toBe(false);
+    // Re-clicking the selected row is the Enter equivalent: view its models.
+    expect(dispatchPress(manager, 9)).not.toBe(false);
+    expect(onViewModels).toHaveBeenCalledWith('registry');
     expect(onAdd).not.toHaveBeenCalled();
   });
 
   it('fires onAdd when the highlighted add row is re-clicked', () => {
     const { manager, onAdd } = makeManager();
-    expect(dispatchPress(manager, 8)).not.toBe(false); // highlight the add row
+    expect(dispatchPress(manager, 11)).not.toBe(false); // highlight the add row
     expect(strip(manager.render(120).join('\n'))).toContain('❯ [ Add New Platform ]');
-    dispatchPress(manager, 8); // re-click fires it (Enter equivalent)
+    dispatchPress(manager, 11); // re-click fires it (Enter equivalent)
     expect(onAdd).toHaveBeenCalledTimes(1);
   });
 
   it('misses zones for presses on the header, blank, and divider rows', () => {
     const { manager, onAdd } = makeManager();
-    for (const row of [0, 1, 2, 3, 9, 10]) {
+    for (const row of [0, 1, 2, 3, 12, 13]) {
       expect(dispatchPress(manager, row)).toBe(false);
     }
+    // The search box rows hit the search zone instead of any content row.
+    expect(hitZoneAt([...manager.hitZones()], 5, 1, 'action')?.id).toBe('search');
     expect(onAdd).not.toHaveBeenCalled();
   });
 
@@ -119,10 +123,10 @@ describe('ProviderManagerComponent hit zones', () => {
     manager.render(120);
     expect([...manager.hitZones()]).toHaveLength(0);
     expect(
-      manager.handleMouse({ type: 'press', button: 0, col: 1, row: 4, slotRelative: false }),
+      manager.handleMouse({ type: 'press', button: 0, col: 1, row: 7, slotRelative: false }),
     ).toBe(false);
     expect(
-      manager.handleMouse({ type: 'motion', button: 3, col: 1, row: 4, slotRelative: false }),
+      manager.handleMouse({ type: 'motion', button: 3, col: 1, row: 7, slotRelative: false }),
     ).toBe(false);
   });
 
@@ -130,9 +134,9 @@ describe('ProviderManagerComponent hit zones', () => {
     const { manager } = makeManager();
     const baseline = manager.render(120).join('\n');
 
-    expect(dispatchHover(manager, 6)).not.toBe(false); // registry row
+    expect(dispatchHover(manager, 9)).not.toBe(false); // registry row
     expect(manager.render(120).join('\n')).toContain('[4m');
-    expect(dispatchHover(manager, 6)).toBe(false); // unchanged → frame skipped
+    expect(dispatchHover(manager, 9)).toBe(false); // unchanged → frame skipped
 
     dispatchHover(manager, -1);
     expect(manager.render(120).join('\n')).toBe(baseline);

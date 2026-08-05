@@ -5,6 +5,7 @@ import type { selectors as enDomain } from '../en/selectors';
 export const selectors: Record<keyof typeof enDomain, string> = {
   // ── 输入对话框共享底栏 ──
   'selectors.inputDialog.footer': 'Enter 提交  ·  Esc 取消',
+  'selectors.inputDialog.footerBack': 'Enter 提交  ·  Esc 返回',
 
   // ── 实验性功能选择器 ──
   'selectors.experiments.title': '实验性功能',
@@ -26,6 +27,7 @@ export const selectors: Record<keyof typeof enDomain, string> = {
   // ── 目标队列管理器与编辑对话框 ──
   'selectors.goalQueue.title': '待处理目标',
   'selectors.goalQueue.hintNavigate': '↑↓ 移动 · Space 选择 · Alt+E 编辑 · Alt+D 删除 · Esc 取消',
+  'selectors.goalQueue.confirmDelete': '删除目标 "{label}"？',
   'selectors.goalQueue.hintReorder': '↑↓ 排序 · Space 完成 · Alt+E 编辑 · Alt+D 删除 · Esc 完成',
   'selectors.goalQueue.empty': '没有待处理的目标。',
   'selectors.goalQueue.selected': '已选中',
