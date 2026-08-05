@@ -4769,4 +4769,37 @@ describe("Editor click-to-position (mouseClickToPosition opt-in)", () => {
 		const after = stripVTControlCharacters(editor.render(80).join("\n"));
 		assert.ok(after.includes("→ beta"), after);
 	});
+
+	it("applies the completion when the selected autocomplete row is re-clicked", async () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { mouseClickToPosition: true });
+		let submitted: string | undefined;
+		editor.onSubmit = (text) => {
+			submitted = text;
+		};
+		editor.setText("/");
+		const mockProvider: AutocompleteProvider = {
+			getSuggestions: async () => ({
+				items: [
+					{ value: "alpha", label: "alpha" },
+					{ value: "beta", label: "beta" },
+				],
+				prefix: "/",
+			}),
+			applyCompletion,
+		};
+		editor.setAutocompleteProvider(mockProvider);
+		editor.handleInput("a");
+		await flushAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+		const frameLines = editor.render(80).map(stripVTControlCharacters);
+		const alphaRow = frameLines.findIndex((line) => line.includes("alpha"));
+		assert.ok(alphaRow > 0);
+
+		// First click selects, second click on the selected row confirms — the
+		// slash command applies and submits, exactly like Enter.
+		editor.handleMouse(press(3, alphaRow));
+		editor.handleMouse(press(3, alphaRow));
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+		assert.strictEqual(submitted, "/alpha");
+	});
 });

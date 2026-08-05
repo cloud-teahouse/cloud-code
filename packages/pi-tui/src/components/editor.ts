@@ -37,7 +37,7 @@ import {
 	type VimState,
 } from "../vim/types.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
-import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
+import { SelectList, type SelectItem, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
 
 const graphemeSegmenter = getGraphemeSegmenter();
 const wordSegmenter = getWordSegmenter();
@@ -2906,7 +2906,39 @@ export class Editor implements Component, Focusable {
 		items: Array<{ value: string; label: string; description?: string }>,
 	): SelectList {
 		const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : undefined;
-		return new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+		const list = new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+		// A click selects a row and a re-click confirms it (the Enter
+		// equivalent) — without this the mouse could never apply a completion.
+		list.onSelect = (item) => this.confirmAutocompleteSelection(item);
+		return list;
+	}
+
+	/**
+	 * Applies the picked completion, the mouse-confirm counterpart of the
+	 * Enter path: a slash command falls through to submit; anything else
+	 * (file paths) just fills the text and fires onChange.
+	 */
+	private confirmAutocompleteSelection(selected: SelectItem): void {
+		if (this.autocompleteState === null || this.autocompleteProvider === undefined) return;
+		this.pushUndoSnapshot();
+		this.lastAction = null;
+		const result = this.autocompleteProvider.applyCompletion(
+			this.state.lines,
+			this.state.cursorLine,
+			this.state.cursorCol,
+			selected,
+			this.autocompletePrefix,
+		);
+		this.state.lines = result.lines;
+		this.state.cursorLine = result.cursorLine;
+		this.setCursorCol(result.cursorCol);
+		const isSlashCommand = this.autocompletePrefix.startsWith("/");
+		this.cancelAutocomplete();
+		if (isSlashCommand) {
+			if (!this.disableSubmit) this.submitValue();
+			return;
+		}
+		if (this.onChange) this.onChange(this.getText());
 	}
 
 	private tryTriggerAutocomplete(explicitTab: boolean = false): void {
