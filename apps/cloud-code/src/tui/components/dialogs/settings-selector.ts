@@ -4,6 +4,7 @@ import { t, type MessageKey } from '#/tui/i18n';
 
 export type SettingsSelection =
   | 'model'
+  | 'provider'
   | 'theme'
   | 'language'
   | 'editor'
@@ -20,6 +21,11 @@ const SETTINGS_OPTIONS: readonly { value: SettingsSelection; labelKey: MessageKe
     value: 'model',
     labelKey: 'dialogs.settings.model.label',
     descriptionKey: 'dialogs.settings.model.description',
+  },
+  {
+    value: 'provider',
+    labelKey: 'dialogs.settings.provider.label',
+    descriptionKey: 'dialogs.settings.provider.description',
   },
   {
     value: 'permission',
@@ -66,6 +72,7 @@ const SETTINGS_OPTIONS: readonly { value: SettingsSelection; labelKey: MessageKe
 function isSettingsSelection(value: string): value is SettingsSelection {
   return (
     value === 'model' ||
+    value === 'provider' ||
     value === 'theme' ||
     value === 'language' ||
     value === 'editor' ||

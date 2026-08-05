@@ -231,10 +231,12 @@ export function clearStatusPanelDataMemos(): void {
 export async function showStatusPanel(
   host: SlashCommandHost,
   initialTab: StatusDialogTab = 'status',
+  returnTo?: () => void,
 ): Promise<void> {
   const appState = host.state.appState;
   const onCancel = (): void => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   // ChatGPT reset-credit redeem endpoints for the dialog's armed-confirm
   // state machine. The idempotency key is minted inside `consume`, so every
@@ -391,8 +393,8 @@ export async function showStatusPanel(
 }
 
 /** /usage — alias for /status landing directly on the first account tab. */
-export async function showUsage(host: SlashCommandHost): Promise<void> {
-  return showStatusPanel(host, 'kimi');
+export async function showUsage(host: SlashCommandHost, returnTo?: () => void): Promise<void> {
+  return showStatusPanel(host, 'kimi', returnTo);
 }
 
 /** /status [status|usage|kimi|chatgpt|stats] — the dashboard, optionally preselecting a tab. */

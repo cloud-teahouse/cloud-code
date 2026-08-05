@@ -20,8 +20,8 @@ export {
   showExperimentsPanel,
   showModelPicker,
   showPermissionPicker,
-  showSettingsSelector,
 } from './config';
+export { showSettingsSelector } from './settings-menu';
 export { handleSwarmCommand } from './swarm';
 export { handleCoordinatorCommand } from './coordinator';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';

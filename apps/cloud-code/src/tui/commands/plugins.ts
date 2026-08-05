@@ -578,6 +578,9 @@ async function handlePluginsPanelSelection(
     case 'details':
       host.restoreEditor(panelSlot.current);
       await renderPluginInfo(host, selection.id);
+      // The details print to the transcript; reopen the panel so the flow
+      // returns to where the user was (same unwind as toggle/remove).
+      await showPluginsPicker(host, { initialTab: 'installed', selectedId: selection.id });
       return;
     case 'reload':
       await reloadPlugins(host);

@@ -24,7 +24,6 @@ import {
 } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
-import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
@@ -47,7 +46,6 @@ import {
 } from '../utils/custom-entries';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { runCustomModelEditWizard, runCustomModelWizard } from './custom-model-wizard';
-import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
 
@@ -496,10 +494,11 @@ function showEffortPicker(
 // Pickers & config apply
 // ---------------------------------------------------------------------------
 
-function showEditorPicker(host: SlashCommandHost): void {
+export function showEditorPicker(host: SlashCommandHost, returnTo?: () => void): void {
   const currentValue = host.state.appState.editorCommand ?? '';
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const editorSlotHandle = host.mountEditorReplacement(
     new EditorSelectorComponent({
@@ -632,6 +631,7 @@ export function showModelPicker(
   selectedValue: string = host.state.appState.model,
   defaultModel?: () => string | undefined,
   subagentDefault?: () => SubagentDefault,
+  returnTo?: () => void,
 ): TabbedModelSelectorComponent | undefined {
   const models = effectiveModelsForPicker(host);
   if (Object.keys(models).length === 0) {
@@ -643,6 +643,7 @@ export function showModelPicker(
   }
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const component = new TabbedModelSelectorComponent({
     models,
@@ -844,9 +845,10 @@ async function performSubagentAssign(
   }
 }
 
-function showThemePicker(host: SlashCommandHost): void {
+export function showThemePicker(host: SlashCommandHost, returnTo?: () => void): void {
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const editorSlotHandle = host.mountEditorReplacement(
     new ThemeSelectorComponent({
@@ -904,9 +906,10 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   );
 }
 
-function showLanguagePicker(host: SlashCommandHost): void {
+export function showLanguagePicker(host: SlashCommandHost, returnTo?: () => void): void {
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const editorSlotHandle = host.mountEditorReplacement(
     new LanguageSelectorComponent({
@@ -956,9 +959,10 @@ async function applyLanguageChoice(host: SlashCommandHost, pref: LocalePreferenc
   host.showStatus(t('commands.language.set', { name }));
 }
 
-export function showPermissionPicker(host: SlashCommandHost): void {
+export function showPermissionPicker(host: SlashCommandHost, returnTo?: () => void): void {
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const editorSlotHandle = host.mountEditorReplacement(
     new PermissionSelectorComponent({
@@ -973,9 +977,10 @@ export function showPermissionPicker(host: SlashCommandHost): void {
   );
 }
 
-export function showUpdatePreferencePicker(host: SlashCommandHost): void {
+export function showUpdatePreferencePicker(host: SlashCommandHost, returnTo?: () => void): void {
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const editorSlotHandle = host.mountEditorReplacement(
     new UpdatePreferenceSelectorComponent({
@@ -990,9 +995,10 @@ export function showUpdatePreferencePicker(host: SlashCommandHost): void {
   );
 }
 
-export function showFullscreenPicker(host: SlashCommandHost): void {
+export function showFullscreenPicker(host: SlashCommandHost, returnTo?: () => void): void {
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const editorSlotHandle = host.mountEditorReplacement(
     new FullscreenSelectorComponent({
@@ -1007,7 +1013,10 @@ export function showFullscreenPicker(host: SlashCommandHost): void {
   );
 }
 
-export async function showExperimentsPanel(host: SlashCommandHost): Promise<void> {
+export async function showExperimentsPanel(
+  host: SlashCommandHost,
+  returnTo?: () => void,
+): Promise<void> {
   let features: readonly ExperimentalFeatureState[];
   try {
     features = await host.harness.getExperimentalFeatures();
@@ -1015,7 +1024,7 @@ export async function showExperimentsPanel(host: SlashCommandHost): Promise<void
     host.showError(t('commands.experiments.loadFailed', { error: formatErrorMessage(error) }));
     return;
   }
-  mountExperimentsPanel(host, features);
+  mountExperimentsPanel(host, features, returnTo);
 }
 
 export async function applyExperimentalFeatureChanges(
@@ -1059,9 +1068,11 @@ export async function applyExperimentalFeatureChanges(
 function mountExperimentsPanel(
   host: SlashCommandHost,
   features: readonly ExperimentalFeatureState[],
+  returnTo?: () => void,
 ): void {
   const onCancel = () => {
     host.restoreEditor(editorSlotHandle);
+    returnTo?.();
   };
   const editorSlotHandle = host.mountEditorReplacement(
     new ExperimentsSelectorComponent({
@@ -1182,36 +1193,6 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
 
   host.setAppState({ permissionMode: mode });
   host.showNotice(t('commands.permission.mode', { mode }));
-}
-
-export function showSettingsSelector(host: SlashCommandHost): void {
-  const onCancel = () => {
-    host.restoreEditor(editorSlotHandle);
-  };
-  const editorSlotHandle = host.mountEditorReplacement(
-    new SettingsSelectorComponent({
-      onSelect: (value) => {
-        host.restoreEditor(editorSlotHandle);
-        handleSettingsSelection(host, value);
-      },
-      onCancel,
-    }),
-    { onPreempt: onCancel },
-  );
-}
-
-function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelection): void {
-  switch (value) {
-    case 'model': showModelPicker(host); return;
-    case 'permission': showPermissionPicker(host); return;
-    case 'theme': showThemePicker(host); return;
-    case 'language': showLanguagePicker(host); return;
-    case 'editor': showEditorPicker(host); return;
-    case 'fullscreen': showFullscreenPicker(host); return;
-    case 'experiments': void showExperimentsPanel(host); return;
-    case 'upgrade': showUpdatePreferencePicker(host); return;
-    case 'usage': void showUsage(host); return;
-  }
 }
 
 // ---------------------------------------------------------------------------

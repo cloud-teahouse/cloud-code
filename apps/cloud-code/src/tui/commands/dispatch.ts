@@ -42,8 +42,8 @@ import {
   showExperimentsPanel,
   showModelPicker,
   showPermissionPicker,
-  showSettingsSelector,
 } from './config';
+import { showSettingsSelector } from './settings-menu';
 import { handleGoalCommand } from './goal';
 import { handleFastCommand } from './fast';
 import { handleImportCommand } from './import';
@@ -92,8 +92,8 @@ export {
   showModelPicker,
   showExperimentsPanel,
   showPermissionPicker,
-  showSettingsSelector,
 } from './config';
+export { showSettingsSelector } from './settings-menu';
 export { handleSwarmCommand } from './swarm';
 export { handleCoordinatorCommand } from './coordinator';
 export { handleFastCommand } from './fast';
