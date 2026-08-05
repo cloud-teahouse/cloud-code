@@ -203,6 +203,28 @@ describe("transcript hit zones", () => {
 		assert.deepStrictEqual(cardA.hovers, ["A", null]);
 	});
 
+	it("hovers only the scroll badge when the pointer is on its cells", async () => {
+		const { tui, terminal, cardB } = await setupTranscript();
+		tui.scrollToTop();
+		await terminal.waitForRender();
+
+		// 50 transcript lines, 7 viewport rows, scrolled to the top: the badge
+		// reads "↓ 43" (6 cells) and owns screen cols 75..80 of the bottom
+		// viewport row. Card B's zone extends under the badge's leftmost cells
+		// (child col = screen col - 2, zone spans 1..75), so a pointer at
+		// screen col 75 sits on both — the badge must win and the card must
+		// stay unhovered.
+		terminal.sendInput(`\x1b[<35;75;${VIEWPORT_ROWS}M`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(cardB.hovers, []);
+
+		// Moving left past the badge's edge lands on plain content: the card
+		// hovers normally again.
+		terminal.sendInput(`\x1b[<35;10;${VIEWPORT_ROWS}M`);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(cardB.hovers, ["B"]);
+	});
+
 	it("lets a visible overlay shield transcript zones", async () => {
 		const { tui, terminal, cardA } = await setupTranscript();
 		tui.scrollToTop();

@@ -1558,6 +1558,21 @@ export class TUI extends Container {
 	 * the sticky-header overlay row, and not shielded by a visible overlay
 	 * (the same rule the transcript scrollbar applies).
 	 */
+	/**
+	 * Whether a 1-based terminal cell sits on the scroll badge's rect: the
+	 * right-aligned badge on the viewport's bottom row, while visible and not
+	 * covered by an overlay. The badge owns those cells, so transcript content
+	 * under it neither clicks nor hovers through.
+	 */
+	private isScrollBadgeCell(row: number, col: number): boolean {
+		if (!this.scrollIndicatorVisible) return false;
+		if (row !== this.lastViewportHeight || col <= this.terminal.columns - this.scrollIndicatorBadgeWidth) {
+			return false;
+		}
+		const overlay = this.visibleOverlayEntryFor(this.focusedComponent);
+		return overlay === undefined || !this.isPointInOverlayRect(overlay, row, col);
+	}
+
 	private isTranscriptContentCell(row: number, col: number): boolean {
 		const { scroll, slot } = this.layoutRegions;
 		if (
@@ -1570,6 +1585,7 @@ export class TUI extends Container {
 		}
 		if (row < 1 || row > this.lastViewportHeight) return false;
 		if (row === 1 && this.stickyHeaderVisible) return false;
+		if (this.isScrollBadgeCell(row, col)) return false;
 		const overlay = this.visibleOverlayEntryFor(this.focusedComponent);
 		return overlay === undefined || !this.isPointInOverlayRect(overlay, row, col);
 	}
@@ -2011,15 +2027,7 @@ export class TUI extends Container {
 	 * same rule the press path applies.
 	 */
 	private updateScrollIndicatorHover(event: MouseEvent): void {
-		let hovered = false;
-		if (
-			this.scrollIndicatorVisible &&
-			event.row === this.lastViewportHeight &&
-			event.col > this.terminal.columns - this.scrollIndicatorBadgeWidth
-		) {
-			const overlay = this.visibleOverlayEntryFor(this.focusedComponent);
-			hovered = overlay === undefined || !this.isPointInOverlayRect(overlay, event.row, event.col);
-		}
+		const hovered = this.isScrollBadgeCell(event.row, event.col);
 		if (hovered === this.scrollIndicatorHovered) return;
 		this.scrollIndicatorHovered = hovered;
 		this.requestChromeRender();
