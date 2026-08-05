@@ -136,7 +136,8 @@ describe('GoalQueueManagerComponent hit zones', () => {
       () => new Promise<GoalQueueSnapshot>((resolve) => (resolveAction = resolve)),
     );
     const { manager } = makeManager({ onAction });
-    manager.handleInput('d'); // delete g1 — busy until the snapshot lands
+    manager.handleInput('d'); // arm the confirm…
+    manager.handleInput('y'); // …and fire the delete — busy until the snapshot lands
 
     expect(dispatchPress(manager, 5)).toBe(false);
     expect(

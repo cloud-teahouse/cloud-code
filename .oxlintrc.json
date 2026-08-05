@@ -148,6 +148,7 @@
     "dist/",
     "coverage/",
     "node_modules/",
+    ".public-export/",
     "apps/*/scripts/",
     "docs/smoke-archive/",
     "packages/pi-tui/",

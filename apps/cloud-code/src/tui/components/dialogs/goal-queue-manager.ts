@@ -73,6 +73,8 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
   private goals: readonly UpcomingGoal[];
   private list: SearchableList<UpcomingGoal>;
   private movingGoalId: string | undefined;
+  /** Armed inline delete confirmation (goal id); [y/N] resolves it. */
+  private confirmDeleteGoalId: string | undefined;
   private busy = false;
   /** Hovered goal index (mouse motion); null when the pointer is elsewhere. */
   private readonly hover = new HoverState();
@@ -96,6 +98,24 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
     // Legacy ESC-prefixed Alt bytes → CSI-u when Kitty is active (see
     // utils/legacy-meta-key) so Alt+E/D arrive in every terminal.
     const normalized = normalizeLegacyMetaKey(data);
+
+    // The armed delete confirmation owns the keyboard until it resolves.
+    if (this.confirmDeleteGoalId !== undefined) {
+      const k = printableChar(normalized);
+      if (matchesKey(normalized, Key.escape) || k === 'n' || k === 'N') {
+        this.confirmDeleteGoalId = undefined;
+        this.invalidate();
+        return;
+      }
+      if (k === 'y' || k === 'Y') {
+        const goalId = this.confirmDeleteGoalId;
+        this.confirmDeleteGoalId = undefined;
+        void this.applyQueueAction({ kind: 'delete', goalId });
+        return;
+      }
+      return;
+    }
+
     // Esc peels the innermost state first: an armed reorder disarms before
     // the dialog closes (the armed-confirm layering used everywhere else).
     if (matchesKey(normalized, Key.escape)) {
@@ -129,7 +149,8 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
       (matchesKey(normalized, Key.alt('d')) || decoded === 'd' || decoded === 'D') &&
       selected !== undefined
     ) {
-      void this.applyQueueAction({ kind: 'delete', goalId: selected.id });
+      this.confirmDeleteGoalId = selected.id;
+      this.invalidate();
       return;
     }
 
@@ -168,12 +189,15 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
       return this.setHoveredZone(zone?.id ?? null);
     }
     if (event.type === 'press' && event.button === 0) {
+      if (this.confirmDeleteGoalId !== undefined) return false;
       const zone = hitZoneAt(zones, event.row, event.col, 'action');
       if (zone === null) return false;
       return this.onHitZone(zone.id, event);
     }
     if (event.type !== 'wheel') return false;
-    if (this.busy || this.movingGoalId !== undefined) return false;
+    if (this.busy || this.movingGoalId !== undefined || this.confirmDeleteGoalId !== undefined) {
+      return false;
+    }
     const delta = event.button === 64 ? -1 : event.button === 65 ? 1 : 0;
     if (delta === 0 || this.list.view().items.length === 0) return false;
     if (delta < 0) this.list.moveUp();
@@ -255,6 +279,21 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
     }
     this.frameZones = zones;
 
+    // The armed delete confirmation takes the footer row (and the mouse is
+    // inert while it is up — see handleMouse).
+    if (this.confirmDeleteGoalId !== undefined) {
+      const goal = this.goals.find((g) => g.id === this.confirmDeleteGoalId);
+      lines.push('');
+      lines.push(
+        currentTheme.boldFg(
+          'warning',
+          `  ${t('selectors.goalQueue.confirmDelete', {
+            label: goal === undefined ? '' : formatListObjective(goal.objective),
+          })} [y/N]`,
+        ),
+      );
+    }
+
     lines.push('');
     lines.push(currentTheme.fg('border', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
@@ -295,6 +334,9 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
         this.goals = result.goals;
         if (!this.goals.some((goal) => goal.id === this.movingGoalId)) {
           this.movingGoalId = undefined;
+        }
+        if (!this.goals.some((goal) => goal.id === this.confirmDeleteGoalId)) {
+          this.confirmDeleteGoalId = undefined;
         }
         this.list = this.createList(selectedGoalId ?? this.movingGoalId);
       }

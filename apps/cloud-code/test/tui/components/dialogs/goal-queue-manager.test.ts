@@ -73,7 +73,7 @@ describe('GoalQueueManagerComponent', () => {
     expect(out.indexOf('Second queued goal')).toBeLessThan(out.indexOf('First queued goal'));
   });
 
-  it('deletes the selected goal and keeps the list open', async () => {
+  it('deletes the selected goal after the inline confirm and keeps the list open', async () => {
     const first = goal('g1', 'First queued goal');
     const second = goal('g2', 'Second queued goal');
     const onAction = vi.fn(async (action: GoalQueueManagerAction) => {
@@ -86,7 +86,10 @@ describe('GoalQueueManagerComponent', () => {
       onCancel: vi.fn(),
     });
 
-    manager.handleInput('d');
+    manager.handleInput('d'); // arms the [y/N] confirm
+    expect(onAction).not.toHaveBeenCalled();
+    expect(text(manager)).toContain('[y/N]');
+    manager.handleInput('y');
 
     await vi.waitFor(() => {
       expect(onAction).toHaveBeenCalledOnce();
@@ -114,6 +117,7 @@ describe('GoalQueueManagerComponent', () => {
     const invalidate = vi.spyOn(manager, 'invalidate');
 
     manager.handleInput('d');
+    manager.handleInput('y'); // confirm the armed delete
     resolveAction!(snapshot([second]));
 
     await vi.waitFor(() => {
@@ -148,13 +152,15 @@ describe('GoalQueueManagerComponent', () => {
     manager.handleInput(`${ESC}e`); // legacy alt+e → edit g1 again
     expect(onAction).toHaveBeenCalledTimes(2);
 
-    manager.handleInput(`${ESC}[100;3u`); // alt+d → delete g1
+    manager.handleInput(`${ESC}[100;3u`); // alt+d → arm the delete confirm
+    manager.handleInput('y'); // → delete g1
     expect(onAction).toHaveBeenCalledWith({ kind: 'delete', goalId: 'g1' });
 
     // Delete is busy-gated until the async action settles; the legacy alt+d
     // below must wait for the gate to reopen.
     await vi.waitFor(() => {
-      manager.handleInput(`${ESC}d`); // legacy alt+d → delete g1 again
+      manager.handleInput(`${ESC}d`); // legacy alt+d → arm again
+      manager.handleInput('y'); // → delete g1 again
       expect(onAction).toHaveBeenCalledTimes(4);
     });
   });

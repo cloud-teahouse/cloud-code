@@ -573,7 +573,8 @@ describe('handleGoalCommand', () => {
   it('/goal next manage removes goals through the queue store', async () => {
     await handleGoalCommand(host, 'next manage');
 
-    mountedPicker(host).handleInput('d');
+    mountedPicker(host).handleInput('d'); // arm the confirm
+    mountedPicker(host).handleInput('y'); // confirm the delete
 
     await vi.waitFor(() => {
       expect(removeGoalQueueItem).toHaveBeenCalledWith(session, { goalId: 'q1' });
