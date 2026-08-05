@@ -471,6 +471,8 @@ export const commands = {
   'commands.provider.custom.idInvalid':
     'Use lowercase letters, digits, ".", "_" or "-", starting with a letter or digit.',
   'commands.provider.custom.idTaken': 'Provider "{id}" already exists.',
+  'commands.provider.custom.idReserved':
+    '"{id}" is reserved for a built-in service — pick another name.',
   'commands.provider.custom.verifyTitle': 'Test the connection before saving?',
   'commands.provider.custom.verifyYes': 'Test connection',
   'commands.provider.custom.verifyNo': 'Skip',

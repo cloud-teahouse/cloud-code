@@ -454,7 +454,7 @@ describe('runCustomModelWizard', () => {
     typeText(ctx.lastPanel(), 'sk-kimi');
     ctx.lastPanel().handleInput(KEY_ENTER);
     await flush();
-    ctx.lastPanel().handleInput(KEY_ENTER); // id "kimi"
+    ctx.lastPanel().handleInput(KEY_ENTER); // id (kimi.test → reserved, suggests kimi-custom)
     await flush();
     ctx.lastPanel().handleInput(KEY_DOWN); // skip connectivity
     ctx.lastPanel().handleInput(KEY_ENTER);
@@ -462,13 +462,13 @@ describe('runCustomModelWizard', () => {
 
     // Back in the model wizard at the model-id step (provider preselected).
     await finishWizardFromModelId(ctx, 'k2');
-    await expect(result).resolves.toBe('kimi/k2');
-    expect(ctx.current().providers['kimi']).toEqual({
+    await expect(result).resolves.toBe('kimi-custom/k2');
+    expect(ctx.current().providers['kimi-custom']).toEqual({
       type: 'kimi',
       baseUrl: 'https://kimi.test/v1',
       apiKey: 'sk-kimi',
     });
-    expect(ctx.current().models['kimi/k2']).toBeDefined();
+    expect(ctx.current().models['kimi-custom/k2']).toBeDefined();
   });
 
   it('aborts on Esc at the provider step without writing config', async () => {

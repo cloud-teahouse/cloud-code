@@ -12,6 +12,7 @@ import { handleProviderCommand } from '#/tui/commands/provider';
 import {
   buildCustomProviderEntry,
   deriveProviderIdSuggestion,
+  isReservedProviderId,
   runCustomProviderEditWizard,
   runCustomProviderWizard,
 } from '#/tui/commands/custom-provider-wizard';
@@ -252,7 +253,7 @@ describe('runCustomProviderWizard', () => {
     ctx.lastPanel().handleInput(KEY_ENTER); // "Test connection"
     await flush();
 
-    await expect(result).resolves.toBe('kimi');
+    await expect(result).resolves.toBe('kimi-custom');
     expect(fetchMock).toHaveBeenCalledWith(
       'https://kimi.test/v1/models',
       expect.objectContaining({
@@ -263,7 +264,7 @@ describe('runCustomProviderWizard', () => {
       expect.stringContaining('2'),
       'success',
     );
-    expect(ctx.current().providers['kimi']).toBeDefined();
+    expect(ctx.current().providers['kimi-custom']).toBeDefined();
   });
 
   it('warns on a failed probe but saves the provider anyway', async () => {
@@ -285,12 +286,12 @@ describe('runCustomProviderWizard', () => {
     ctx.lastPanel().handleInput(KEY_ENTER); // test connection
     await flush();
 
-    await expect(result).resolves.toBe('kimi');
+    await expect(result).resolves.toBe('kimi-custom');
     expect(ctx.host.showStatus).toHaveBeenCalledWith(
       expect.stringContaining('HTTP 401'),
       'warning',
     );
-    expect(ctx.current().providers['kimi']).toEqual({
+    expect(ctx.current().providers['kimi-custom']).toEqual({
       type: 'kimi',
       baseUrl: 'https://kimi.test/v1',
       apiKey: 'sk-bad',
@@ -482,6 +483,16 @@ describe('deriveProviderIdSuggestion', () => {
     expect(
       deriveProviderIdSuggestion('openai', 'https://api.example.com/v1', ['example', 'example-2']),
     ).toBe('example-3');
+  });
+
+  it('never suggests a reserved managed-service id', () => {
+    // api.kimi.com would naively derive "kimi" — the managed service id.
+    expect(deriveProviderIdSuggestion('kimi', 'https://api.kimi.com/coding/v1', [])).toBe(
+      'kimi-custom',
+    );
+    expect(isReservedProviderId('kimi')).toBe(true);
+    expect(isReservedProviderId('managed:kimi-code')).toBe(true);
+    expect(isReservedProviderId('nala-kimi')).toBe(false);
   });
 });
 

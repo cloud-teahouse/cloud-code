@@ -435,6 +435,7 @@ export const commands: Record<keyof typeof enCommands, string> = {
   'commands.provider.custom.idSubtitle': '此提供商的唯一 id，模型别名以其为前缀：{id}/my-model。',
   'commands.provider.custom.idInvalid': '使用小写字母、数字、"."、"_" 或 "-"，且以字母或数字开头。',
   'commands.provider.custom.idTaken': '提供商 "{id}" 已存在。',
+  'commands.provider.custom.idReserved': '"{id}" 是内置服务商的保留标识 — 请换一个名字。',
   'commands.provider.custom.verifyTitle': '保存前测试连通性？',
   'commands.provider.custom.verifyYes': '测试连接',
   'commands.provider.custom.verifyNo': '跳过',

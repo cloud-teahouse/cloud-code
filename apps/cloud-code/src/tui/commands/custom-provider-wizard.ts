@@ -396,12 +396,27 @@ function promptCustomProviderId(
       if (!/^[a-z0-9][a-z0-9._-]*$/.test(value)) {
         return t('commands.provider.custom.idInvalid');
       }
+      if (isReservedProviderId(value)) {
+        return t('commands.provider.custom.idReserved', { id: value });
+      }
       if (existingIds.includes(value)) {
         return t('commands.provider.custom.idTaken', { id: value });
       }
       return undefined;
     },
   });
+}
+
+/**
+ * Ids a custom provider must not take: the managed OAuth services and their
+ * alias namespaces. A custom provider named `kimi` renders with the same
+ * service label as the managed login and its models become
+ * indistinguishable from the managed ones in the picker.
+ */
+const RESERVED_PROVIDER_IDS: readonly string[] = ['kimi', 'chatgpt-codex', 'kimi-code'];
+
+export function isReservedProviderId(id: string): boolean {
+  return id.startsWith('managed:') || RESERVED_PROVIDER_IDS.includes(id);
 }
 
 /**
@@ -426,9 +441,12 @@ export function deriveProviderIdSuggestion(
   }
   if (base.length === 0) base = sanitizeProviderId(type);
   if (base.length === 0) base = 'custom';
+  // A suggestion colliding with the managed service ids would shadow their
+  // display names — start from a neutral name instead.
+  if (isReservedProviderId(base)) base = `${base}-custom`;
 
   let candidate = base;
-  for (let n = 2; existingIds.includes(candidate); n++) {
+  for (let n = 2; existingIds.includes(candidate) || isReservedProviderId(candidate); n++) {
     candidate = `${base}-${n}`;
   }
   return candidate;

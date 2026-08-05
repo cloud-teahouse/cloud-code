@@ -125,6 +125,7 @@ export function providerServiceName(provider: string): string | undefined {
 export function providerDisplayName(provider: string): string {
   // The built-in OAuth provider is the Kimi Code service.
   if (provider === DEFAULT_OAUTH_PROVIDER_NAME) return PROVIDER_SERVICE_NAMES['kimi']!;
+  if (provider === 'managed:chatgpt-codex') return PROVIDER_SERVICE_NAMES['chatgpt-codex']!;
   if (provider.startsWith('managed:')) return provider.slice('managed:'.length);
   return providerServiceName(provider) ?? provider;
 }
