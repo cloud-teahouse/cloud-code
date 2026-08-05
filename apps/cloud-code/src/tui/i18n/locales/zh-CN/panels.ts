@@ -164,6 +164,7 @@ export const panels: Record<keyof typeof enDomain, string> = {
   'panels.sandbox.escalation.always': 'always — 不经询问直接非沙箱重试',
   'panels.sandbox.config.source': '来源：config.toml 的 [sandbox] 配置节',
   'panels.sandbox.config.defaults': '来源：内置默认值（config.toml 中没有 [sandbox] 配置节）',
+  'panels.sandbox.config.override': '当前生效：本会话覆盖（/sandbox {mode}）——重启后跟随 config.toml',
 
   // ── /goal 面板 ──
   'panels.goal.set': '目标设定',

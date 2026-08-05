@@ -173,6 +173,14 @@ export function buildSandboxStatusReportLines(options: SandboxStatusReportOption
   lines.push(
     `  ${muted(t(status.configured ? 'panels.sandbox.config.source' : 'panels.sandbox.config.defaults'))}`,
   );
+  // A live session override explains itself: the file-side origin above is a
+  // startup snapshot and cannot see the toggle, so the override gets its own
+  // line instead of pretending the report is stale.
+  if (status.modeOverride !== undefined) {
+    lines.push(
+      `  ${muted(t('panels.sandbox.config.override', { mode: status.modeOverride }))}`,
+    );
+  }
 
   return lines;
 }

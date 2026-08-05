@@ -33,6 +33,12 @@ export interface SandboxGuardStatus {
 
 export interface SandboxStatusData {
   readonly mode: SandboxMode;
+  /**
+   * Session runtime override (`/sandbox on|off`) when active: `mode` and
+   * `plan` already resolve through it — this field exists so the report can
+   * say *why* they differ from the file config.
+   */
+  readonly modeOverride?: SandboxMode | undefined;
   /** Whether a `[sandbox]` section exists in config.toml (vs. all defaults). */
   readonly configured: boolean;
   /** `Kaos.name` of the execution environment ('local' or e.g. an SSH target). */
@@ -61,6 +67,8 @@ export interface SandboxStatusData {
  */
 export interface SandboxStatusSource {
   readonly sandboxConfig: SandboxConfig | undefined;
+  /** Session runtime override (`/sandbox on|off`); wins over the file mode. */
+  readonly modeOverride?: SandboxMode | undefined;
   readonly kaos: Kaos;
   readonly homedir?: string | undefined;
   readonly brandHomeDir?: string | undefined;
@@ -70,7 +78,10 @@ export interface SandboxStatusSource {
 
 export async function buildSandboxStatus(source: SandboxStatusSource): Promise<SandboxStatusData> {
   const { sandboxConfig, kaos, manager } = source;
-  const mode = sandboxConfig?.mode ?? 'auto';
+  // Mirror the Bash spawn path: the session override resolves first, the
+  // `[sandbox]` file section is the fallback — the report must never claim
+  // sandboxed while commands actually run bare (or vice versa).
+  const mode = source.modeOverride ?? sandboxConfig?.mode ?? 'auto';
   const local = kaos.name === 'local';
   const workspaceCwd = kaos.getcwd();
   const configuredWritableRoots = sandboxConfig?.writableRoots ?? [];
@@ -111,6 +122,7 @@ export async function buildSandboxStatus(source: SandboxStatusSource): Promise<S
 
   return {
     mode,
+    ...(source.modeOverride !== undefined ? { modeOverride: source.modeOverride } : {}),
     configured: sandboxConfig !== undefined,
     environment: kaos.name,
     local,

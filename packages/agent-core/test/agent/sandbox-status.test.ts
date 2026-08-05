@@ -151,4 +151,21 @@ describe('buildSandboxStatus', () => {
     expect(status.plan).toEqual({ kind: 'unsandboxed', reason: 'sandbox mode is off' });
     expect(status.backends).toEqual([{ name: 'fake', available: true, version: '0.0.test' }]);
   });
+
+  it('resolves the session runtime override over the file mode', async () => {
+    // /sandbox off with a sandboxing file config: the report must not claim
+    // sandboxed while commands run bare.
+    const off = await buildSandboxStatus(
+      source({ sandboxConfig: { mode: 'auto' }, modeOverride: 'off' }),
+    );
+    expect(off.mode).toBe('off');
+    expect(off.modeOverride).toBe('off');
+    expect(off.plan.kind).toBe('unsandboxed');
+
+    // The override clears: back to the file mode.
+    const file = await buildSandboxStatus(source({ sandboxConfig: { mode: 'auto' } }));
+    expect(file.mode).toBe('auto');
+    expect(file.modeOverride).toBeUndefined();
+    expect(file.plan).toEqual({ kind: 'sandboxed', backend: 'fake' });
+  });
 });

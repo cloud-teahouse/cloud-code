@@ -161,6 +161,7 @@ export const panels = {
   'panels.sandbox.escalation.always': 'always — retry unsandboxed without asking',
   'panels.sandbox.config.source': 'Source: [sandbox] section of config.toml',
   'panels.sandbox.config.defaults': 'Source: built-in defaults (no [sandbox] section in config.toml)',
+  'panels.sandbox.config.override': 'Effective now: session override (/sandbox {mode}) — config.toml applies after restart',
 
   // ── /goal panel ──
   'panels.goal.set': 'Goal set',

@@ -198,6 +198,7 @@ export function buildRpcMethods(agent: Agent): PromisableMethods<AgentAPI> {
     getSandboxStatus: () =>
       buildSandboxStatus({
         sandboxConfig: agent.kimiConfig?.sandbox,
+        modeOverride: agent.config.sandboxMode,
         kaos: agent.kaos,
         homedir: agent.homedir,
         brandHomeDir: agent.brandHomeDir,
