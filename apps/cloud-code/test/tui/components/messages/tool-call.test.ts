@@ -179,6 +179,10 @@ describe('ToolCallComponent', () => {
       chalk.level = 3;
       try {
         vi.useFakeTimers();
+        // Pin the wall clock so frame 10 lands mid-wave (title is 19 chars,
+        // cycle 27); an unpinned start time can park the wavefront outside
+        // the title for two adjacent frames and the line stops changing.
+        vi.setSystemTime(0);
         const component = new ToolCallComponent(
           { id: 'call_shimmer', name: 'Read', args: { path: 'foo.ts' } },
           undefined,
