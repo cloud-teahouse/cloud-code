@@ -7,8 +7,9 @@
  *     (1 source = N providers from the same api.json fetch)
  *   - any other configured provider (1 source = 1 provider)
  *   - a synthetic final `[ Add New Platform ]` action row
- * Cloud Code OAuth (`DEFAULT_OAUTH_PROVIDER_NAME`) is intentionally hidden
- * — that account is managed through `/login` / `/logout`, not here.
+ * OAuth service providers (`managed:*` — Cloud Code OAuth, ChatGPT Codex) are
+ * intentionally hidden — those accounts are managed through `/login` /
+ * `/logout`, not here.
  *
  * Keyboard:
  *   - ↑ / ↓             move highlight
@@ -59,7 +60,6 @@ import {
   type MouseEvent,
 } from '@cloud-code/pi-tui';
 
-import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { t } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
@@ -160,7 +160,7 @@ function sourceUrlLabel(url: string): string {
 /**
  * Group providers into source rows + append the synthetic add-row.
  * The grouping rules:
- *   - `DEFAULT_OAUTH_PROVIDER_NAME` → skipped (managed via /logout).
+ *   - `managed:*` (OAuth service providers) → skipped (managed via /login).
  *   - Open Platform id (`isOpenPlatformId(id)`) → 1 source per provider,
  *     label = `OpenPlatformDefinition.name`.
  *   - `cfg.source.kind === 'apiJson'` → one source per `{url, apiKey}`
@@ -175,7 +175,7 @@ function buildRows(opts: ProviderManagerOptions): readonly Row[] {
   const customRegistryIndex = new Map<string, number>();
 
   for (const [id, cfg] of Object.entries(opts.providers)) {
-    if (id === DEFAULT_OAUTH_PROVIDER_NAME) continue;
+    if (id.startsWith('managed:')) continue;
 
     const isActive = id === opts.activeProviderId;
 

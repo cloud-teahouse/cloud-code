@@ -195,10 +195,11 @@ describe('ProviderManagerComponent', () => {
     expect(text).toContain('acme/a, acme/b, acme/c +2 more');
   });
 
-  it('badges custom (standalone) providers but not managed sources', () => {
+  it('badges custom (standalone) providers and hides OAuth service providers', () => {
     const component = makeComponent({
       providers: {
         acme: { baseUrl: 'https://acme.test' },
+        'managed:kimi-code': { type: 'kimi' },
         'managed:chatgpt-codex': { type: 'openai_responses' },
         registry: {
           baseUrl: 'https://reg.test/v1',
@@ -209,10 +210,10 @@ describe('ProviderManagerComponent', () => {
     const text = rendered(component);
     const acmeLine = text.split('\n').find((line) => line.includes('acme'));
     expect(acmeLine).toContain('[custom]');
-    // The managed provider gets a row (label = id) but no badge.
-    const managedLine = text.split('\n').find((line) => line.includes('managed:chatgpt-codex'));
-    expect(managedLine).toBeDefined();
-    expect(managedLine).not.toContain('[custom]');
+    // OAuth service providers (managed:*) are accounts owned by /login —
+    // they never appear in the manager list at all.
+    expect(text).not.toContain('managed:kimi-code');
+    expect(text).not.toContain('managed:chatgpt-codex');
     // The registry source row (labeled by URL) carries no badge either.
     const registryLine = text.split('\n').find((line) => line.includes('reg.test'));
     expect(registryLine).toBeDefined();
