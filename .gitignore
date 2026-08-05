@@ -50,3 +50,4 @@ handover.md
 .npm-cache/
 .pnpm-store/
 .dev-home/
+.public-export/
