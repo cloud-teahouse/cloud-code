@@ -1178,7 +1178,11 @@ function coordinatorWorkerSummary(info: AgentBackgroundTaskInfo): string {
     case 'completed':
       return `${label} completed`;
     case 'killed':
-      return `${label} was stopped`;
+      // The reason matters to the coordinator: a user interrupt (e.g. from
+      // the /workflows panel) must not read as a failure worth retrying.
+      return info.stopReason !== undefined
+        ? `${label} was stopped: ${info.stopReason}`
+        : `${label} was stopped`;
     case 'timed_out':
       return `${label} failed: timed out`;
     case 'lost':
