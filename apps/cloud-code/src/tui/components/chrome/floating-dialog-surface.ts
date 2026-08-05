@@ -18,6 +18,11 @@ import type { Component, Focusable, MouseEvent } from '@cloud-code/pi-tui';
 import { EditorSlotContainer } from './gutter-container';
 
 export class FloatingDialogSurface extends EditorSlotContainer implements Focusable {
+  /** Transient status/notice row rendered inside the overlay, above the
+   * panel — the slot's notice row is covered by the overlay, so without this
+   * a notice fired while the dialog is up would be invisible until close. */
+  private noticeChild: Component | undefined;
+
   constructor(
     leftPad: number,
     rightPad: number,
@@ -26,6 +31,23 @@ export class FloatingDialogSurface extends EditorSlotContainer implements Focusa
     super(leftPad, rightPad);
     this.topSeparator = true;
     this.addChild(panel);
+  }
+
+  setNotice(component: Component | undefined): void {
+    if (this.noticeChild === component) return;
+    this.noticeChild = component;
+    this.clear();
+    if (component !== undefined) this.addChild(component);
+    this.addChild(this.panel);
+    this.invalidate();
+  }
+
+  /** Detach the current notice without replacing it (the host re-homes it to
+   * the slot's notice row when the dialog closes). */
+  takeNotice(): Component | undefined {
+    const notice = this.noticeChild;
+    if (notice !== undefined) this.setNotice(undefined);
+    return notice;
   }
 
   get focused(): boolean {

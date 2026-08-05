@@ -222,4 +222,30 @@ describe('notice routing', () => {
     expect(renderNotice(driver)).toContain('ephemeral');
     expect(driver.state.transcriptContainer.render(80).join('\n')).toContain('recorded');
   });
+
+  it('routes notices into the floating dialog surface and re-homes them on close', () => {
+    const driver = makeDriver(); // fullscreen on by default
+    mountEditorAndFooter(driver);
+    const panel = {
+      focused: false,
+      render: () => ['panel'],
+      invalidate: () => {},
+      handleInput: () => {},
+    };
+    const handle = driver.mountEditorReplacement(panel as never);
+    const surface = (): { render: (w: number) => string[] } =>
+      (driver as unknown as { editorSlotOwner: { overlay: { surface: { render: (w: number) => string[] } } } })
+        .editorSlotOwner.overlay.surface;
+
+    driver.showStatus('managed-guard');
+    // The dialog's overlay covers the slot's notice row — the notice renders
+    // inside the dialog surface instead.
+    expect(driver.state.noticeContainer.children).toHaveLength(0);
+    expect(surface().render(80).join('\n')).toContain('managed-guard');
+
+    // Closing the dialog re-homes the notice to the slot for the rest of its
+    // display window.
+    driver.restoreEditor(handle);
+    expect(renderNotice(driver)).toContain('managed-guard');
+  });
 });

@@ -2683,8 +2683,15 @@ export class CloudCodeTUI {
     if (options?.transcript === true) {
       this.state.transcriptContainer.addChild(component);
     } else {
-      this.state.noticeContainer.clear();
-      this.state.noticeContainer.addChild(component);
+      const overlay = this.editorSlotOwner?.overlay;
+      if (overlay !== undefined) {
+        // A floating dialog covers the slot's notice row — show the notice
+        // inside the dialog instead of letting it render invisibly.
+        overlay.surface.setNotice(component);
+      } else {
+        this.state.noticeContainer.clear();
+        this.state.noticeContainer.addChild(component);
+      }
       this.armNoticeClearTimer(component);
     }
     this.state.ui.requestRender();
@@ -2699,6 +2706,12 @@ export class CloudCodeTUI {
       this.noticeClearTimer = undefined;
       // Don't clobber a notice that replaced (or was cleared independently
       // of) the one this timer was armed for.
+      const overlay = this.editorSlotOwner?.overlay;
+      if (overlay !== undefined) {
+        overlay.surface.takeNotice();
+        this.state.ui.requestRender();
+        return;
+      }
       if (!this.state.noticeContainer.children.includes(component)) return;
       this.state.noticeContainer.clear();
       this.state.ui.requestRender();
@@ -3239,14 +3252,22 @@ export class CloudCodeTUI {
       // Take ownership first so the preempted panel's own restoreEditor call
       // (inside onPreempt) mismatches and no-ops instead of restoring mid-swap.
       this.editorSlotOwner = { handle, kind, onPreempt: options.onPreempt };
+      // A live notice rides along to the replacement surface (or back to the
+      // slot's notice row when the next panel mounts in the slot).
+      const carriedNotice = owner.overlay?.surface.takeNotice();
       owner.overlay?.handle.hide();
       owner.onPreempt?.();
+      if (carriedNotice !== undefined) {
+        this.pendingCarriedNotice = carriedNotice;
+      }
     } else {
       this.editorSlotOwner = { handle, kind, onPreempt: options.onPreempt };
     }
     this.mountIntoEditorSlot(panel, kind);
     return handle;
   }
+
+  private pendingCarriedNotice: Component | undefined;
 
   private mountIntoEditorSlot(panel: Component & Focusable, kind: EditorSlotKind): void {
     // A takeover (tasks/workflows browser, approval preview) swapped the real
@@ -3273,6 +3294,9 @@ export class CloudCodeTUI {
       if (this.editorSlotOwner !== null) {
         this.editorSlotOwner.overlay = { handle: overlayHandle, surface };
       }
+      const carried = this.pendingCarriedNotice;
+      this.pendingCarriedNotice = undefined;
+      if (carried !== undefined) surface.setNotice(carried);
       return;
     }
     this.state.editorContainer.clear();
@@ -3280,6 +3304,12 @@ export class CloudCodeTUI {
     // transcript above (kept out of the child list: children[0] === panel).
     this.state.editorContainer.topSeparator = true;
     this.state.editorContainer.addChild(panel);
+    const carried = this.pendingCarriedNotice;
+    this.pendingCarriedNotice = undefined;
+    if (carried !== undefined) {
+      this.state.noticeContainer.clear();
+      this.state.noticeContainer.addChild(carried);
+    }
     this.state.ui.setFocus(panel);
     this.state.ui.requestRender();
   }
@@ -3338,7 +3368,14 @@ export class CloudCodeTUI {
       return;
     }
     if (previousOwner?.overlay !== undefined) {
-      // A floating dialog closed: the editor never left the slot, so there is
+      // A floating dialog closed: re-home a live notice to the slot's notice
+      // row so it stays visible for the rest of its display window.
+      const liveNotice = previousOwner.overlay.surface.takeNotice();
+      if (liveNotice !== undefined) {
+        this.state.noticeContainer.clear();
+        this.state.noticeContainer.addChild(liveNotice);
+      }
+      // The editor never left the slot, so there is
       // no layout to restore and nothing to repaint — just hand the keyboard
       // back (while a takeover holds it, leave focus where it is).
       if (!this.isAnyTakeoverActive()) {
