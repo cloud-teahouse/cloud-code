@@ -88,6 +88,17 @@ async function solidPng(width: number, height: number): Promise<Uint8Array> {
   );
 }
 
+/**
+ * The 3600×1800 fixture costs a multi-second Jimp encode; it is identical for
+ * every test and consumers only read it, so encode once per worker process.
+ * (Full-suite CI runners were timing out on the repeated encodes.)
+ */
+let bigPngPromise: Promise<Uint8Array> | undefined;
+function solidBigPng(): Promise<Uint8Array> {
+  bigPngPromise ??= solidPng(3600, 1800);
+  return bigPngPromise;
+}
+
 async function solidJpeg(width: number, height: number): Promise<Uint8Array> {
   return new Uint8Array(
     await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/jpeg', { quality: 90 }),
@@ -131,7 +142,7 @@ describe('clipboard image paste compression', () => {
   });
 
   it('downsamples an oversized pasted image before storing it', async () => {
-    const big = await solidPng(3600, 1800);
+    const big = await solidBigPng();
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness();
@@ -154,7 +165,7 @@ describe('clipboard image paste compression', () => {
   });
 
   it('honors the harness [image] max_edge_px when pasting', async () => {
-    const big = await solidPng(3600, 1800);
+    const big = await solidBigPng();
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness({
@@ -173,7 +184,7 @@ describe('clipboard image paste compression', () => {
   });
 
   it('records and persists the pre-compression original for an oversized paste', async () => {
-    const big = await solidPng(3600, 1800);
+    const big = await solidBigPng();
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness();
@@ -196,7 +207,7 @@ describe('clipboard image paste compression', () => {
 
   it('persists the original into the session media-originals dir when the session is known', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-paste-session-'));
-    const big = await solidPng(3600, 1800);
+    const big = await solidBigPng();
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness({ sessionDir });

@@ -157,11 +157,16 @@ describe.skipIf(!POSIX)('LocalKaos.ptyExec', () => {
     expect(await proc.wait()).toBe(0);
   });
 
-  it('kill() terminates the process and wait() settles', { timeout: 30_000 }, async () => {
+  it('kill() terminates the process and wait() settles', { timeout: 30_000, retry: 1 }, async () => {
     // bash forks a grandchild sleep; the group kill (kill(-pid)) reaps the
     // whole group. Note: node-pty reports WEXITSTATUS on signal death, which
     // is 0 for a SIGKILLed leader — so assert that the process dies (wait
     // resolves, exitCode set), not a specific code.
+    //
+    // The assertions are deterministic once the pty exists; the flakiness is
+    // the CI runner's pty spawn stalling under full-suite load (not locally
+    // reproducible even at 8× parallel vitest). One retry absorbs a genuine
+    // infrastructure stall instead of failing the run on it.
     const { proc } = await spawnPty(['/bin/bash', '-c', 'sleep 300 & sleep 300']);
     await proc.kill('SIGKILL');
     await proc.wait();
