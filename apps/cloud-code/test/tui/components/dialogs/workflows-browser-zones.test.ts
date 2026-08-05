@@ -16,6 +16,7 @@ function agent(overrides: Partial<WorkflowAgentNode> = {}): WorkflowAgentNode {
     swarmIndex: undefined,
     runInBackground: true,
     description: undefined,
+    prompt: undefined,
     status: 'running',
     statusDetail: undefined,
     lastEventAt: now,
@@ -96,14 +97,15 @@ const wheel = (button: 64 | 65, row: number, col: number): MouseEvent => ({
 });
 
 describe('WorkflowsBrowserApp run-dashboard hit zones', () => {
-  it('declares team, done-group, agent rows, and pane routing zones', () => {
+  it('declares team, done-group, and agent row zones (the tree owns the list view)', () => {
     const { app } = makeBrowser();
     const ids = [...app.hitZones()].map((zone) => zone.id);
     expect(ids).toContain('toggle:team:core');
     expect(ids).toContain('toggle:done:core');
-    expect(ids).toContain('pane:tree');
-    expect(ids).toContain('pane:detail');
     expect(ids.some((id) => id === 'row:1')).toBe(true);
+    // The split preview pane is gone — the tree is full-width in list mode.
+    expect(ids).not.toContain('pane:tree');
+    expect(ids).not.toContain('pane:detail');
   });
 
   it('folds and expands a team through its arrow zone', () => {
@@ -124,7 +126,7 @@ describe('WorkflowsBrowserApp run-dashboard hit zones', () => {
     app.onHitZone(workerRow!.id, press(workerRow!.row));
     expect(onSelect).toHaveBeenCalledWith('worker');
     app.onHitZone(workerRow!.id, press(workerRow!.row));
-    expect([...app.hitZones()].some((zone) => zone.id === 'pane:tree')).toBe(false);
+    // The conversation detail takes over the whole body.
     expect(app.render(90).join('\n')).toContain('Approve release');
   });
 
@@ -135,7 +137,7 @@ describe('WorkflowsBrowserApp run-dashboard hit zones', () => {
     expect(app.setHoveredZone(null)).not.toBe(false);
   });
 
-  it('routes wheel to roster selection and detail preview', () => {
+  it('routes the wheel to the roster selection in list mode', () => {
     const { app, onSelect } = makeBrowser({
       agents: [
         agent(),
@@ -146,6 +148,7 @@ describe('WorkflowsBrowserApp run-dashboard hit zones', () => {
     app.handleMouse(wheel(65, 4, 5));
     expect(onSelect).toHaveBeenCalledWith('worker');
     app.handleMouse(wheel(64, 4, 70));
+    expect(onSelect).toHaveBeenLastCalledWith('main');
     expect(app.render(90).length).toBe(terminal.rows);
   });
 });

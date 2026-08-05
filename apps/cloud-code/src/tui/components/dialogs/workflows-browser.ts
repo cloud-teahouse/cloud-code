@@ -27,6 +27,7 @@ import { wrapHint } from '#/tui/utils/hint';
 import type { WorkflowAgentNode } from '#/tui/controllers/workflows-tracker';
 import {
   asWorkflowAgentInfo,
+  displayName,
   isWorkflowAgentAttention,
   isWorkflowAgentTerminal,
   type WorkflowAgentInfo,
@@ -38,14 +39,11 @@ import {
   type WorkflowsRosterRow,
   WorkflowsRoster,
 } from './workflows-roster';
-import { WorkflowsAgentDetail } from './workflows-agent-detail';
+import { renderAgentStatusBars, WorkflowsAgentDetail } from './workflows-agent-detail';
 import { DialogFrame } from './frame/dialog-frame';
 
 const MIN_WIDTH = 48;
 const MIN_HEIGHT = 10;
-const ROSTER_MIN_WIDTH = 34;
-const ROSTER_MAX_WIDTH = 56;
-const ROSTER_RATIO = 0.38;
 const SCROLLBAR_ZONE = 'scrollbar';
 
 type WorkflowAction = 'stop' | 'output' | 'foreground';
@@ -123,12 +121,9 @@ export class WorkflowsBrowserApp extends Container {
   private rows: WorkflowsRosterRow[] = [];
   private cursorRowIndex = 0;
   private mode: 'list' | 'detail' = 'list';
-  private thinkingExpanded = false;
   private rosterScroll = 0;
   private detailScroll = 0;
   private detailFollow = true;
-  private previewScroll = 0;
-  private previewFollow = true;
   private readonly scrollbar = new Scrollbar();
   private readonly hover = new HoverState<number>();
   private frameZones: HitZone[] = [];
@@ -159,7 +154,6 @@ export class WorkflowsBrowserApp extends Container {
     });
     this.detail = new WorkflowsAgentDetail({
       agent: this.selectedAgent(),
-      thinkingExpanded: this.thinkingExpanded,
     });
     this.syncRows();
   }
@@ -175,7 +169,7 @@ export class WorkflowsBrowserApp extends Container {
       collapsedTeams: new Set(this.collapsedTeams),
       collapsedDoneTeams: new Set(this.collapsedDoneTeams),
     });
-    this.detail.setProps({ agent: this.selectedAgent(), thinkingExpanded: this.thinkingExpanded });
+    this.detail.setProps({ agent: this.selectedAgent() });
     this.settleScrolls();
   }
 
@@ -213,14 +207,28 @@ export class WorkflowsBrowserApp extends Container {
       this.runAction('foreground');
       return;
     }
-    if (key === 't' || key === 'T') {
-      this.thinkingExpanded = !this.thinkingExpanded;
-      this.detail.setProps({ agent: this.selectedAgent(), thinkingExpanded: this.thinkingExpanded });
-      return;
-    }
 
     if (this.mode === 'detail') {
-      if (matchesKey(data, Key.escape) || matchesKey(data, Key.left) || key === 'h' || key === 'q' || key === 'Q' || matchesKey(data, Key.tab)) {
+      if (matchesKey(data, Key.escape)) {
+        // Esc on a running agent asks to interrupt it (inline [y/N]); on a
+        // finished agent it just goes back to the tree.
+        const agent = this.selectedAgent();
+        if (agent !== undefined && activeAgent(agent) && agent.taskId !== undefined) {
+          this.armAction('stop');
+          return;
+        }
+        this.mode = 'list';
+        this.detailScroll = 0;
+        this.detailFollow = true;
+        return;
+      }
+      if (matchesKey(data, Key.left) || key === 'h') {
+        this.mode = 'list';
+        this.detailScroll = 0;
+        this.detailFollow = true;
+        return;
+      }
+      if (key === 'q' || key === 'Q') {
         this.mode = 'list';
         this.detailScroll = 0;
         this.detailFollow = true;
@@ -327,12 +335,6 @@ export class WorkflowsBrowserApp extends Container {
       this.scrollDetail(delta * 3);
       return;
     }
-    const zone = hitZoneAt(zones, event.row - 1, event.col, 'action');
-    if (zone === null) return false;
-    if (zone.id === 'pane:detail' || zone.id === SCROLLBAR_ZONE) {
-      this.scrollPreview(delta * 3);
-      return;
-    }
     this.moveCursor(delta);
   }
 
@@ -400,31 +402,22 @@ export class WorkflowsBrowserApp extends Container {
     const bodyHeight = Math.max(0, rows - 1 - footerLines.length);
     this.lastBodyHeight = bodyHeight;
 
-    let body: string[];
     if (this.mode === 'detail') {
-      const frame = this.renderDetailFrame(width, bodyHeight);
-      body = frame;
+      const body = this.renderDetailFrame(width, bodyHeight);
       const lines = [header, ...body, ...footerLines];
       const scrollbarZone = this.applyScrollbar(lines, width);
       this.frameZones = scrollbarZone === null ? [] : [scrollbarZone];
       return lines.map((line) => fitExactly(line, width));
     }
 
-    const rosterWidth = Math.max(ROSTER_MIN_WIDTH, Math.min(ROSTER_MAX_WIDTH, Math.floor(width * ROSTER_RATIO)));
-    const detailWidth = Math.max(1, width - rosterWidth);
-    const rosterFrame = this.renderRosterFrame(rosterWidth, bodyHeight);
-    const detailFrame = this.renderDetailPreviewFrame(detailWidth, bodyHeight);
-    body = [];
-    for (let row = 0; row < bodyHeight; row++) {
-      body.push(fitExactly((rosterFrame[row] ?? '') + (detailFrame[row] ?? ''), width));
-    }
+    // The overview is a full-width tree: team headers with collapsible groups
+    // and agent rows connected by ├─/└─ (children nest under their parent).
+    const body = this.renderRosterFrame(width, bodyHeight);
     const lines = [header, ...body, ...footerLines];
     const scrollbarZone = this.applyScrollbar(lines, width);
     this.frameZones = [
-      ...(scrollbarZone === null ? [ ] : [scrollbarZone]),
-      ...this.rosterZones(rosterWidth, bodyHeight),
-      { id: 'pane:tree', row: 0, col: 1, width: rosterWidth, height: rows, semantics: { hover: false } },
-      { id: 'pane:detail', row: 0, col: rosterWidth + 1, width: detailWidth, height: rows, semantics: { hover: false } },
+      ...(scrollbarZone === null ? [] : [scrollbarZone]),
+      ...this.rosterZones(width, bodyHeight),
     ];
     return lines.map((line) => fitExactly(line, width));
   }
@@ -465,15 +458,13 @@ export class WorkflowsBrowserApp extends Container {
     if (this.selectedAgentId === agentId) return;
     this.selectedAgentId = agentId;
     this.props.onSelect(agentId);
-    this.previewScroll = 0;
-    this.previewFollow = true;
     this.roster.setProps({
       agents: this.props.agents,
       selectedAgentId: this.selectedAgentId,
       collapsedTeams: new Set(this.collapsedTeams),
       collapsedDoneTeams: new Set(this.collapsedDoneTeams),
     });
-    this.detail.setProps({ agent: this.selectedAgent(), thinkingExpanded: this.thinkingExpanded });
+    this.detail.setProps({ agent: this.selectedAgent() });
     this.syncRows();
   }
 
@@ -569,20 +560,10 @@ export class WorkflowsBrowserApp extends Container {
     return this.renderFrame(t('workflows.roster.title'), visible, width, height);
   }
 
-  private renderDetailPreviewFrame(width: number, height: number): string[] {
-    const innerHeight = Math.max(0, height - 2);
-    const contentWidth = Math.max(1, width - 2);
-    const content = this.detail.render(contentWidth, this.detail.contentRows(contentWidth));
-    const settled = followScroll({ scroll: this.previewScroll, follow: this.previewFollow }, content.length, innerHeight);
-    this.previewScroll = settled.scroll;
-    this.previewFollow = settled.follow;
-    const visible = content.slice(settled.scroll, settled.scroll + innerHeight);
-    while (visible.length < innerHeight) visible.push('');
-    return this.renderFrame(t('workflows.detail.title'), visible, width, height);
-  }
-
   private renderDetailFrame(width: number, height: number): string[] {
-    const innerHeight = Math.max(0, height - 2);
+    const agent = this.selectedAgent();
+    const statusRows = agent === undefined ? [] : renderAgentStatusBars(agent, width - 2);
+    const innerHeight = Math.max(0, height - 2 - statusRows.length);
     const contentWidth = Math.max(1, width - 2);
     const content = this.detail.render(contentWidth, this.detail.contentRows(contentWidth));
     const settled = followScroll({ scroll: this.detailScroll, follow: this.detailFollow }, content.length, innerHeight);
@@ -590,7 +571,12 @@ export class WorkflowsBrowserApp extends Container {
     this.detailFollow = settled.follow;
     const visible = content.slice(settled.scroll, settled.scroll + innerHeight);
     while (visible.length < innerHeight) visible.push('');
-    const title = t('workflows.detail.title');
+    // The model/context bars pin to the frame's bottom, above the border —
+    // they show the selected agent, not the main session.
+    visible.push(...statusRows);
+    const title = agent === undefined
+      ? t('workflows.detail.title')
+      : t('workflows.detail.conversationTitle', { name: displayName(asWorkflowAgentInfo(agent)) });
     return this.renderFrame(title, visible, width, height);
   }
 
@@ -641,48 +627,35 @@ export class WorkflowsBrowserApp extends Container {
     this.detailFollow = settled.follow;
   }
 
-  private scrollPreview(delta: number): void {
-    const content = this.detail.contentRows(Math.max(1, this.lastRenderWidth - this.rosterWidthFor(this.lastRenderWidth) - 2));
-    const viewport = Math.max(1, this.lastBodyHeight - 2);
-    const settled = followScroll(
-      { scroll: followScroll({ scroll: this.previewScroll, follow: this.previewFollow }, content, viewport).scroll + delta, follow: false },
-      content,
-      viewport,
-    );
-    this.previewScroll = settled.scroll;
-    this.previewFollow = settled.follow;
-  }
-
-  private rosterWidthFor(width: number): number {
-    return Math.max(ROSTER_MIN_WIDTH, Math.min(ROSTER_MAX_WIDTH, Math.floor(width * ROSTER_RATIO)));
-  }
-
   private scrollbarTrack(): { top: number; height: number } {
     return { top: 2, height: Math.max(0, this.lastBodyHeight - 2) };
   }
 
   private scrollbarMetrics(): ScrollbarMetrics {
     const viewport = Math.max(1, this.lastBodyHeight - 2);
-    const content = this.mode === 'detail'
-      ? this.detail.contentRows(Math.max(1, this.lastRenderWidth - 2))
-      : this.detail.contentRows(Math.max(1, this.lastRenderWidth - this.rosterWidthFor(this.lastRenderWidth) - 2));
-    const state = this.mode === 'detail'
-      ? { scroll: this.detailScroll, follow: this.detailFollow }
-      : { scroll: this.previewScroll, follow: this.previewFollow };
-    const settled = followScroll(state, content, viewport);
-    return { scrollTop: settled.scroll, viewport, content };
+    if (this.mode === 'detail') {
+      const content = this.detail.contentRows(Math.max(1, this.lastRenderWidth - 2));
+      const settled = followScroll({ scroll: this.detailScroll, follow: this.detailFollow }, content, viewport);
+      return { scrollTop: settled.scroll, viewport, content };
+    }
+    // List mode: the scrollbar tracks the roster tree.
+    return { scrollTop: this.rosterScroll, viewport, content: this.rows.length };
   }
 
   private scrollPaneTo(target: number): void {
     const metrics = this.scrollbarMetrics();
-    const settled = followScroll({ scroll: target, follow: false }, metrics.content, metrics.viewport);
     if (this.mode === 'detail') {
+      const settled = followScroll({ scroll: target, follow: false }, metrics.content, metrics.viewport);
       this.detailScroll = settled.scroll;
       this.detailFollow = settled.follow;
-    } else {
-      this.previewScroll = settled.scroll;
-      this.previewFollow = settled.follow;
+      return;
     }
+    // List mode: jump the tree window and move the selection into it (the
+    // roster renderer keeps the selected row visible, so a bare window jump
+    // would snap back otherwise).
+    this.rosterScroll = Math.max(0, Math.min(target, Math.max(0, this.rows.length - metrics.viewport)));
+    const row = this.rows[this.rosterScroll];
+    if (row?.kind === 'agent') this.selectAgent(row.agent.agentId);
   }
 
   private applyScrollbar(lines: string[], width: number): HitZone | null {
@@ -706,13 +679,19 @@ export class WorkflowsBrowserApp extends Container {
       ...(this.props.onForeground !== undefined && selected?.taskId !== undefined && this.canForeground(selected)
         ? [`${key('Alt+F')} ${dim(t('workflows.hint.foreground'))}`]
         : []),
-      `${key('t')} ${dim(t('workflows.hint.thinking'))}`,
     ];
     if (this.pendingStopTaskId !== undefined) {
       actionHints.unshift(currentTheme.fg('warning', t('workflows.intervention.confirmStop')));
     }
+    const detailInterruptible =
+      selected !== undefined && activeAgent(selected) && selected.taskId !== undefined;
     const nav = this.mode === 'detail'
-      ? [`${key('←/Esc')} ${dim(t('workflows.hint.back'))}`, `${key('↑↓')} ${dim(t('workflows.hint.scroll'))}`, `${key('q')} ${dim(t('workflows.hint.close'))}`]
+      ? [
+          `${key('←')} ${dim(t('workflows.hint.back'))}`,
+          ...(detailInterruptible ? [`${key('Esc')} ${dim(t('workflows.hint.interrupt'))}`] : []),
+          `${key('↑↓')} ${dim(t('workflows.hint.scroll'))}`,
+          `${key('q')} ${dim(t('workflows.hint.close'))}`,
+        ]
       : [`${key('↑↓')} ${dim(t('workflows.hint.select'))}`, `${key('Enter/→')} ${dim(t('workflows.hint.detail'))}`, `${key('q/Esc')} ${dim(t('workflows.hint.close'))}`];
     return wrapHint([...nav, ...actionHints], width, '  ').map((line) => fitExactly(line, width));
   }

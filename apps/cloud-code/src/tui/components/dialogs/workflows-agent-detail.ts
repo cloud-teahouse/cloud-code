@@ -13,19 +13,19 @@ import {
   type WorkflowAgentInfo,
 } from './workflows-agent-content';
 import { workflowNodeTotalTokens } from '#/tui/controllers/workflows-tracker';
-import { WorkflowsActivity } from './workflows-activity';
 
 export interface WorkflowsAgentDetailProps {
   readonly agent: WorkflowAgentInfo | undefined;
-  readonly thinkingExpanded: boolean;
 }
 
+/**
+ * The detail view is a read-only conversation: the parent's prompt opens as
+ * the first user message, then the agent's reply stream (text / thinking /
+ * tool cards) in the main transcript's visual language. Model and context
+ * bars are pinned separately by the host frame (renderAgentStatusBars).
+ */
 export class WorkflowsAgentDetail {
   private props: WorkflowsAgentDetailProps;
-  private readonly activity = new WorkflowsActivity({
-    agent: undefined as unknown as WorkflowAgentInfo,
-    expanded: false,
-  });
 
   constructor(props: WorkflowsAgentDetailProps) {
     this.props = props;
@@ -70,51 +70,52 @@ export class WorkflowsAgentDetail {
         currentTheme.fg('textDim', ` · ${formatDuration(info)}`),
     );
 
-    const task = info.taskSubject ?? info.description ?? t('workflows.detail.noTask');
-    lines.push(
-      currentTheme.fg('textDim', t('workflows.detail.taskLabel')) +
-        currentTheme.fg('text', ` ${truncateToWidth(singleLine(task), Math.max(1, innerWidth - 7), '…')}`),
-    );
-
-    const activity = info.currentActivity;
-    const now = activity?.label ?? t('workflows.activity.idle');
-    lines.push(
-      currentTheme.fg('textDim', t('workflows.detail.nowLabel')) +
-        currentTheme.fg('text', ` ${truncateToWidth(singleLine(now), Math.max(1, innerWidth - 6), '…')}`),
-    );
-
-    const lastOutput = info.lastOutput ?? t('workflows.detail.noOutput');
-    lines.push(
-      currentTheme.fg('textDim', t('workflows.detail.lastOutputLabel')) +
-        currentTheme.fg('text', ` ${truncateToWidth(singleLine(lastOutput), Math.max(1, innerWidth - 13), '…')}`),
-    );
-
-    const tokens = workflowNodeTotalTokens(info);
-    const context = info.contextTokens === undefined ? t('workflows.detail.notAvailable') : formatTokenCount(info.contextTokens);
-    const stats = [
-      t('workflows.detail.statStep', { step: info.step }),
-      t('workflows.detail.statTools', { count: info.toolCallCount }),
-      t('workflows.detail.statTokens', { tokens: formatTokenCount(tokens) }),
-      t('workflows.detail.statContext', { tokens: context }),
-    ].join(' · ');
-    lines.push(currentTheme.fg('textMuted', stats));
-
-    lines.push('');
-    lines.push(currentTheme.boldFg('primary', t('workflows.activity.title')));
-    this.activity.setProps({ agent: info, expanded: this.props.thinkingExpanded });
-    lines.push(...this.activity.render(Math.max(1, innerWidth)));
-
-    if (this.props.thinkingExpanded) {
+    // The parent's prompt opens the conversation as the "user message".
+    if (info.prompt !== undefined && info.prompt.trim().length > 0) {
       lines.push('');
-      lines.push(currentTheme.boldFg('primary', t('workflows.detail.chainTitle')));
-      const chainLines: string[] = [];
-      pushActivityLines(chainLines, info, Math.max(1, innerWidth), true);
-      lines.push(...chainLines);
-      if (info.thinkingTruncated || info.activityTruncated || info.toolCallCount > info.tools.length) {
-        lines.push(currentTheme.fg('textMuted', t('workflows.detail.truncatedHint')));
+      lines.push(currentTheme.fg('textDim', t('workflows.detail.promptLabel')));
+      for (const rawLine of info.prompt.trim().split('\n')) {
+        lines.push(
+          currentTheme.fg('text', truncateToWidth(`❯ ${rawLine}`, innerWidth, '…')),
+        );
+      }
+    } else {
+      const task = info.taskSubject ?? info.description;
+      if (task !== undefined && task.length > 0) {
+        lines.push('');
+        lines.push(currentTheme.fg('textDim', t('workflows.detail.promptLabel')));
+        lines.push(currentTheme.fg('text', truncateToWidth(`❯ ${singleLine(task)}`, innerWidth, '…')));
       }
     }
+
+    // The approval note stays a pointer to the main UI: approving from here
+    // would split the permission surface across two interaction paths.
+    if (info.currentActivity?.kind === 'waiting-approval') {
+      lines.push('');
+      lines.push(
+        currentTheme.fg(
+          'warning',
+          truncateToWidth(t('workflows.detail.approvalReadonly'), innerWidth, '…'),
+        ),
+      );
+    }
+    const activity = info.currentActivity;
+    if (activity !== undefined && activity.label.length > 0) {
+      lines.push(
+        currentTheme.fg('textDim', t('workflows.detail.nowLabel')) +
+          currentTheme.fg('text', ` ${truncateToWidth(singleLine(activity.label), Math.max(1, innerWidth - 6), '…')}`),
+      );
+    }
+
+    lines.push('');
+    const stream: string[] = [];
+    pushActivityLines(stream, info, innerWidth, true);
+    lines.push(...stream);
+    if (info.thinkingTruncated || info.activityTruncated || info.toolCallCount > info.tools.length) {
+      lines.push(currentTheme.fg('textMuted', t('workflows.detail.truncatedHint')));
+    }
     if (info.status === 'done' && info.resultSummary !== undefined && info.resultSummary.length > 0) {
+      lines.push('');
       lines.push(currentTheme.fg('success', t('workflows.detail.result', { summary: singleLine(info.resultSummary) })));
     }
     if (
@@ -122,8 +123,38 @@ export class WorkflowsAgentDetail {
       info.statusDetail !== undefined &&
       info.statusDetail.length > 0
     ) {
+      lines.push('');
       lines.push(currentTheme.fg('error', t('workflows.detail.error', { message: singleLine(info.statusDetail) })));
     }
     return lines;
   }
+}
+
+/**
+ * The two bottom bars of the detail view — model and context of the SELECTED
+ * agent (not the main session), mirroring the main status line's vocabulary.
+ */
+export function renderAgentStatusBars(agent: WorkflowAgentInfo, width: number): string[] {
+  const info = asWorkflowAgentInfo(agent);
+  const innerWidth = Math.max(1, width);
+
+  const model = info.model ?? t('workflows.detail.notAvailable');
+  const modelLine = currentTheme.fg('textDim', t('workflows.detail.statusModel')) +
+    currentTheme.fg('text', ` ${truncateToWidth(model, Math.max(1, innerWidth - 8), '…')}`);
+
+  const tokens = workflowNodeTotalTokens(info);
+  const context = info.contextTokens;
+  const contextText =
+    context !== undefined && context > 0
+      ? `${formatTokenCount(context)}`
+      : tokens > 0
+        ? formatTokenCount(tokens)
+        : t('workflows.detail.notAvailable');
+  const contextLine = currentTheme.fg('textDim', t('workflows.detail.statusContext')) +
+    currentTheme.fg('text', ` ${contextText}`);
+
+  return [
+    truncateToWidth(modelLine, innerWidth, '…'),
+    truncateToWidth(contextLine, innerWidth, '…'),
+  ];
 }

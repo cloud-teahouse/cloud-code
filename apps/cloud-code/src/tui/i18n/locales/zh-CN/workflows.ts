@@ -20,6 +20,7 @@ export const workflows: Record<keyof typeof enDomain, string> = {
   'workflows.hint.detail': '详情',
   'workflows.hint.back': '返回',
   'workflows.hint.scroll': '滚动',
+  'workflows.hint.interrupt': '打断',
   'workflows.hint.page': '翻页',
   'workflows.hint.stop': '停止',
   'workflows.hint.output': '输出',
@@ -82,6 +83,11 @@ export const workflows: Record<keyof typeof enDomain, string> = {
   'workflows.detail.noOutput': '暂无输出',
   'workflows.detail.lastOutputLabel': '最近输出：',
   'workflows.detail.notAvailable': '—',
+  'workflows.detail.conversationTitle': '会话 · {name}',
+  'workflows.detail.promptLabel': '来自主 Agent 的指令：',
+  'workflows.detail.approvalReadonly': '⏸ 等待审批 — 请回到主界面处理（此处只读）',
+  'workflows.detail.statusModel': '模型：',
+  'workflows.detail.statusContext': '上下文：',
   'workflows.detail.statStep': '第 {step} 步',
   'workflows.detail.statTools': '工具 {count}',
   'workflows.detail.statTokens': '令牌 {tokens}',
@@ -91,6 +97,7 @@ export const workflows: Record<keyof typeof enDomain, string> = {
   // ── 活动时间线 ──
   'workflows.activity.title': '活动',
   'workflows.activity.thinking': '思考',
+  'workflows.activity.reply': '回复',
   'workflows.activity.thinkingSummary': '思考更新',
   'workflows.activity.running': '运行中',
   'workflows.activity.progress': '{done}/{total}',
@@ -103,7 +110,7 @@ export const workflows: Record<keyof typeof enDomain, string> = {
   'workflows.activity.idle': '空闲',
 
   // ── 干预 ──
-  'workflows.intervention.confirmStop': '停止此 agent？y/N',
+  'workflows.intervention.confirmStop': '打断此 agent？y/N',
 
   // ── 耗时 ──
   'workflows.duration.seconds': '{count}秒',

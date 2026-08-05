@@ -399,6 +399,42 @@ describe('WorkflowTracker', () => {
     expect(second?.kind === 'thinking' && second.text).toBe('now edit');
   });
 
+  it('records the spawn prompt and coalesces assistant text into activity segments', () => {
+    const tracker = new WorkflowTracker();
+    tracker.handleEvent(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'a1',
+        subagentName: 'coder',
+        parentToolCallId: 'tc-1',
+        parentAgentId: 'main',
+        prompt: 'Fix the bug in src/auth.ts',
+        runInBackground: false,
+      }),
+    );
+    tracker.handleEvent(ev({ type: 'assistant.delta', agentId: 'a1', turnId: 1, delta: 'Looking ' }));
+    tracker.handleEvent(ev({ type: 'assistant.delta', agentId: 'a1', turnId: 1, delta: 'into it' }));
+    tracker.handleEvent(
+      ev({
+        type: 'tool.call.started',
+        agentId: 'a1',
+        turnId: 1,
+        toolCallId: 'tc-2',
+        name: 'Read',
+        args: { file_path: 'src/auth.ts' },
+      }),
+    );
+    tracker.handleEvent(ev({ type: 'assistant.delta', agentId: 'a1', turnId: 1, delta: 'found it' }));
+
+    const node = tracker.getAgent('a1');
+    expect(node?.prompt).toBe('Fix the bug in src/auth.ts');
+    // Consecutive text deltas coalesce; a tool call opens a fresh segment.
+    expect(node?.activity.map((entry) => entry.kind)).toEqual(['text', 'tool', 'text']);
+    const [first, , second] = node!.activity;
+    expect(first?.kind === 'text' && first.text).toBe('Looking into it');
+    expect(second?.kind === 'text' && second.text).toBe('found it');
+  });
+
   it('resets the activity stream when an agent is re-spawned', () => {
     const tracker = new WorkflowTracker();
     tracker.handleEvent(
@@ -734,6 +770,7 @@ function node(overrides: Partial<WorkflowAgentNode> & { agentId: string }): Work
     swarmIndex: undefined,
     runInBackground: false,
     description: undefined,
+    prompt: undefined,
     status: 'running',
     statusDetail: undefined,
     lastEventAt: undefined,
@@ -881,22 +918,21 @@ describe('WorkflowsBrowserApp — run-dashboard rendering', () => {
     expect(out).toContain('Review release');
   });
 
-  it('keeps thinking hidden until t while showing the activity timeline', () => {
+  it('keeps the chain out of the tree and renders it in the conversation detail', () => {
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' });
     let out = strip(app.render(120).join('\n'));
-    expect(out).toContain('Agent detail');
-    expect(out).toContain('ACTIVITY');
-    expect(out).toContain('Read');
+    expect(out).toContain('Roster');
+    expect(out).toContain('@coder');
     expect(out).not.toContain('second thought');
-    app.handleInput('t');
+    app.handleInput('\x1B[C'); // → opens the conversation detail
     out = strip(app.render(120).join('\n'));
     expect(out).toContain('second thought');
   });
 
   it('shows terminal failure details in the selected agent view', () => {
-    const out = strip(
-      makeApp({ agents: sampleAgents(), selectedAgentId: 'w1' }).render(120).join('\n'),
-    );
+    const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'w1' });
+    app.handleInput('\x1B[C');
+    const out = strip(app.render(120).join('\n'));
     expect(out).toContain('Error: boom');
   });
 
@@ -905,18 +941,17 @@ describe('WorkflowsBrowserApp — run-dashboard rendering', () => {
     expect(out).toContain('No workflows are running yet');
     expect(out).toContain('Start an Agent or AgentSwarm');
     expect(out).toContain('here');
-    expect(out).toContain('Select an agent to inspect its run details');
   });
 
   it('renders the redesigned zh-CN copy', () => {
     setLocalePreference('zh-CN');
-    const out = strip(
-      makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' }).render(120).join('\n'),
-    );
-    expect(out).toContain('Agent 列表');
-    expect(out).toContain('Agent 详情');
-    expect(out).toContain('运行中');
-    expect(out).toContain('思维链');
+    const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' });
+    const list = strip(app.render(120).join('\n'));
+    expect(list).toContain('Agent 列表');
+    app.handleInput('\x1B[C');
+    const detail = strip(app.render(120).join('\n'));
+    expect(detail).toContain('会话 · coder');
+    expect(detail).toContain('运行中');
     expect(t('workflows.command.description')).toBe('查看 agent 实时运行并安全干预');
   });
 
@@ -943,13 +978,13 @@ describe('WorkflowsBrowserApp — input handling', () => {
     const onSelect = vi.fn();
     const agents = sampleAgents();
     const app = makeApp({ agents, selectedAgentId: 'main', onSelect });
+    // Tree order under main: the failed sibling floats to the top (w1), then a1, w0.
     app.handleInput('[B'); // ↓
-    expect(onSelect).toHaveBeenLastCalledWith('a1');
+    expect(onSelect).toHaveBeenLastCalledWith('w1');
     app.handleInput('j');
-    // Completed agents are folded into the done group, so the next live row is w0.
-    expect(onSelect).toHaveBeenLastCalledWith('w0');
-    app.handleInput('[A'); // ↑
     expect(onSelect).toHaveBeenLastCalledWith('a1');
+    app.handleInput('[A'); // ↑
+    expect(onSelect).toHaveBeenLastCalledWith('w1');
   });
 
   it('Enter collapses and re-expands the selected team roster', () => {
@@ -981,13 +1016,14 @@ describe('WorkflowsBrowserApp — input handling', () => {
     const onSelect = vi.fn();
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'main', onSelect, onCancel });
     app.handleInput(kitty('j'));
-    expect(onSelect).toHaveBeenLastCalledWith('a1');
+    expect(onSelect).toHaveBeenLastCalledWith('w1');
     app.handleInput(kitty('q'));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('mouse wheel scrolls the list-mode detail preview', () => {
-    const app = makeApp({ agents: longContentAgents(), selectedAgentId: 'a1' }, 12, 70);
+  it('mouse wheel moves the tree selection in list mode', () => {
+    const onSelect = vi.fn();
+    const app = makeApp({ agents: longContentAgents(), selectedAgentId: 'a1', onSelect }, 12, 70);
     const wheel = (button: 64 | 65): MouseEvent => ({
       type: 'wheel',
       button,
@@ -995,13 +1031,11 @@ describe('WorkflowsBrowserApp — input handling', () => {
       row: 5,
       slotRelative: false,
     });
-    expect(strip(app.render(70).join('\n'))).toContain('long result b');
-    for (let i = 0; i < 8; i += 1) app.handleMouse(wheel(64));
-    const scrolled = strip(app.render(70).join('\n'));
-    expect(scrolled).toContain('coder');
-    expect(scrolled).not.toContain('long result b');
-    for (let i = 0; i < 8; i += 1) app.handleMouse(wheel(65));
-    expect(strip(app.render(70).join('\n'))).toContain('long result b');
+    app.render(70);
+    app.handleMouse(wheel(64)); // up → main
+    expect(onSelect).toHaveBeenLastCalledWith('main');
+    app.handleMouse(wheel(65)); // down → a1
+    expect(onSelect).toHaveBeenLastCalledWith('a1');
   });
 
   it('preview keeps a scrolled-up position when new activity streams in', () => {
@@ -1156,35 +1190,31 @@ describe('WorkflowsBrowserApp — hover-to-scroll', () => {
     expect(strip(app.render(70).join('\n'))).toContain('long result b');
   });
 
-  it('wheel over the tree column moves the agent selection', () => {
+  it('wheel over the tree moves the agent selection one row per tick', () => {
     const onSelect = vi.fn();
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'main', onSelect }, 30, 100);
-    app.render(100); // populate lastTreeWidth (=36 at 100 cols)
-    app.handleMouse(wheel(65, 10)); // +3 rows: main -> b1
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    app.handleMouse(wheel(65, 10)); // clamps to the last row (w1), still emits
-    expect(onSelect).toHaveBeenCalledTimes(2);
-    app.handleMouse(wheel(65, 10)); // no movement at the bottom -> no new emit
-    expect(onSelect).toHaveBeenCalledTimes(2);
-    app.handleMouse(wheel(64, 10)); // back up by 3
+    app.render(100);
+    app.handleMouse(wheel(65, 10)); // main → w1 (tree order)
+    expect(onSelect).toHaveBeenLastCalledWith('w1');
+    app.handleMouse(wheel(65, 10)); // → a1
+    expect(onSelect).toHaveBeenLastCalledWith('a1');
+    app.handleMouse(wheel(65, 10)); // → w0
+    expect(onSelect).toHaveBeenLastCalledWith('w0');
+    app.handleMouse(wheel(65, 10)); // clamped at the last live row — no new emit
     expect(onSelect).toHaveBeenCalledTimes(3);
+    app.handleMouse(wheel(64, 10)); // back up
+    expect(onSelect).toHaveBeenLastCalledWith('a1');
     // Arrow keys still work alongside the wheel.
-    app.handleInput('\x1B[A');
-    expect(onSelect).toHaveBeenCalledTimes(4);
+    app.handleInput('\x1B[B');
+    expect(onSelect).toHaveBeenLastCalledWith('w0');
   });
 
-  it('wheel over the chain pane scrolls the preview into history and back', () => {
-    const app = makeApp({ agents: longContentAgents(), selectedAgentId: 'a1' }, 12, 70);
-    const tail = strip(app.render(70).join('\n'));
-    expect(tail).toContain('long result b');
-
-    app.handleMouse(wheel(64, 60)); // wheel up over the preview pane
-    const scrolled = strip(app.render(70).join('\n'));
-    expect(scrolled).not.toContain('long result b');
-    expect(scrolled).toContain('coder');
-
-    app.handleMouse(wheel(65, 60)); // back to the tail
-    expect(strip(app.render(70).join('\n'))).toContain('long result b');
+  it('wheel at the tree ends clamps without moving the selection', () => {
+    const onSelect = vi.fn();
+    const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'w0', onSelect }, 30, 100);
+    app.render(100);
+    app.handleMouse(wheel(65, 10)); // already at the last live row
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('ignores release mouse events', () => {
@@ -1195,33 +1225,26 @@ describe('WorkflowsBrowserApp — hover-to-scroll', () => {
     expect(strip(app.render(100).join('\n'))).toBe(before);
   });
 
-  it('keyboard selection after wheel-scrolling the preview re-pins to the new agent tail', () => {
-    const agents = longContentAgents();
-    const app = makeApp({ agents, selectedAgentId: 'main' }, 12, 70);
-    // Wheel the preview up into history first (main's chain, scrolled off-tail).
-    app.handleMouse({ type: 'wheel', button: 64, col: 60, row: 5, slotRelative: false });
-    app.render(70);
-    // Keyboard ↓ to a1, then the controller pushes the new selection (as the
-    // real app does): the preview must show a1's tail — not a stale offset
-    // from the previous agent (M2 regression: reset lived only on the wheel path).
-    app.handleInput('\x1B[B');
-    app.setProps({ ...makeProps({}), agents, selectedAgentId: 'a1' });
-    const out = strip(app.render(70).join('\n'));
-    expect(out).toContain('long result b');
+  it('keyboard selection continues from the wheel-moved cursor', () => {
+    const onSelect = vi.fn();
+    const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'main', onSelect }, 30, 100);
+    app.handleMouse({ type: 'wheel', button: 65, col: 10, row: 5, slotRelative: false }); // → w1
+    app.handleInput('\x1B[B'); // ↓ continues from there → a1
+    expect(onSelect).toHaveBeenLastCalledWith('a1');
   });
 });
 
 describe('WorkflowsBrowserApp — detail mode navigation', () => {
 
-  it('→ enters the full-width detail view and switches the footer hints', () => {
+  it('→ enters the full-width conversation view and switches the footer hints', () => {
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'a1' }, 30, 100);
     app.handleInput('\x1B[C'); // right arrow
     const out = strip(app.render(100).join('\n'));
     expect(out).toContain('back');
     expect(out).toContain('scroll');
-    // Full-width frame: the tree pane is gone, no Agents title.
+    // Full-width frame: the roster is gone, the conversation title names the agent.
     expect(out).not.toContain('Roster');
-    expect(out).toContain('Agent detail');
+    expect(out).toContain('Conversation · coder');
   });
 
   it('wraps long thinking and tool content instead of overflowing the width', () => {
@@ -1348,14 +1371,14 @@ describe('WorkflowsBrowserApp — detail mode navigation', () => {
     expect(strip(app.render(70).join('\n'))).toContain('late arriving result');
   });
 
-  it('Tab toggles between the list and the detail view', () => {
+  it('Tab enters the detail view; ← returns to the list', () => {
     const onCancel = vi.fn();
     const app = makeApp({ agents: sampleAgents(), selectedAgentId: 'a1', onCancel }, 30, 100);
     app.handleInput('\t');
     expect(strip(app.render(100).join('\n'))).not.toContain('Roster');
-    app.handleInput('\t');
+    app.handleInput('\x1B[D'); // ← back
     expect(strip(app.render(100).join('\n'))).toContain('Roster');
-    // Tab never closes the browser.
+    // Neither key closes the browser.
     expect(onCancel).not.toHaveBeenCalled();
   });
 });
@@ -1531,7 +1554,10 @@ describe('WorkflowsBrowserApp — render memoization', () => {
 
     const expected = makeApp({ agents, selectedAgentId: 'a1' }, 30, 120).render(120);
     expect(app.render(120)).toEqual(expected);
+    // The new entry renders in the conversation detail.
+    app.handleInput('\x1B[C');
     expect(strip(app.render(120).join('\n'))).toContain('Glob');
+    vi.useRealTimers();
   });
 
   it('keeps render parity after invalidate() when the theme changes', () => {
@@ -1656,39 +1682,42 @@ describe('WorkflowsBrowserApp — scrollbar', () => {
   const release = (col: number, row: number) =>
     ({ type: 'release' as const, button: 0, col, row, slotRelative: false });
 
-  it('list mode: zone declared while the preview scrolls; press jumps', () => {
-    const app = makeScrollableApp(); // inner rows 16, preview content 19
+  it('list mode: zone declared while the tree scrolls; press jumps', () => {
+    // 30 flat agents in one team: 31 tree rows, far beyond the 20-row screen.
+    const many = Array.from({ length: 30 }, (_, i) => node({ agentId: `n${i}`, name: `agent-${i}` }));
+    const app = makeApp({ agents: many, selectedAgentId: 'n0' }, 20, 120);
+    app.render(120);
     const zones = [...app.hitZones()];
-    expect(zones.find((z) => z.id === 'scrollbar')).toMatchObject({ row: 2, col: 120, width: 1, height: 16 });
+    expect(zones.find((z) => z.id === 'scrollbar')).toMatchObject({ row: 2, col: 120, width: 1 });
 
-    // Tail-pinned by default: the preview tail (last tool) is visible.
     let out = strip(app.render(120).join('\n'));
-    expect(out).toContain('Tool39');
+    expect(out).toContain('agent-0');
+    expect(out).not.toContain('agent-29');
 
-    app.handleMouse(press(120, 2)); // track top → window top
+    app.handleMouse(press(120, 17)); // near the track bottom → jump the window
     out = strip(app.render(120).join('\n'));
-    expect(out).not.toContain('Tool39');
-    app.handleMouse(release(120, 2));
+    expect(out).not.toContain('agent-0');
+    app.handleMouse(release(120, 17));
   });
 
   it('list mode: reveal on hover; drag maps continuously until release', () => {
-    const app = makeScrollableApp();
+    const many = Array.from({ length: 30 }, (_, i) => node({ agentId: `n${i}`, name: `agent-${i}` }));
+    const app = makeApp({ agents: many, selectedAgentId: 'n0' }, 20, 120);
+    app.render(120);
     expect(strip(app.render(120).join('\n'))).not.toContain('░');
     app.setHoveredZone('scrollbar');
-    const shown = app.render(120).map(strip);
-    expect(shown[17]!.endsWith('█')).toBe(true); // tail-pinned: thumb at the bottom
-    expect(shown[2]!.endsWith('░')).toBe(true);
+    expect(app.render(120).map(strip).some((line) => line.endsWith('░') || line.endsWith('█'))).toBe(true);
     app.setHoveredZone(null);
     expect(strip(app.render(120).join('\n'))).not.toContain('░');
 
     app.handleMouse(press(120, 17));
     app.handleMouse({ type: 'motion', button: 0, col: 120, row: 2, slotRelative: false });
     const out = strip(app.render(120).join('\n'));
-    expect(out).not.toContain('Tool39');
+    expect(out).toContain('agent-0');
     app.handleMouse(release(120, 2));
     // Plain motion afterwards does not scroll.
     app.handleMouse({ type: 'motion', button: 3, col: 120, row: 17, slotRelative: false });
-    expect(strip(app.render(120).join('\n'))).not.toContain('Tool39');
+    expect(strip(app.render(120).join('\n'))).toContain('agent-0');
   });
 
   it('detail mode: scrollbar drives the full-width chain', () => {

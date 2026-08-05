@@ -27,6 +27,7 @@ function workflowNode(agentId: string, overrides: Partial<WorkflowAgentNode> = {
     swarmIndex: undefined,
     runInBackground: false,
     description: undefined,
+    prompt: undefined,
     status: 'running',
     statusDetail: undefined,
     lastEventAt: undefined,
@@ -105,16 +106,15 @@ describe('WorkflowsBrowserApp keyboard', () => {
       agents: [workflowNode('main', { status: 'running', endedAt: undefined, activity })],
     });
 
-    browser.handleInput(`${ESC}[C`); // → drills into the detail view
-    browser.handleInput('t'); // expand the preserved chain view
-    // Tail-pinned on entry.
+    browser.handleInput(`${ESC}[C`); // → drills into the conversation view
+    // Tail-pinned on entry (the full stream renders — no toggle needed).
     let out = strip(browser.render(80).join('\n'));
     expect(out).toContain('entry 39');
     expect(out).not.toContain('entry 0');
 
     browser.handleInput('g'); // top of the detail view
     out = strip(browser.render(80).join('\n'));
-    expect(out).toContain('ACTIVITY');
+    expect(out).toContain('@main');
     expect(out).not.toContain('entry 39');
 
     browser.handleInput(`${ESC}[F`); // End → back to the tail

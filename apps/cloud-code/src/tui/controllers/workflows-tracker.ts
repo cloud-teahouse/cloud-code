@@ -56,12 +56,14 @@ export interface WorkflowToolEntry {
 
 /**
  * One ordered entry in an agent's chain-of-thought stream. Thinking deltas
- * coalesce into the trailing thinking segment until a tool call interrupts;
- * tool entries are shared by reference with {@link WorkflowAgentNode.tools},
- * so in-flight args/results update the stream live.
+ * coalesce into the trailing thinking segment and assistant text deltas into
+ * the trailing text segment until a tool call interrupts; tool entries are
+ * shared by reference with {@link WorkflowAgentNode.tools}, so in-flight
+ * args/results update the stream live.
  */
 export type WorkflowActivityEntry =
   | { readonly kind: 'thinking'; text: string }
+  | { readonly kind: 'text'; text: string }
   | { readonly kind: 'tool'; readonly tool: WorkflowToolEntry };
 
 export interface WorkflowAgentNode {
@@ -72,6 +74,9 @@ export interface WorkflowAgentNode {
   swarmIndex: number | undefined;
   runInBackground: boolean;
   description: string | undefined;
+  /** The task prompt the parent handed this agent (subagent.spawned) — the
+   * workflows detail view renders it as the conversation's first user message. */
+  prompt: string | undefined;
   status: WorkflowAgentStatus;
   /** Suspension reason or failure message, depending on `status`. */
   statusDetail: string | undefined;
@@ -114,6 +119,8 @@ export interface WorkflowAgentNode {
 const THINKING_TAIL_CHARS = 4000;
 /** Tail cap for one thinking segment in the activity stream (chars). */
 const ACTIVITY_THINKING_TAIL_CHARS = 1200;
+/** Tail cap for one assistant text segment in the activity stream (chars). */
+const ACTIVITY_TEXT_TAIL_CHARS = 4000;
 /** Tail cap for a single tool call's accumulated arguments text (chars). */
 const ARGS_TAIL_CHARS = 2000;
 /** Tail cap for a single tool result summary (chars). */
@@ -258,6 +265,7 @@ export class WorkflowTracker {
         node.swarmIndex = event.swarmIndex;
         node.runInBackground = event.runInBackground;
         node.description = event.description;
+        node.prompt = event.prompt;
         // A re-spawn (resumed agent taking a new task) starts a fresh run:
         // reset the lifecycle and chain, keep the node identity.
         node.status = 'waiting';
@@ -384,7 +392,17 @@ export class WorkflowTracker {
       }
       case 'assistant.delta': {
         const node = this.ensureAgent(event.agentId);
-        if (event.delta.length > 0) node.lastOutput = appendAssistantOutput(node.lastOutput, event.delta);
+        if (event.delta.length > 0) {
+          node.lastOutput = appendAssistantOutput(node.lastOutput, event.delta);
+          // Coalesce into the trailing text segment (same interleave contract
+          // as thinking: a tool call opens a fresh segment).
+          const tail = node.activity.at(-1);
+          if (tail !== undefined && tail.kind === 'text') {
+            tail.text = tailCap(tail.text + event.delta, ACTIVITY_TEXT_TAIL_CHARS);
+          } else {
+            this.pushActivity(node, { kind: 'text', text: tailCap(event.delta, ACTIVITY_TEXT_TAIL_CHARS) });
+          }
+        }
         if (!isTerminalStatus(node.status)) {
           node.status = 'running';
           node.currentActivity = this.activity('thinking');
@@ -594,6 +612,7 @@ export class WorkflowTracker {
       swarmIndex: undefined,
       runInBackground: false,
       description: undefined,
+      prompt: undefined,
       status: agentId === MAIN_AGENT_ID ? 'idle' : 'running',
       statusDetail: undefined,
       lastEventAt: undefined,

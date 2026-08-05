@@ -1151,6 +1151,7 @@ describe('wave-2c dialog render parity', () => {
         swarmIndex: undefined,
         runInBackground: false,
         description: undefined,
+        prompt: undefined,
         status: 'done',
         statusDetail: undefined,
         lastEventAt: undefined,

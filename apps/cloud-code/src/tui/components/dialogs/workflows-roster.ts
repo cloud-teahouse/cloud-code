@@ -40,6 +40,11 @@ export type WorkflowsRosterRow =
       readonly kind: 'agent';
       readonly teamName: string;
       readonly agent: WorkflowAgentInfo;
+      /** Nesting depth within the team group (0 = directly under the header);
+       * children of another agent in the same group render one level in. */
+      readonly depth: number;
+      /** Tree connector flags: whether this row is the last sibling at its level. */
+      readonly last: boolean;
     };
 
 export interface WorkflowsRosterProps {
@@ -112,12 +117,7 @@ export function buildWorkflowsRosterRows(
       (agent) => !isWorkflowAgentTerminal(agent) && !isWorkflowAgentAttention(agent),
     );
     const done = ordered.filter((agent) => agent.status === 'done');
-    for (const agent of attention) {
-      rows.push({ kind: 'agent', teamName: name, agent });
-    }
-    for (const agent of active) {
-      rows.push({ kind: 'agent', teamName: name, agent });
-    }
+    pushAgentTreeRows(rows, name, [...attention, ...active]);
     if (done.length > 0) {
       const doneCollapsed = collapsedDoneTeams.has(name);
       rows.push({
@@ -127,11 +127,46 @@ export function buildWorkflowsRosterRows(
         agentCount: done.length,
       });
       if (!doneCollapsed) {
-        for (const agent of done) rows.push({ kind: 'agent', teamName: name, agent });
+        pushAgentTreeRows(rows, name, done);
       }
     }
   }
   return rows;
+}
+
+/**
+ * Append agent rows in tree order: an agent whose parent sits in the same
+ * list nests under it (├─/└─ connectors implied by `last`), recursively;
+ * anything else is a root-level row.
+ */
+function pushAgentTreeRows(
+  rows: WorkflowsRosterRow[],
+  teamName: string,
+  agents: readonly WorkflowAgentInfo[],
+): void {
+  const ids = new Set(agents.map((agent) => agent.agentId));
+  const childrenOf = new Map<string, WorkflowAgentInfo[]>();
+  const roots: WorkflowAgentInfo[] = [];
+  for (const agent of agents) {
+    const parent = agent.parentAgentId;
+    if (parent !== undefined && parent !== agent.agentId && ids.has(parent)) {
+      const list = childrenOf.get(parent);
+      if (list === undefined) childrenOf.set(parent, [agent]);
+      else list.push(agent);
+    } else {
+      roots.push(agent);
+    }
+  }
+  const pushSubtree = (agent: WorkflowAgentInfo, depth: number, last: boolean): void => {
+    rows.push({ kind: 'agent', teamName, agent, depth, last });
+    const children = childrenOf.get(agent.agentId) ?? [];
+    for (const [index, child] of children.entries()) {
+      pushSubtree(child, depth + 1, index === children.length - 1);
+    }
+  };
+  for (const [index, root] of roots.entries()) {
+    pushSubtree(root, 0, index === roots.length - 1);
+  }
 }
 
 export function workflowRosterSelectableRows(
@@ -241,7 +276,7 @@ export class WorkflowsRoster extends Container {
             ? this.renderTeamRow(row, innerWidth)
             : row.kind === 'done-group'
               ? this.renderDoneGroupRow(row, innerWidth)
-              : this.renderAgentRow(row.agent, innerWidth);
+              : this.renderAgentRow(row, innerWidth);
         lines.push(underlineText(line, this.hoveredRow === rowIndex));
       }
     }
@@ -287,15 +322,26 @@ export class WorkflowsRoster extends Container {
     );
   }
 
-  private renderAgentRow(agent: WorkflowAgentInfo, width: number): string {
+  private renderAgentRow(
+    row: Extract<WorkflowsRosterRow, { kind: 'agent' }>,
+    width: number,
+  ): string {
+    const agent = row.agent;
     const selected = agent.agentId === this.props.selectedAgentId;
     const name = `@${displayName(agent)}`;
     const action = agent.currentActivity?.label ?? t('workflows.activity.idle');
     const subject = agent.taskSubject ?? agent.description ?? t('workflows.roster.noTask');
     const duration = formatDuration(agent);
+    // Tree connector: children of another agent in the same team render one
+    // level in with ├─/└─; deeper nesting indents two cells per level.
+    const connector =
+      row.depth === 0
+        ? ''
+        : `${'  '.repeat(row.depth - 1)}${row.last ? '└─ ' : '├─ '}`;
+    const treePrefix = connector.length === 0 ? '' : currentTheme.fg('textDim', connector);
     const prefix = selected ? `${SELECT_POINTER} ` : '  ';
     const icon = currentTheme.fg(statusColor(agent.status), STATUS_ICON[agent.status]);
-    const nameText = `${prefix}${icon} ${name}`;
+    const nameText = `${prefix}${treePrefix}${icon} ${name}`;
     const available = Math.max(1, width - 2);
     const gap = 2;
     const durationWidth = Math.max(5, visibleWidth(duration));

@@ -196,7 +196,9 @@ export class WorkflowsBrowserController {
       await stopTask(taskId);
       return;
     }
-    await this.host.session?.stopBackgroundTask(taskId, { reason: 'user workflow dashboard stop' });
+    await this.host.session?.stopBackgroundTask(taskId, {
+      reason: 'The user interrupted this agent from the /workflows panel',
+    });
   }
 
   private async handleOpenOutput(taskId: string): Promise<void> {

@@ -18,6 +18,7 @@ export const workflows = {
   'workflows.hint.detail': 'detail',
   'workflows.hint.back': 'back',
   'workflows.hint.scroll': 'scroll',
+  'workflows.hint.interrupt': 'interrupt',
   'workflows.hint.page': 'page',
   'workflows.hint.stop': 'stop',
   'workflows.hint.output': 'output',
@@ -80,6 +81,11 @@ export const workflows = {
   'workflows.detail.noOutput': 'No output yet',
   'workflows.detail.lastOutputLabel': 'Last output:',
   'workflows.detail.notAvailable': '—',
+  'workflows.detail.conversationTitle': 'Conversation · {name}',
+  'workflows.detail.promptLabel': 'Instruction from the main agent:',
+  'workflows.detail.approvalReadonly': '⏸ Waiting for approval — handle it back on the main screen (read-only here)',
+  'workflows.detail.statusModel': 'Model: ',
+  'workflows.detail.statusContext': 'Context: ',
   'workflows.detail.statStep': 'step {step}',
   'workflows.detail.statTools': 'tools {count}',
   'workflows.detail.statTokens': 'tokens {tokens}',
@@ -89,6 +95,7 @@ export const workflows = {
   // ── activity timeline ──
   'workflows.activity.title': 'ACTIVITY',
   'workflows.activity.thinking': 'thinking',
+  'workflows.activity.reply': 'reply',
   'workflows.activity.thinkingSummary': 'thinking update',
   'workflows.activity.running': 'running',
   'workflows.activity.progress': '{done}/{total}',
@@ -101,7 +108,7 @@ export const workflows = {
   'workflows.activity.idle': 'idle',
 
   // ── interventions ──
-  'workflows.intervention.confirmStop': 'Stop this agent? y/N',
+  'workflows.intervention.confirmStop': 'Interrupt this agent? y/N',
 
   // ── duration ──
   'workflows.duration.seconds': '{count}s',

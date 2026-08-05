@@ -280,9 +280,27 @@ export function pushActivityLines(
   for (const entry of entries) {
     if (entry.kind === 'thinking') {
       pushThinkingSegment(lines, entry.text, innerWidth, wrap);
+    } else if (entry.kind === 'text') {
+      pushTextSegment(lines, entry.text, innerWidth, wrap);
     } else {
       pushToolActivity(lines, entry.tool, innerWidth, wrap);
     }
+  }
+}
+
+/** Assistant text reply: plain foreground (not the dim thinking treatment). */
+function pushTextSegment(
+  lines: string[],
+  text: string,
+  innerWidth: number,
+  wrap: boolean,
+): void {
+  const segment = text.trim();
+  if (segment.length === 0) return;
+  const rawLines = segment.split('\n');
+  const visible = wrap ? rawLines : rawLines.slice(-1);
+  for (const rawLine of visible) {
+    pushLine(lines, currentTheme.fg('text', singleLine(rawLine)), innerWidth, wrap);
   }
 }
 

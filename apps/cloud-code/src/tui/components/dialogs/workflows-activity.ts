@@ -29,6 +29,13 @@ function activityStage(entry: WorkflowActivityEntry): { label: string; summary: 
       token: 'textDim',
     };
   }
+  if (entry.kind === 'text') {
+    return {
+      label: t('workflows.activity.reply'),
+      summary: singleLine(entry.text),
+      token: 'text',
+    };
+  }
   const tool = entry.tool;
   const status = tool.status === 'failed' ? 'error' : tool.status === 'running' ? 'success' : 'text';
   const result = tool.resultText === undefined ? '' : singleLine(tool.resultText);
