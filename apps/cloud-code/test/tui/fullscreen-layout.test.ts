@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CloudCodeTUI, type CloudCodeTUIStartupInput } from '#/tui/cloud-code-tui';
+import { TakeoverNoticeMirror } from '#/tui/components/chrome/takeover-notice-mirror';
 
 // ---------------------------------------------------------------------------
 // Fullscreen layout wiring — region structure, config gate, notice routing.
@@ -247,5 +248,13 @@ describe('notice routing', () => {
     // display window.
     driver.restoreEditor(handle);
     expect(renderNotice(driver)).toContain('managed-guard');
+  });
+
+  it('takeover notice mirror renders the current slot notice, empty when none', () => {
+    const driver = makeDriver();
+    const mirror = new TakeoverNoticeMirror(driver.state);
+    expect(mirror.render(80)).toEqual([]);
+    driver.showStatus('during-takeover');
+    expect(mirror.render(80).join('\n')).toContain('during-takeover');
   });
 });

@@ -49,6 +49,7 @@ import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { FloatingDialogSurface } from './components/chrome/floating-dialog-surface';
 import { GutterContainer } from './components/chrome/gutter-container';
+import { TakeoverNoticeMirror } from './components/chrome/takeover-notice-mirror';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
 import { pickRandomWorkingTip } from './components/chrome/working-tips';
@@ -1099,6 +1100,19 @@ export class CloudCodeTUI {
       copyWorkDir: () => {
         void this.copyWorkDirToClipboard();
       },
+    });
+    // Takeover notice mirror: while a full-screen takeover (tasks/workflows/
+    // teams browser, approval preview) owns the screen, the slot's notice row
+    // is swapped out with the rest of the layout, so a transient notice would
+    // render invisibly. This non-capturing overlay re-renders the current
+    // notice on top of the takeover; the noticeContainer stays the single
+    // source of truth (auto-clear, post-close visibility unchanged).
+    this.state.ui.showOverlay(new TakeoverNoticeMirror(this.state), {
+      width: '100%',
+      anchor: 'bottom-left',
+      nonCapturing: true,
+      visible: () =>
+        this.isAnyTakeoverActive() && this.state.noticeContainer.children.length > 0,
     });
   }
 
