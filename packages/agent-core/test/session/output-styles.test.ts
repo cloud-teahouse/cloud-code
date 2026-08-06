@@ -99,4 +99,20 @@ describe('Session output styles', () => {
       code: 'session.output_style_not_found',
     });
   });
+
+  it('keeps the session-scoped style overlay across a global config push', async () => {
+    const userHome = await mkdtemp(join(tmpdir(), 'output-styles-home-'));
+    const projectDir = await mkdtemp(join(tmpdir(), 'output-styles-proj-'));
+    tempDirs.push(userHome, projectDir);
+    const session = await makeSession({ userHome, projectDir });
+
+    await session.setOutputStyle('concise');
+    session.applyRuntimeConfig({ providers: {}, thinking: { keep: 'none' } });
+    expect(session.cloudCodeConfig?.outputStyle).toBe('concise');
+    expect(session.cloudCodeConfig?.thinking?.keep).toBe('none');
+
+    // A persisted style wins over the session overlay, matching a restart.
+    session.applyRuntimeConfig({ providers: {}, outputStyle: 'reviewer' });
+    expect(session.cloudCodeConfig?.outputStyle).toBe('reviewer');
+  });
 });

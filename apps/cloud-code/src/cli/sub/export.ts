@@ -19,7 +19,7 @@ import {
 import type { Command } from 'commander';
 
 import { detectInstallSource } from '#/cli/update/source';
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createCloudCodeHostIdentity } from '#/cli/version';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
 
 interface WritableLike {
@@ -122,7 +122,7 @@ export function registerExportCommand(parent: Command, deps?: Partial<ExportDeps
 
 function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDeps {
   let harness: CloudCodeHarness | undefined;
-  const identity = createKimiCodeHostIdentity();
+  const identity = createCloudCodeHostIdentity();
   const getHarness = (): CloudCodeHarness => {
     harness ??= createCloudCodeHarness({
       homeDir: resolveCloudCodeHome(),

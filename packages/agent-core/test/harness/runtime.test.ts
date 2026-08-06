@@ -259,12 +259,43 @@ micro_compaction = false
     });
     await rpc.applyPersistedSecondaryModel({ sessionId: created.id });
 
-    const config = core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig;
+    const config = core.sessions.get(created.id)?.getReadyAgent('main')?.cloudCodeConfig;
     expect(config?.secondaryModel).toEqual({
       model: 'default-mock',
       maxContextSize: 65_536,
     });
     expect(config?.models?.['__secondary__']?.overrides?.maxContextSize).toBe(65_536);
+  });
+
+  it('pushes a setCloudCodeConfig write into the running session', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new CloudCodeCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_config_push',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const before = core.sessions.get(created.id)?.getReadyAgent('main')?.cloudCodeConfig;
+    expect(before?.thinking?.keep).toBeUndefined();
+
+    await rpc.setCloudCodeConfig({ thinking: { keep: 'none' } });
+
+    const after = core.sessions.get(created.id)?.getReadyAgent('main')?.cloudCodeConfig;
+    expect(after?.thinking?.keep).toBe('none');
   });
 
   // Regression for https://github.com/MoonshotAI/kimi-code/issues/988: during
@@ -336,7 +367,7 @@ custom_headers = { "X-Test" = "1" }
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
     const core = new CloudCodeCore(coreRpc, {
       homeDir,
-      kimiRequestHeaders: {
+      cloudCodeRequestHeaders: {
         'User-Agent': 'cloud-code-cli/0.0.0-test',
         'X-Msh-Version': '0.0.0-test',
       },
@@ -1450,9 +1481,9 @@ describe('CloudCodeCore print-mode defaults', () => {
     });
 
     const main = core.sessions.get(created.id)?.getReadyAgent('main');
-    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
-    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
-    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
+    expect(main?.cloudCodeConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.cloudCodeConfig?.background?.bashTaskTimeoutS).toBe(0);
+    expect(main?.cloudCodeConfig?.loopControl?.maxStepsPerTurn).toBe(0);
 
     // The raw user config is left untouched so config reads/writes still
     // round-trip the user's file values.
@@ -1478,8 +1509,8 @@ timeout_ms = 5000
     });
 
     const main = core.sessions.get(created.id)?.getReadyAgent('main');
-    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(5000);
-    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(7);
+    expect(main?.cloudCodeConfig?.subagent?.timeoutMs).toBe(5000);
+    expect(main?.cloudCodeConfig?.loopControl?.maxStepsPerTurn).toBe(7);
   });
 
   it('does not apply print-mode defaults outside print mode', async () => {
@@ -1493,8 +1524,8 @@ timeout_ms = 5000
     });
 
     const main = core.sessions.get(created.id)?.getReadyAgent('main');
-    expect(main?.kimiConfig?.subagent).toBeUndefined();
-    expect(main?.kimiConfig?.loopControl).toBeUndefined();
+    expect(main?.cloudCodeConfig?.subagent).toBeUndefined();
+    expect(main?.cloudCodeConfig?.loopControl).toBeUndefined();
   });
 
   it('applies print-mode defaults when a session is reloaded', async () => {
@@ -1511,9 +1542,9 @@ timeout_ms = 5000
     // The reload path rebuilds the session through resumeSessionWithOverrides;
     // the agent it constructs must carry the same print-mode defaults.
     const main = core.sessions.get(created.id)?.getReadyAgent('main');
-    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
-    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
-    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
+    expect(main?.cloudCodeConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.cloudCodeConfig?.background?.bashTaskTimeoutS).toBe(0);
+    expect(main?.cloudCodeConfig?.loopControl?.maxStepsPerTurn).toBe(0);
   });
 });
 

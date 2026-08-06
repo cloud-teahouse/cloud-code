@@ -12,7 +12,7 @@ import {
   type SDKAPI,
 } from '@cloud-code/agent-core';
 import type { Kaos } from '@cloud-code/kaos';
-import { assertCloudCodeHostIdentity, createKimiDefaultHeaders } from '@cloud-code/oauth';
+import { assertCloudCodeHostIdentity, createCloudCodeDefaultHeaders } from '@cloud-code/oauth';
 
 import { CloudCodeAuthFacade } from '#/auth';
 import { CloudCodeHarness } from '#/cloud-code-harness';
@@ -74,7 +74,7 @@ export class SDKRpcClient extends SDKRpcClientBase {
     this.core = new CloudCodeCore(coreRpc, {
       homeDir: options.homeDir,
       configPath: this.configPath,
-      kimiRequestHeaders: this.createCloudCodeRequestHeaders(),
+      cloudCodeRequestHeaders: this.createCloudCodeRequestHeaders(),
       resolveOAuthTokenProvider:
         options.resolveOAuthTokenProvider ?? this.auth.resolveOAuthTokenProvider,
       skillDirs: options.skillDirs,
@@ -123,7 +123,7 @@ export class SDKRpcClient extends SDKRpcClientBase {
 
   private createCloudCodeRequestHeaders(): Record<string, string> | undefined {
     if (this.identity === undefined) return undefined;
-    return createKimiDefaultHeaders({
+    return createCloudCodeDefaultHeaders({
       homeDir: this.homeDir,
       ...this.identity,
     });

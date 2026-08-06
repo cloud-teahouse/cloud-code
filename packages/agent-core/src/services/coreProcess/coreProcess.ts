@@ -37,8 +37,8 @@ import type { ImageLimits } from '#/tools/support/image-limits';
 export interface CoreProcessServiceOptions extends CloudCodeCoreOptions {
   /**
    * Host identity (product name + version). When set and
-   * `kimiRequestHeaders` is omitted, the adapter default-wires
-   * `createKimiDefaultHeaders({ homeDir, ...identity })` into CloudCodeCore so
+   * `cloudCodeRequestHeaders` is omitted, the adapter default-wires
+   * `createCloudCodeDefaultHeaders({ homeDir, ...identity })` into CloudCodeCore so
    * upstream sees `User-Agent: <product>/<version>` + `X-Msh-Platform: …`.
    * Without this, the managed Kimi-for-Coding endpoint rejects requests
    * with 40340 ("only available for Coding Agents") because the default
@@ -47,7 +47,7 @@ export interface CoreProcessServiceOptions extends CloudCodeCoreOptions {
    * `identity.version` also feeds `appVersion` so session records carry
    * the host CLI version — same wiring `SDKRpcClient` does in node-sdk.
    *
-   * Callers can still pass explicit `kimiRequestHeaders` (or `appVersion`)
+   * Callers can still pass explicit `cloudCodeRequestHeaders` (or `appVersion`)
    * to override; the explicit values win.
    */
   readonly identity?: CloudCodeHostIdentity;
@@ -59,7 +59,7 @@ export interface ICoreProcessService {
   /** The core RPC methods. Service impls call e.g. `core.rpc.createSession(...)`. */
   readonly rpc: CoreRPC;
 
-  readonly kimiRequestHeaders?: Record<string, string> | undefined;
+  readonly cloudCodeRequestHeaders?: Record<string, string> | undefined;
 
   /**
    * The core's owner-scoped [image] limits, so daemon-side prompt-ingestion

@@ -314,7 +314,7 @@ describe('CoreProcessService direct construction', () => {
     expect(refreshHeaders[0]?.['X-Msh-Platform']).toBe('test_platform');
   });
 
-  it('default-wires kimiRequestHeaders from identity when caller omits headers', () => {
+  it('default-wires cloudCodeRequestHeaders from identity when caller omits headers', () => {
     const headers = CoreProcessService._defaultKimiRequestHeaders(
       tmpHome,
       { userAgentProduct: 'cloud-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
@@ -333,7 +333,7 @@ describe('CoreProcessService direct construction', () => {
     expect(headers).toBeUndefined();
   });
 
-  it('caller-supplied kimiRequestHeaders win over identity-derived defaults', () => {
+  it('caller-supplied cloudCodeRequestHeaders win over identity-derived defaults', () => {
     const explicit = { 'User-Agent': 'override/1.0' };
     const picked =
       explicit ?? CoreProcessService._defaultKimiRequestHeaders(

@@ -299,7 +299,7 @@ export class BackgroundManager {
 
   private assertCanRegister(startedInBackground: boolean): void {
     const maxRunningTasks = resolveMaxRunningTasks(
-      this.agent.kimiConfig?.background?.maxRunningTasks,
+      this.agent.cloudCodeConfig?.background?.maxRunningTasks,
     );
     if (maxRunningTasks === undefined) return;
     if (!startedInBackground) return;

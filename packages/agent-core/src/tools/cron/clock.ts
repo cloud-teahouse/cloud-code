@@ -24,15 +24,17 @@
  * It is not overridable — accepting an external monotonic clock would
  * defeat the safety net the lock heartbeat depends on.
  *
- * `wallNow` resolution is driven by the `KIMI_CRON_CLOCK` env var; see
+ * `wallNow` resolution is driven by the `CLOUD_CODE_CRON_CLOCK` env var; see
  * `resolveClockSources` below. Defaults to `Date.now()`.
  */
 import { closeSync, openSync, readSync } from 'node:fs';
 
+import { cloudCodeEnv } from '../../utils/env';
+
 export interface ClockSources {
   /**
    * Wall-clock epoch milliseconds. May be overridden in tests / bench
-   * via `KIMI_CRON_CLOCK`. Used for cron matching, `createdAt`, stale
+   * via `CLOUD_CODE_CRON_CLOCK`. Used for cron matching, `createdAt`, stale
    * judgment.
    */
   wallNow(): number;
@@ -48,7 +50,7 @@ const systemMonoNowMs = (): number => Number(process.hrtime.bigint() / 1_000_000
 
 /**
  * Production default — `Date.now()` + `process.hrtime.bigint()`. Used
- * whenever `KIMI_CRON_CLOCK` is unset, set to `"system"`, or set to a
+ * whenever `CLOUD_CODE_CRON_CLOCK` is unset, set to `"system"`, or set to a
  * spec that fails to parse.
  */
 export const SYSTEM_CLOCKS: ClockSources = {
@@ -58,7 +60,7 @@ export const SYSTEM_CLOCKS: ClockSources = {
 
 /**
  * Resolve a `ClockSources` implementation from a spec string (typically
- * `process.env.KIMI_CRON_CLOCK`).
+ * `process.env.CLOUD_CODE_CRON_CLOCK`).
  *
  *   unset / `"system"`   → {@link SYSTEM_CLOCKS}
  *   `"file:<path>"`      → `wallNow` reads the first line of `<path>`
@@ -139,10 +141,10 @@ function debugInvalidSpec(spec: string, reason: string): void {
   // We do not pull in a logger here — `clock.ts` is the lowest layer of
   // the cron module and must stay dependency-free so it can be imported
   // from anywhere (including lint rules, type files). A stderr write
-  // gated on KIMI_CRON_DEBUG is enough — production is silent.
-  if (process.env['KIMI_CRON_DEBUG'] === '1') {
+  // gated on CLOUD_CODE_CRON_DEBUG is enough — production is silent.
+  if (cloudCodeEnv('CLOUD_CODE_CRON_DEBUG', 'KIMI_CRON_DEBUG') === '1') {
     process.stderr.write(
-      `[cron/clock] invalid KIMI_CRON_CLOCK spec ${JSON.stringify(spec)}: ${reason} — falling back to system clock\n`,
+      `[cron/clock] invalid CLOUD_CODE_CRON_CLOCK spec ${JSON.stringify(spec)}: ${reason} — falling back to system clock\n`,
     );
   }
 }

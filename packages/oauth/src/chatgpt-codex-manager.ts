@@ -25,6 +25,8 @@ import { dirname } from 'node:path';
 
 import lockfile from 'proper-lockfile';
 
+import { cloudCodeEnv } from './env';
+
 import {
   chatGptAccountSnapshotFromTokenState,
   type OAuthAccountSnapshot,
@@ -172,7 +174,7 @@ export class ChatGptOAuthManager {
 
   private resolveLockTarget(): string | undefined {
     if (process.platform === 'win32') return undefined;
-    if (process.env['KIMI_DISABLE_OAUTH_LOCK'] === '1') return undefined;
+    if (cloudCodeEnv('CLOUD_CODE_DISABLE_OAUTH_LOCK', 'KIMI_DISABLE_OAUTH_LOCK') === '1') return undefined;
     if (this.configDir === undefined) return undefined;
     return `${this.configDir}/oauth/${this.name}`;
   }

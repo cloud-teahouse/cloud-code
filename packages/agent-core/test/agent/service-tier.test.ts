@@ -57,7 +57,7 @@ const thirdPartyConfig: CloudCodeConfig = {
   },
 };
 
-const kimiConfig: CloudCodeConfig = {
+const cloudCodeConfig: CloudCodeConfig = {
   providers: {
     kimi: { type: 'kimi', apiKey: 'test-key' },
   },
@@ -354,8 +354,8 @@ describe('ConfigState service tier (/fast)', () => {
 
   it('is a no-op for non-OpenAI-Responses providers', () => {
     const ctx = testAgent({
-      initialConfig: kimiConfig,
-      providerManager: new ProviderManager({ config: kimiConfig }),
+      initialConfig: cloudCodeConfig,
+      providerManager: new ProviderManager({ config: cloudCodeConfig }),
     });
     ctx.agent.config.update({ modelAlias: 'kimi-code/kimi-for-coding' });
     ctx.agent.config.setServiceTier('priority');

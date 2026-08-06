@@ -15,7 +15,7 @@ import {
   type ThinkingEffort,
 } from '@cloud-code/sdk';
 
-import { createKimiCodeUserAgent } from '#/cli/version';
+import { createCloudCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
@@ -328,7 +328,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   try {
     const loaded = await fetchCatalogOrBuiltIn(DEFAULT_CATALOG_URL, {
       signal: controller.signal,
-      userAgent: createKimiCodeUserAgent(),
+      userAgent: createCloudCodeUserAgent(),
     });
     catalog = loaded.catalog;
     spinner.stop({
@@ -522,7 +522,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
   let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
   try {
-    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
+    entries = await fetchCustomRegistry(source, { userAgent: createCloudCodeUserAgent() });
   } catch (error) {
     host.showError(t('commands.provider.importFailed', { error: formatErrorMessage(error) }));
     return false;

@@ -20,7 +20,7 @@
  * `1` (when the lock is in place); `N` (when it is not).
  *
  * **Platform**: macOS / Linux only. Windows path quirks for
- * `proper-lockfile` are bypassed via the `KIMI_DISABLE_OAUTH_LOCK=1`
+ * `proper-lockfile` are bypassed via the `CLOUD_CODE_DISABLE_OAUTH_LOCK=1`
  * env-var escape hatch; this test skips on `process.platform === 'win32'`.
  */
 
@@ -261,7 +261,7 @@ describe.skipIf(skipOnWindows)('OAuthManager cross-process refresh lock', () => 
 
 // Prevent "no tests in file" when running on Windows.
 describe.skipIf(!skipOnWindows)('OAuthManager cross-process refresh lock (Windows skip)', () => {
-  it('skipped on Windows — covered by KIMI_DISABLE_OAUTH_LOCK=1 env escape hatch', () => {
+  it('skipped on Windows — covered by CLOUD_CODE_DISABLE_OAUTH_LOCK=1 env escape hatch', () => {
     expect(skipOnWindows).toBe(true);
   });
 });

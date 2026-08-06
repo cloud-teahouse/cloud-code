@@ -23,7 +23,9 @@ These identifiers name the Moonshot **service**, not the product. They are contr
 - Managed provider key `managed:kimi-code`.
 - OAuth credential keys `oauth/kimi-code` and `kimi-code.json`.
 - `X-Msh-Platform` header (value `kimi_code_cli`).
-- Credential env vars: `KIMI_API_KEY` and the self-consistent runtime env family (`KIMI_MODEL_*`, `KIMI_LOG_LEVEL`, `KIMI_CRON_*`, `KIMI_SUBAGENT_TIMEOUT_MS`, `KIMI_NOW`, `KIMI_USER_LANGUAGE`).
+- Credential env vars: `KIMI_API_KEY`, `KIMI_BASE_URL`, `KIMI_OAUTH_HOST`.
+- Upstream-interop env vars: `KIMI_PLUGIN_ROOT` (plugin child-process contract), `KIMI_CODE_HOME` (the *upstream* home dir, read by `/import`), `KIMI_REGISTRY_API_KEY` (upstream plugin registry).
+- Our own operational envs are `CLOUD_CODE_*`. The pre-rebrand `KIMI_*` names (`KIMI_MODEL_*`, `KIMI_LOG_*`, `KIMI_CRON_*`, etc.) remain as fallback aliases via `cloudCodeEnv` — never read the legacy name directly without it.
 - Model IDs (`kimi-code/kimi-for-coding` etc.).
 - Service URLs: `code.kimi.com`, `cdn.kimi.com`, `auth.kimi.com`, `platform.kimi.ai`.
 

@@ -8,7 +8,7 @@ import { CHANGELOG_URL } from '#/cli/update/prompt';
 import {
   CLOUD_CODE_UPDATE_CHANNEL_BASE,
   FEEDBACK_ISSUE_URL,
-  KIMI_CODE_OFFICIAL_INSTALL_URL,
+  CLOUD_CODE_OFFICIAL_INSTALL_URL,
 } from '#/constant/app';
 
 const PUBLIC_REPO_URL = 'https://github.com/cloud-teahouse/cloud-code';
@@ -20,7 +20,7 @@ describe('public repo links', () => {
   });
 
   it('the official install URL is the public repo', () => {
-    expect(KIMI_CODE_OFFICIAL_INSTALL_URL).toBe(PUBLIC_REPO_URL);
+    expect(CLOUD_CODE_OFFICIAL_INSTALL_URL).toBe(PUBLIC_REPO_URL);
   });
 
   it('the update channel is served from the public repo dev branch', () => {

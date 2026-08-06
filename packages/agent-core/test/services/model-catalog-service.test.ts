@@ -529,7 +529,7 @@ describe('ModelCatalogService', () => {
       },
     };
     const { core } = makeCore(configRef);
-    (core as { kimiRequestHeaders?: Record<string, string> }).kimiRequestHeaders = {
+    (core as { cloudCodeRequestHeaders?: Record<string, string> }).cloudCodeRequestHeaders = {
       'User-Agent': 'cloud-code-cli/test',
     };
     const fetchMock = vi.fn(

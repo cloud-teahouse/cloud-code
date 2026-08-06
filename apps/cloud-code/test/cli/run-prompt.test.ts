@@ -167,7 +167,7 @@ describe('runPrompt', () => {
     // deterministic regardless of the host environment. Tests that exercise the
     // experimental path opt back in explicitly with `vi.stubEnv(..., '1')`.
     vi.stubEnv('CLOUD_CODE_EXPERIMENTAL_FLAG', '');
-    vi.stubEnv('KIMI_MODEL_OUTPUT_FORMAT', '');
+    vi.stubEnv('CLOUD_CODE_MODEL_OUTPUT_FORMAT', '');
   });
 
   afterEach(() => {

@@ -1,9 +1,9 @@
-import { createKimiDefaultHeaders } from '@cloud-code/oauth';
+import { createCloudCodeDefaultHeaders } from '@cloud-code/oauth';
 import { resolveCloudCodeHome } from '@cloud-code/sdk';
 import { createServer } from '@cloud-code/server';
 
 import { OptionConflictError } from './options';
-import { createKimiCodeHostIdentity } from './version';
+import { createCloudCodeHostIdentity } from './version';
 
 export interface ServeCommandOptions {
   readonly transport: string | undefined;
@@ -38,11 +38,11 @@ export async function runServe(opts: ServeCommandOptions, version: string): Prom
     throw new OptionConflictError(`Unsupported transport "${transport}". Expected: stdio, ws.`);
   }
   const homeDir = resolveCloudCodeHome();
-  const identity = createKimiCodeHostIdentity(version);
+  const identity = createCloudCodeHostIdentity(version);
   const server = await createServer({
     transport,
     homeDir,
-    kimiRequestHeaders: createKimiDefaultHeaders({
+    cloudCodeRequestHeaders: createCloudCodeDefaultHeaders({
       homeDir,
       ...identity,
     }),

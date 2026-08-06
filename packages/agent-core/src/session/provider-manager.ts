@@ -6,7 +6,7 @@ import {
   getModelCapability,
   UNKNOWN_CAPABILITY,
 } from '@cloud-code/kosong';
-import { parseKimiCodeCustomHeaders } from '@cloud-code/oauth';
+import { parseCloudCodeCustomHeaders } from '@cloud-code/oauth';
 import {
   effectiveModelAlias,
   type CloudCodeConfig,
@@ -53,7 +53,7 @@ export interface ResolvedRuntimeProvider {
 
 interface ProviderManagerOptions {
   readonly config: CloudCodeConfig | (() => CloudCodeConfig);
-  readonly kimiRequestHeaders?: Record<string, string>;
+  readonly cloudCodeRequestHeaders?: Record<string, string>;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly promptCacheKey?: string;
 }
@@ -143,7 +143,7 @@ export class ProviderManager implements ModelProvider {
       alias.model,
       alias.protocol,
       alias.baseUrl,
-      this.options.kimiRequestHeaders,
+      this.options.cloudCodeRequestHeaders,
       effectiveAlias.maxOutputSize,
       effectiveAlias.reasoningKey,
       effectiveAlias.reasoningRoundTrip,
@@ -283,7 +283,7 @@ function toKosongProviderConfig(
   model: string,
   modelProtocol: ModelAlias['protocol'],
   modelBaseUrl: string | undefined,
-  kimiRequestHeaders: Record<string, string> | undefined,
+  cloudCodeRequestHeaders: Record<string, string> | undefined,
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
   reasoningRoundTrip: 'always' | 'tool-calls-only' | 'never' | undefined,
@@ -294,7 +294,7 @@ function toKosongProviderConfig(
   betaApi: boolean | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
-  const envCustomHeaders = parseKimiCodeCustomHeaders();
+  const envCustomHeaders = parseCloudCodeCustomHeaders();
   switch (effectiveType) {
     case 'anthropic': {
       // A per-model endpoint (catalog gateway override) wins over the
@@ -331,8 +331,8 @@ function toKosongProviderConfig(
         // still win on conflict.
         ...defaultHeadersField(
           provider.type === 'kimi' && modelProtocol === 'anthropic'
-            ? { ...envCustomHeaders, ...kimiRequestHeaders, ...provider.customHeaders }
-            : { ...envCustomHeaders, ...kimiUserAgentHeader(kimiRequestHeaders), ...provider.customHeaders },
+            ? { ...envCustomHeaders, ...cloudCodeRequestHeaders, ...provider.customHeaders }
+            : { ...envCustomHeaders, ...kimiUserAgentHeader(cloudCodeRequestHeaders), ...provider.customHeaders },
         ),
       };
     }
@@ -355,7 +355,7 @@ function toKosongProviderConfig(
         generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
           ...envCustomHeaders,
-          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...kimiUserAgentHeader(cloudCodeRequestHeaders),
           ...provider.customHeaders,
         }),
       };
@@ -368,7 +368,7 @@ function toKosongProviderConfig(
         generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
           ...envCustomHeaders,
-          ...kimiRequestHeaders,
+          ...cloudCodeRequestHeaders,
           ...provider.customHeaders,
         }),
       };
@@ -381,7 +381,7 @@ function toKosongProviderConfig(
         apiKey: providerApiKey(provider),
         ...defaultHeadersField({
           ...envCustomHeaders,
-          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...kimiUserAgentHeader(cloudCodeRequestHeaders),
           ...provider.customHeaders,
         }),
       };
@@ -399,7 +399,7 @@ function toKosongProviderConfig(
         generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
           ...envCustomHeaders,
-          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...kimiUserAgentHeader(cloudCodeRequestHeaders),
           ...provider.customHeaders,
         }),
       };
@@ -422,7 +422,7 @@ function toKosongProviderConfig(
         location: vertexAILocation(provider, baseUrl),
         ...defaultHeadersField({
           ...envCustomHeaders,
-          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...kimiUserAgentHeader(cloudCodeRequestHeaders),
           ...provider.customHeaders,
         }),
       };
@@ -450,13 +450,13 @@ function defaultHeadersField(
 // Extract just the `User-Agent` from the Kimi identity headers so non-Kimi
 // providers (OpenAI, Anthropic, Google, Vertex) also identify as
 // `cloud-code-cli/<version>` without leaking the `X-Msh-*` device identity
-// headers to third-party endpoints. The full `kimiRequestHeaders` set stays
+// headers to third-party endpoints. The full `cloudCodeRequestHeaders` set stays
 // reserved for the Kimi transport (and the Kimi-routed Anthropic transport),
 // where upstream is the managed Kimi endpoint.
 function kimiUserAgentHeader(
-  kimiRequestHeaders: Record<string, string> | undefined,
+  cloudCodeRequestHeaders: Record<string, string> | undefined,
 ): Record<string, string> {
-  const userAgent = kimiRequestHeaders?.['User-Agent'];
+  const userAgent = cloudCodeRequestHeaders?.['User-Agent'];
   return userAgent === undefined ? {} : { 'User-Agent': userAgent };
 }
 

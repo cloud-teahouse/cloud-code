@@ -59,18 +59,19 @@ function nonBlank(value: string | undefined): string | undefined {
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '2 hours';
 
-const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
-
+const SUBAGENT_TIMEOUT_ENV = 'CLOUD_CODE_SUBAGENT_TIMEOUT_MS';
+const LEGACY_SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
 
 /**
  * Resolve the effective subagent per-task timeout. Precedence:
- * `KIMI_SUBAGENT_TIMEOUT_MS` (integer ms) → `configMs` →
+ * `CLOUD_CODE_SUBAGENT_TIMEOUT_MS` (integer ms; legacy `KIMI_SUBAGENT_TIMEOUT_MS`
+ * honored) → `configMs` →
  * `DEFAULT_SUBAGENT_TIMEOUT_MS` (2 hours). `0` means no timeout: the value
  * feeds the background-task manager's per-task timeout (where `0` arms no
  * timer), so it governs foreground and background subagents (and AgentSwarm).
  */
 export function resolveSubagentTimeoutMs(configMs?: number): number {
-  const raw = process.env[SUBAGENT_TIMEOUT_ENV];
+  const raw = process.env[SUBAGENT_TIMEOUT_ENV] ?? process.env[LEGACY_SUBAGENT_TIMEOUT_ENV];
   if (raw !== undefined && raw.trim().length > 0) {
     const parsed = Number(raw);
     if (Number.isInteger(parsed) && parsed >= 0) return parsed;
@@ -536,7 +537,7 @@ export class SessionSubagentHost {
     if (requested !== SECONDARY_MODEL_KEYWORD) {
       return { ...parentSelection, modelAlias: requested };
     }
-    const secondary = resolveSecondaryModel(parent.kimiConfig?.secondaryModel);
+    const secondary = resolveSecondaryModel(parent.cloudCodeConfig?.secondaryModel);
     if (secondary.model === undefined) {
       return parentSelection;
     }

@@ -84,7 +84,7 @@ export class GuardianReviewer {
   constructor(private readonly agent: Agent) {}
 
   get config(): GuardianConfig | undefined {
-    return this.agent.kimiConfig?.guardian;
+    return this.agent.cloudCodeConfig?.guardian;
   }
 
   get enabled(): boolean {

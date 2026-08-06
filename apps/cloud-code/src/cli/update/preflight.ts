@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { log, type Logger } from '@cloud-code/sdk';
 
 import {
-  KIMI_CODE_OFFICIAL_INSTALL_URL,
+  CLOUD_CODE_OFFICIAL_INSTALL_URL,
   NATIVE_INSTALL_COMMAND_UNIX,
   NATIVE_INSTALL_COMMAND_WIN,
 } from '#/constant/app';
@@ -140,7 +140,7 @@ function formatErrorMessage(error: unknown): string {
 
 const THIRD_PARTY_SOURCE_NOTE =
   '\nNote: Third-party sources may lag behind the official release.\n' +
-  `For the latest updates, use the official installer: ${KIMI_CODE_OFFICIAL_INSTALL_URL}\n`;
+  `For the latest updates, use the official installer: ${CLOUD_CODE_OFFICIAL_INSTALL_URL}\n`;
 
 export function renderManualUpdateMessage(
   currentVersion: string,

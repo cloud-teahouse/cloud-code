@@ -8,7 +8,7 @@ import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
 import {
-  createKimiDefaultHeaders,
+  createCloudCodeDefaultHeaders,
   type CloudCodeHostIdentity,
 } from '@cloud-code/oauth';
 
@@ -33,7 +33,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
    */
   public readonly rpc: CoreRPC;
 
-  public readonly kimiRequestHeaders: Record<string, string> | undefined;
+  public readonly cloudCodeRequestHeaders: Record<string, string> | undefined;
 
   /** The core's owner-scoped [image] limits; see ICoreProcessService. */
   public get imageLimits(): ImageLimits {
@@ -101,12 +101,12 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     // endpoint rejects with 40340 ("only available for Coding Agents
     // such as Kimi CLI, Claude Code, …"). Mirrors what `SDKRpcClient`
     // does for the in-process TUI path (node-sdk's sdk-rpc-client.ts).
-    // Caller-supplied `kimiRequestHeaders` always wins; absent that, we
+    // Caller-supplied `cloudCodeRequestHeaders` always wins; absent that, we
     // synthesize from `options.identity`. Hosts that pass neither
     // (no identity, no headers) still construct — but their requests will
     // trip the 40340 guard.
-    this.kimiRequestHeaders =
-      options.kimiRequestHeaders ??
+    this.cloudCodeRequestHeaders =
+      options.cloudCodeRequestHeaders ??
       CoreProcessService._defaultKimiRequestHeaders(env.homeDir, options.identity);
     // `appVersion` flows into Session records (`app_version`) and tool
     // call ctx. Prefer explicit > identity.version so callers can pin
@@ -131,7 +131,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
       ...options,
       homeDir: env.homeDir,
       configPath: env.configPath,
-      kimiRequestHeaders: this.kimiRequestHeaders,
+      cloudCodeRequestHeaders: this.cloudCodeRequestHeaders,
       appVersion,
       resolveOAuthTokenProvider,
       resolveWorkspaceId,
@@ -227,14 +227,14 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
   }
 
   /**
-   * Build the default `kimiRequestHeaders` from `options.identity` so the
+   * Build the default `cloudCodeRequestHeaders` from `options.identity` so the
    * outbound `User-Agent` + device-identity headers identify this process
    * as a real Coding Agent host (e.g. `cloud-code-cli/<ver>`). Without
    * these, the managed Kimi-for-Coding endpoint rejects with 40340.
    *
    * Returns `undefined` when no identity is provided — preserves the
    * pre-fix contract for hosts that pass headers explicitly via
-   * `options.kimiRequestHeaders` (or for legacy callers / tests that
+   * `options.cloudCodeRequestHeaders` (or for legacy callers / tests that
    * don't talk to the managed endpoint at all).
    *
    * `homeDir` resolution matches CloudCodeCore's so the per-device id (minted
@@ -249,7 +249,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     identity?: CloudCodeHostIdentity,
   ): Record<string, string> | undefined {
     if (identity === undefined) return undefined;
-    return createKimiDefaultHeaders({
+    return createCloudCodeDefaultHeaders({
       homeDir,
       ...identity,
     });

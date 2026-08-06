@@ -294,8 +294,8 @@ describe('ConfigState model capabilities', () => {
 describe('ConfigState thinking clamp for always-thinking models', () => {
   function alwaysThinkingAgent() {
     // The always_thinking clamp in ConfigState.update() reads the model from
-    // `agent.kimiConfig.models`, so the same config must back both the
-    // ProviderManager (provider resolution) and the agent's kimiConfig (the
+    // `agent.cloudCodeConfig.models`, so the same config must back both the
+    // ProviderManager (provider resolution) and the agent's cloudCodeConfig (the
     // clamp's model lookup).
     const config: CloudCodeConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
@@ -423,7 +423,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   }
 
   // The same config backs both the ProviderManager (provider resolution) and
-  // the agent's kimiConfig (where ConfigState reads thinking.keep).
+  // the agent's cloudCodeConfig (where ConfigState reads thinking.keep).
   function kimiAgentWithThinkingKeep(keep: string | undefined) {
     const config: CloudCodeConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
@@ -443,8 +443,8 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     });
   }
 
-  it('injects KIMI_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', () => {
-    vi.stubEnv('KIMI_MODEL_TEMPERATURE', '0.3');
+  it('injects CLOUD_CODE_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', () => {
+    vi.stubEnv('CLOUD_CODE_MODEL_TEMPERATURE', '0.3');
     try {
       const ctx = kimiAgent();
       ctx.agent.config.update({ modelAlias: 'kimi-code' });
@@ -458,8 +458,8 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     }
   });
 
-  it('injects KIMI_MODEL_THINKING_KEEP into config.provider when thinking is on (so compaction keeps it)', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+  it('injects CLOUD_CODE_MODEL_THINKING_KEEP into config.provider when thinking is on (so compaction keeps it)', () => {
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', 'all');
     try {
       const ctx = kimiAgent();
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
@@ -475,7 +475,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('does NOT inject thinking.keep into config.provider when thinking is off', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', 'all');
     try {
       const ctx = kimiAgent();
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'off' });
@@ -491,7 +491,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('injects thinking.keep="all" into config.provider by default (no env, no config)', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', '');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', '');
     try {
       const ctx = kimiAgent();
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
@@ -507,7 +507,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('config thinking.keep="off" disables keep by default', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', '');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', '');
     try {
       const ctx = kimiAgentWithThinkingKeep('off');
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
@@ -522,7 +522,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('env off-value overrides config thinking.keep="all"', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'off');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', 'off');
     try {
       const ctx = kimiAgentWithThinkingKeep('all');
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
@@ -537,7 +537,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('env="all" overrides config thinking.keep="off"', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', 'all');
     try {
       const ctx = kimiAgentWithThinkingKeep('off');
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
@@ -552,7 +552,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('keeps the forced Kimi effort synchronized between state and provider', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_EFFORT', 'max');
     try {
       const ctx = kimiAgent();
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
@@ -570,9 +570,9 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('reports the forced effort for an env-synthesized boolean Kimi model', () => {
-    vi.stubEnv('KIMI_MODEL_NAME', 'kimi-for-coding');
-    vi.stubEnv('KIMI_MODEL_API_KEY', 'test-key');
-    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    vi.stubEnv('CLOUD_CODE_MODEL_NAME', 'kimi-for-coding');
+    vi.stubEnv('CLOUD_CODE_MODEL_API_KEY', 'test-key');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_EFFORT', 'max');
     try {
       const config = applyEnvModelConfig(getDefaultConfig());
       const persistence = new InMemoryAgentRecordPersistence();
@@ -595,7 +595,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('applies the Kimi force through an Anthropic protocol override', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_EFFORT', 'max');
     try {
       const config: CloudCodeConfig = {
         providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
@@ -627,7 +627,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('does not carry the Kimi force into a non-Kimi model switch', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_EFFORT', 'max');
     try {
       const config: CloudCodeConfig = {
         providers: {
@@ -665,8 +665,8 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     }
   });
 
-  it('does NOT inject KIMI_MODEL_THINKING_EFFORT into config.provider when thinking is off', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+  it('does NOT inject CLOUD_CODE_MODEL_THINKING_EFFORT into config.provider when thinking is off', () => {
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_EFFORT', 'max');
     try {
       const ctx = kimiAgent();
       ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'off' });
@@ -703,7 +703,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   }
 
   it('injects context_management clear_thinking keep into config.provider for anthropic when thinking is on', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', 'all');
     try {
       const ctx = anthropicAgentWithThinkingKeep(undefined);
       ctx.agent.config.update({ modelAlias: 'claude-sonnet-4-6', thinkingEffort: 'high' });
@@ -723,7 +723,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 
   it('does NOT inject context_management for anthropic when thinking is off', () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_KEEP', 'all');
     try {
       const ctx = anthropicAgentWithThinkingKeep(undefined);
       ctx.agent.config.update({ modelAlias: 'claude-sonnet-4-6', thinkingEffort: 'off' });

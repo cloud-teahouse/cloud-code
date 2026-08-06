@@ -37,7 +37,7 @@ function makeGoalMode(opts: { config?: CloudCodeConfig } = {}) {
         replay.push(record);
       },
     },
-    kimiConfig: opts.config,
+    cloudCodeConfig: opts.config,
   } as unknown as Agent;
 
   const goals = new GoalMode(agent);

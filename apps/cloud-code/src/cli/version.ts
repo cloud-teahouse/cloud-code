@@ -7,7 +7,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import { createKimiDefaultHeaders, createCloudCodeUserAgent, CLOUD_CODE_PLATFORM, type CloudCodeHostIdentity } from '@cloud-code/oauth';
+import {
+  createCloudCodeDefaultHeaders as createServiceDefaultHeaders,
+  createCloudCodeUserAgent as createProductUserAgent,
+  CLOUD_CODE_PLATFORM,
+  type CloudCodeHostIdentity,
+} from '@cloud-code/oauth';
 
 import { CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
@@ -48,7 +53,7 @@ export function getVersion(): string {
   return pkg.version;
 }
 
-export function createKimiCodeHostIdentity(version = getVersion()): CloudCodeHostIdentity {
+export function createCloudCodeHostIdentity(version = getVersion()): CloudCodeHostIdentity {
   return {
     userAgentProduct: CLI_USER_AGENT_PRODUCT,
     version,
@@ -60,13 +65,13 @@ export function createKimiCodeHostIdentity(version = getVersion()): CloudCodeHos
  * Product User-Agent (`cloud-code-cli/<version>`) for ad-hoc outbound fetches
  * that don't go through the provider pipeline (registry / catalog imports).
  */
-export function createKimiCodeUserAgent(version = getVersion()): string {
-  return createCloudCodeUserAgent(createKimiCodeHostIdentity(version));
+export function createCloudCodeUserAgent(version = getVersion()): string {
+  return createProductUserAgent(createCloudCodeHostIdentity(version));
 }
 
-export function buildKimiDefaultHeaders(version: string): Record<string, string> {
-  return createKimiDefaultHeaders({
+export function buildCloudCodeDefaultHeaders(version: string): Record<string, string> {
+  return createServiceDefaultHeaders({
     homeDir: getDataDir(),
-    ...createKimiCodeHostIdentity(version),
+    ...createCloudCodeHostIdentity(version),
   });
 }

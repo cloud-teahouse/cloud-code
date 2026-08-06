@@ -18,6 +18,7 @@ import type { CloudCodeConfig } from '#/config/schema';
 
 import type { Agent } from '.';
 import type { LLMRequestLogFields } from '../loop';
+import { cloudCodeEnv } from '../utils/env';
 import { fingerprint, toolSignature } from './llm-request-logger';
 import {
   captureShape,
@@ -157,21 +158,27 @@ export class LlmRequestRecorder {
       thinkingKeep: isCloudCodeProvider
         ? resolveThinkingKeep(
             process.env,
-            this.agent.kimiConfig?.thinking?.keep,
+            this.agent.cloudCodeConfig?.thinking?.keep,
             provider.thinkingEffort ?? 'off',
           )
         : undefined,
       temperature: isCloudCodeProvider
-        ? parseFloatEnv(process.env['KIMI_MODEL_TEMPERATURE'], 'KIMI_MODEL_TEMPERATURE')
+        ? parseFloatEnv(
+            cloudCodeEnv('CLOUD_CODE_MODEL_TEMPERATURE', 'KIMI_MODEL_TEMPERATURE'),
+            'CLOUD_CODE_MODEL_TEMPERATURE',
+          )
         : undefined,
       topP: isCloudCodeProvider
-        ? parseFloatEnv(process.env['KIMI_MODEL_TOP_P'], 'KIMI_MODEL_TOP_P')
+        ? parseFloatEnv(
+            cloudCodeEnv('CLOUD_CODE_MODEL_TOP_P', 'KIMI_MODEL_TOP_P'),
+            'CLOUD_CODE_MODEL_TOP_P',
+          )
         : undefined,
       maxTokens: provider.maxCompletionTokens,
       betaApi:
         modelAlias === undefined
           ? undefined
-          : this.agent.kimiConfig?.models?.[modelAlias]?.betaApi,
+          : this.agent.cloudCodeConfig?.models?.[modelAlias]?.betaApi,
       toolSelect: this.agent.toolSelectEnabled,
       systemPromptHash,
       systemPrompt:
@@ -231,7 +238,7 @@ export class LlmRequestRecorder {
    * `CLOUD_CODE_DEBUG_CACHE=1` — see the exported {@link cacheDiagnosticsEnabled}.
    */
   private cacheDiagnosticsEnabled(): boolean {
-    return cacheDiagnosticsEnabled(this.agent.kimiConfig);
+    return cacheDiagnosticsEnabled(this.agent.cloudCodeConfig);
   }
 
   private toolsHashFor(wireTools: readonly Tool[]): string {

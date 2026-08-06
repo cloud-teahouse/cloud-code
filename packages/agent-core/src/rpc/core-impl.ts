@@ -181,7 +181,7 @@ export interface CloudCodeCoreOptions {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
   readonly runtime?: ToolServices | undefined;
-  readonly kimiRequestHeaders?: Record<string, string> | undefined;
+  readonly cloudCodeRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
   /**
    * Workspace-id resolver handed to the session store: the registered
@@ -238,7 +238,7 @@ export class CloudCodeCore implements PromisableMethods<CoreAPI> {
   private configWarnings: readonly string[] = [];
   private readonly runtimeOverride: ToolServices | undefined;
   private readonly userHomeDir: string;
-  private readonly kimiRequestHeaders: Record<string, string> | undefined;
+  private readonly cloudCodeRequestHeaders: Record<string, string> | undefined;
   private readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver | undefined;
   private readonly skillDirs: readonly string[];
   private readonly sessionStore: SessionStore;
@@ -267,7 +267,7 @@ export class CloudCodeCore implements PromisableMethods<CoreAPI> {
     });
     this.runtimeOverride = options.runtime;
     this.runtime = options.runtime;
-    this.kimiRequestHeaders = options.kimiRequestHeaders;
+    this.cloudCodeRequestHeaders = options.cloudCodeRequestHeaders;
     this.resolveOAuthTokenProvider = options.resolveOAuthTokenProvider;
     this.skillDirs = options.skillDirs ?? [];
     this.appVersion = options.appVersion;
@@ -1402,7 +1402,7 @@ export class CloudCodeCore implements PromisableMethods<CoreAPI> {
     if (this.runtime !== undefined) return this.runtime;
     const runtime = await createRuntimeConfig({
       config,
-      kimiRequestHeaders: this.kimiRequestHeaders,
+      cloudCodeRequestHeaders: this.cloudCodeRequestHeaders,
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
     });
     this.runtime = runtime;
@@ -1437,7 +1437,7 @@ export class CloudCodeCore implements PromisableMethods<CoreAPI> {
   private resolveProviderManager(sessionId: string): ProviderManager {
     return new ProviderManager({
       config: () => this.config,
-      kimiRequestHeaders: this.kimiRequestHeaders,
+      cloudCodeRequestHeaders: this.cloudCodeRequestHeaders,
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
       promptCacheKey: sessionId,
     });
@@ -1527,7 +1527,30 @@ export class CloudCodeCore implements PromisableMethods<CoreAPI> {
       return this.config;
     }
     this.configWarnings = loaded.envWarnings;
-    return this.setRuntimeConfig(loaded.config);
+    const config = this.setRuntimeConfig(loaded.config);
+    this.broadcastRuntimeConfig(config);
+    return config;
+  }
+
+  /**
+   * Push a freshly (re)loaded config into every running session, so live agents
+   * follow config writes (provider/model edits, a persisted `/sandbox` toggle,
+   * a direct config.toml edit picked up via `getCloudCodeConfig` reload)
+   * without a session restart. Sessions keep their own overlays — see
+   * `Session.applyRuntimeConfig`.
+   */
+  private broadcastRuntimeConfig(config: CloudCodeConfig): void {
+    const sessionConfig = this.withPrintModeDefaults(config);
+    for (const session of this.sessions.values()) {
+      try {
+        session.applyRuntimeConfig(sessionConfig);
+      } catch (error) {
+        log.warn('failed to apply reloaded config to session', {
+          error,
+          sessionId: session.options.id,
+        });
+      }
+    }
   }
 
   private setRuntimeConfig(config: CloudCodeConfig): CloudCodeConfig {
@@ -1642,7 +1665,7 @@ function standaloneMcpTestResult(
 
 async function createRuntimeConfig(input: {
   readonly config: CloudCodeConfig;
-  readonly kimiRequestHeaders?: Record<string, string> | undefined;
+  readonly cloudCodeRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
 }): Promise<ToolServices> {
   const localFetcher = new LocalFetchURLProvider();
@@ -1664,7 +1687,7 @@ async function createRuntimeConfig(input: {
         : new MoonshotFetchURLProvider({
             baseUrl: fetchService.baseUrl,
             localFallback: localFetcher,
-            defaultHeaders: input.kimiRequestHeaders,
+            defaultHeaders: input.cloudCodeRequestHeaders,
             ...serviceCredentials(fetchService, input.resolveOAuthTokenProvider),
           }),
     webSearcher:
@@ -1672,7 +1695,7 @@ async function createRuntimeConfig(input: {
         ? undefined
         : new MoonshotWebSearchProvider({
             baseUrl: searchService.baseUrl,
-            defaultHeaders: input.kimiRequestHeaders,
+            defaultHeaders: input.cloudCodeRequestHeaders,
             ...serviceCredentials(searchService, input.resolveOAuthTokenProvider),
           }),
   };

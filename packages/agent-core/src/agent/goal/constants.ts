@@ -21,9 +21,9 @@ export const MAX_GOAL_EVIDENCE_RECEIPTS = 50;
 
 /**
  * Defaults for the `[goal]` completion-gate config (§3.3/§3.6), resolved at
- * each use site from `agent.kimiConfig?.goal` — the same lazy static read as
+ * each use site from `agent.cloudCodeConfig?.goal` — the same lazy static read as
  * `loopControl` (turn/index.ts), so there is no init-ordering hazard: the
- * Agent constructor assigns `kimiConfig` before it constructs `GoalMode`.
+ * Agent constructor assigns `cloudCodeConfig` before it constructs `GoalMode`.
  */
 export const DEFAULT_COMPLETION_GATE_ENABLED = true;
 export const GOAL_EVIDENCE_LEASE_TURNS_DEFAULT = 5;

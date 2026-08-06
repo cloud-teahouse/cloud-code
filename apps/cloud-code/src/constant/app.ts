@@ -94,10 +94,8 @@ export const CLOUD_CODE_INSTALL_SH_URL =
 
 // Official download page, referenced by prompt copy that steers users away
 // from third-party install sources. Must point at OUR repo — never upstream's
-// download page, which would offer to replace this independent build. (Name
-// kept as upstream's `KIMI_CODE_OFFICIAL_INSTALL_URL` to match the merged
-// update/preflight.ts import; rename both together if desired.)
-export const KIMI_CODE_OFFICIAL_INSTALL_URL = 'https://github.com/cloud-teahouse/cloud-code';
+// download page, which would offer to replace this independent build.
+export const CLOUD_CODE_OFFICIAL_INSTALL_URL = 'https://github.com/cloud-teahouse/cloud-code';
 
 // Native install commands, split by platform. Use these for prompt copy and spawn calls only; do not assemble the strings elsewhere.
 // There is no native Windows installer — install.sh covers Unix, so the

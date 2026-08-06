@@ -1,6 +1,6 @@
 import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
-import { parseKimiCodeCustomHeaders } from './identity';
+import { parseCloudCodeCustomHeaders } from './identity';
 import { parseSupportsThinkingType, parseThinkEfforts } from './managed-kimi-code';
 import { MANAGED_KIMI_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
 import type {
@@ -116,7 +116,7 @@ export async function fetchOpenPlatformModels(
 ): Promise<ManagedKimiCodeModelInfo[]> {
   const res = await fetchImpl(`${platform.baseUrl.replace(/\/+$/, '')}/models`, {
     headers: {
-      ...parseKimiCodeCustomHeaders(),
+      ...parseCloudCodeCustomHeaders(),
       Authorization: `Bearer ${apiKey}`,
       Accept: 'application/json',
     },

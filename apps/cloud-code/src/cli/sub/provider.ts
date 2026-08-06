@@ -33,7 +33,7 @@ import {
 } from '@cloud-code/sdk';
 import type { Command } from 'commander';
 
-import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';
+import { createCloudCodeHostIdentity, createCloudCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 
 interface WritableLike {
@@ -99,7 +99,7 @@ export async function handleProviderAdd(
 
   let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
   try {
-    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
+    entries = await fetchCustomRegistry(source, { userAgent: createCloudCodeUserAgent() });
   } catch (error) {
     const suffix = error instanceof CustomRegistryApiError ? ` (HTTP ${String(error.status)})` : '';
     deps.stderr.write(`Failed to fetch registry${suffix}: ${errorMessage(error)}\n`);
@@ -434,7 +434,7 @@ export async function handleCatalogAdd(
 
 async function loadCatalogOrExit(deps: ProviderDeps, url: string): Promise<Catalog> {
   try {
-    const loaded = await fetchCatalogOrBuiltIn(url, { userAgent: createKimiCodeUserAgent() });
+    const loaded = await fetchCatalogOrBuiltIn(url, { userAgent: createCloudCodeUserAgent() });
     if (loaded.fromBuiltIn) {
       deps.stderr.write(
         `Warning: failed to reach ${url}; using the built-in models.dev catalog snapshot.\n`,
@@ -548,7 +548,7 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
 
 function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
   let harness: CloudCodeHarness | undefined;
-  const identity = createKimiCodeHostIdentity();
+  const identity = createCloudCodeHostIdentity();
   return {
     getHarness:
       overrides.getHarness ??

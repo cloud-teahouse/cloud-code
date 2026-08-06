@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readApiErrorMessage } from './api-error';
 import { DEFAULT_CLOUD_CODE_OAUTH_HOST } from './constants';
 import { OAuthUnauthorizedError } from './errors';
-import { parseKimiCodeCustomHeaders } from './identity';
+import { parseCloudCodeCustomHeaders } from './identity';
 import { DEFAULT_CLOUD_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
 import { MANAGED_KIMI_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
 import { isRecord } from './utils';
@@ -497,7 +497,7 @@ export async function fetchManagedKimiCodeModels(
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const response = await fetchImpl(`${baseUrl}/models`, {
     headers: {
-      ...parseKimiCodeCustomHeaders(),
+      ...parseCloudCodeCustomHeaders(),
       ...options.headers,
       Authorization: `Bearer ${options.accessToken}`,
       Accept: 'application/json',

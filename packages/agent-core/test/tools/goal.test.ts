@@ -30,7 +30,7 @@ function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode; config?: Clou
     emitEvent: () => {},
     context: { appendSystemReminder: () => {} },
     permission: { mode: 'manual' },
-    kimiConfig: opts.config,
+    cloudCodeConfig: opts.config,
   } as unknown as Agent;
   (agent as { goal: GoalMode }).goal = opts.goal ?? new GoalMode(agent);
   return agent;

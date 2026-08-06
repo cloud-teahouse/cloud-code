@@ -56,7 +56,7 @@ export class GuardianReviewPermissionPolicy implements PermissionPolicy {
 
   constructor(private readonly agent: Agent) {
     this.reviewer = new GuardianReviewer(agent);
-    const config = agent.kimiConfig?.guardian;
+    const config = agent.cloudCodeConfig?.guardian;
     this.breaker = new GuardianCircuitBreaker({
       maxConsecutiveDenials: config?.maxConsecutiveDenials ?? GUARDIAN_MAX_CONSECUTIVE_DENIALS,
       maxWindowDenials: config?.maxWindowDenials ?? GUARDIAN_MAX_WINDOW_DENIALS,

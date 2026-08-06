@@ -163,7 +163,7 @@ export class ModelCatalogService
         const tokenProvider = this._authFacade.resolveOAuthTokenProvider(providerName, oauthRef);
         return tokenProvider?.getAuthHeaders?.();
       },
-      userAgent: this.core.kimiRequestHeaders?.['User-Agent'],
+      userAgent: this.core.cloudCodeRequestHeaders?.['User-Agent'],
     };
   }
 

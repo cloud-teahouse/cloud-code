@@ -1257,9 +1257,9 @@ max_running_tasks = 0
 max_steps_per_turn = "nope"
 `);
     const result = loadRuntimeConfigSafe(configPath, {
-      KIMI_MODEL_NAME: 'env-model',
-      KIMI_MODEL_API_KEY: 'sk-env',
-      KIMI_MODEL_MAX_CONTEXT_SIZE: '262144',
+      CLOUD_CODE_MODEL_NAME: 'env-model',
+      CLOUD_CODE_MODEL_API_KEY: 'sk-env',
+      CLOUD_CODE_MODEL_MAX_CONTEXT_SIZE: '262144',
     });
     expect(result.envWarnings).toEqual([]);
     expect(result.config.models?.['__kimi_env_model__']).toBeDefined();
@@ -1270,7 +1270,7 @@ max_steps_per_turn = "nope"
   it('skips KIMI_MODEL_* overrides with an env warning instead of throwing', async () => {
     const configPath = await writeTempConfig(VALID_TOML);
     const result = loadRuntimeConfigSafe(configPath, {
-      KIMI_MODEL_NAME: 'env-model',
+      CLOUD_CODE_MODEL_NAME: 'env-model',
     });
     expect(result.fileWarnings).toEqual([]);
     expect(result.envWarnings).toHaveLength(1);

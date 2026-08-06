@@ -23,7 +23,7 @@ import {
 } from './goal-prompt';
 import type { PromptHarness, PromptSession } from './prompt-session';
 import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
-import { createKimiCodeHostIdentity } from './version';
+import { createCloudCodeHostIdentity } from './version';
 
 /**
  * Await `promise`, but stop waiting after `timeoutMs`.
@@ -98,7 +98,7 @@ export async function runPrompt(
   const workDir = process.cwd();
   const harness = await createPromptHarness({
     homeDir: resolveCloudCodeHome(),
-    identity: createKimiCodeHostIdentity(version),
+    identity: createCloudCodeHostIdentity(version),
     uiMode: PROMPT_UI_MODE,
     skillDirs: opts.skillsDirs,
     // `--server-stdio` / `--server <ws-url>` swap the in-process

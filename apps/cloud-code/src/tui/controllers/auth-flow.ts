@@ -1,6 +1,6 @@
 import type { CreateSessionOptions, CloudCodeHarness, Session } from '@cloud-code/sdk';
 
-import { createKimiCodeUserAgent } from '#/cli/version';
+import { createCloudCodeUserAgent } from '#/cli/version';
 
 import type { SkillListSession } from '../commands';
 
@@ -189,7 +189,7 @@ export class AuthFlowController {
           const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
           return tokenProvider.getAuthHeaders?.();
         },
-        userAgent: createKimiCodeUserAgent(),
+        userAgent: createCloudCodeUserAgent(),
       },
       { scope },
     );

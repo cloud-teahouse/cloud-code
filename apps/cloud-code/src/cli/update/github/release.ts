@@ -1,4 +1,4 @@
-import { createKimiCodeUserAgent } from '#/cli/version';
+import { createCloudCodeUserAgent } from '#/cli/version';
 
 import {
   GITHUB_API_TIMEOUT_MS,
@@ -47,7 +47,7 @@ async function fetchWithTimeout(
       signal: controller.signal,
       headers: {
         // GitHub rejects API calls without a User-Agent.
-        'User-Agent': createKimiCodeUserAgent(),
+        'User-Agent': createCloudCodeUserAgent(),
         Accept: 'application/vnd.github+json',
       },
     });

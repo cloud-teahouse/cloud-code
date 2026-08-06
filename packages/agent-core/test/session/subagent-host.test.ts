@@ -58,7 +58,7 @@ afterEach(async () => {
   }
 });
 
-const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
+const SUBAGENT_TIMEOUT_ENV = 'CLOUD_CODE_SUBAGENT_TIMEOUT_MS';
 
 describe('resolveSubagentTimeoutMs', () => {
   const saved: { value: string | undefined } = { value: process.env[SUBAGENT_TIMEOUT_ENV] };

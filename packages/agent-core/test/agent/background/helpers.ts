@@ -14,7 +14,7 @@ import type { AgentEvent } from '../../../src/rpc/events';
 export interface FakeBackgroundAgent {
   emitEvent: ReturnType<typeof vi.fn>;
   emittedEvents: AgentEvent[];
-  kimiConfig?: { background?: { maxRunningTasks?: number } };
+  cloudCodeConfig?: { background?: { maxRunningTasks?: number } };
   context: { appendUserMessage: ReturnType<typeof vi.fn> };
   turn: { steer: ReturnType<typeof vi.fn> };
   hooks?: { fireAndForgetTrigger: ReturnType<typeof vi.fn> };
@@ -39,7 +39,7 @@ export function createBackgroundManager(options: {
     emitEvent: vi.fn((event: AgentEvent) => {
       emittedEvents.push(event);
     }),
-    kimiConfig:
+    cloudCodeConfig:
       options.maxRunningTasks === undefined
         ? undefined
         : { background: { maxRunningTasks: options.maxRunningTasks } },

@@ -348,7 +348,7 @@ export class Session {
   private runtimeConfig: CloudCodeConfig | undefined;
 
   /** The session's current config snapshot (see {@link Session.runtimeConfig}). */
-  get kimiConfig(): CloudCodeConfig | undefined {
+  get cloudCodeConfig(): CloudCodeConfig | undefined {
     return this.runtimeConfig;
   }
 
@@ -976,7 +976,7 @@ export class Session {
    * Live-apply the core's fully resolved secondary-model config after a
    * `[secondary_model]` change: the spawn
    * binding (`subagent-host`), the startup-warning computation, and every live
-   * agent's `kimiConfig` (tool descriptions, loop control) all read the
+   * agent's `cloudCodeConfig` (tool descriptions, loop control) all read the
    * session snapshot, so a mid-session `/secondary_model` switch takes effect
    * for the next subagent spawn without recreating the session. The core owns
    * config reload, environment overlays, and derived-model synthesis. Copying
@@ -1009,16 +1009,27 @@ export class Session {
     if (pointedModel !== undefined) models[secondary.model] = pointedModel;
     const derivedModel = config.models?.[SECONDARY_DERIVED_MODEL_ALIAS];
     if (derivedModel !== undefined) models[SECONDARY_DERIVED_MODEL_ALIAS] = derivedModel;
-    const next = { ...base, models, secondaryModel: secondary };
+    this.applyRuntimeConfig({ ...base, models, secondaryModel: secondary });
+  }
+
+  /**
+   * Live-apply a core-side config write: the session snapshot and every live
+   * agent follow the persisted file without recreating the session. A
+   * session-scoped `outputStyle` overlay survives — the host may never persist
+   * it (see {@link setOutputStyle}), so a global push must not silently drop it.
+   */
+  applyRuntimeConfig(config: CloudCodeConfig): void {
+    const sessionStyle = config.outputStyle === undefined ? this.runtimeConfig?.outputStyle : undefined;
+    const next = sessionStyle === undefined ? config : { ...config, outputStyle: sessionStyle };
     this.runtimeConfig = next;
     this.secondaryModelWarnings = undefined;
     for (const [, entry] of this.agents) {
       if (entry instanceof Agent) {
-        entry.updateKimiConfig(next);
+        entry.updateCloudCodeConfig(next);
       } else {
         // Resume in flight: push the update once the agent materializes (the
         // rejection is owned by the resume caller, not by this tap).
-        void entry.then(({ agent }) => agent.updateKimiConfig(next)).catch(() => {});
+        void entry.then(({ agent }) => agent.updateCloudCodeConfig(next)).catch(() => {});
       }
     }
   }
@@ -1035,7 +1046,7 @@ export class Session {
   private computeSecondaryModelWarnings(): SessionWarning[] {
     if (this.secondaryModelWarnings !== undefined) return [...this.secondaryModelWarnings];
     const warnings: SessionWarning[] = [];
-    const secondary = resolveSecondaryModelRecipe(this.kimiConfig);
+    const secondary = resolveSecondaryModelRecipe(this.cloudCodeConfig);
     if (secondary?.model !== undefined) {
       const boundAlias =
         secondaryModelPatch(secondary) === undefined
@@ -1565,7 +1576,7 @@ export class Session {
       type,
       kaos: this.toolKaos.withCwd(cwd),
       toolServices: this.options.toolServices,
-      config: this.kimiConfig,
+      config: this.cloudCodeConfig,
       homedir,
       brandHomeDir: this.options.cloudCodeHomeDir,
       // Session-level, shared across agents: originals persisted for

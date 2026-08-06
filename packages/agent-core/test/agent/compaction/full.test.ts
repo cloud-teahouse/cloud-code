@@ -2344,7 +2344,7 @@ describe('FullCompaction', () => {
   });
 
   it('honors completion budget env hard caps during compaction', async () => {
-    vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '8192');
+    vi.stubEnv('CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS', '8192');
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
     const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
@@ -2378,7 +2378,7 @@ describe('FullCompaction', () => {
   });
 
   it('honors completion budget env opt-out during compaction', async () => {
-    vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '0');
+    vi.stubEnv('CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS', '0');
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
     const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
@@ -2434,9 +2434,9 @@ describe('FullCompaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    // Set maxOutputSize on the harness's internal kimiConfig — the
+    // Set maxOutputSize on the harness's internal cloudCodeConfig — the
     // compaction path reads it via ConfigState.maxOutputSize.
-    const models = (ctx as unknown as { kimiConfig: CloudCodeConfig }).kimiConfig.models;
+    const models = (ctx as unknown as { cloudCodeConfig: CloudCodeConfig }).cloudCodeConfig.models;
     models![CATALOGUED_PROVIDER.model] = {
       ...models![CATALOGUED_PROVIDER.model]!,
       maxOutputSize: 384000,

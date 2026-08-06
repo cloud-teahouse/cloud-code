@@ -101,13 +101,13 @@ export class FullCompaction {
         {
           ...DEFAULT_COMPACTION_CONFIG,
           triggerRatio:
-            agent.kimiConfig?.loopControl?.compactionTriggerRatio ??
+            agent.cloudCodeConfig?.loopControl?.compactionTriggerRatio ??
             DEFAULT_COMPACTION_CONFIG.triggerRatio,
           blockRatio:
-            agent.kimiConfig?.loopControl?.compactionTriggerRatio ??
+            agent.cloudCodeConfig?.loopControl?.compactionTriggerRatio ??
             DEFAULT_COMPACTION_CONFIG.blockRatio,
           reservedContextSize:
-            agent.kimiConfig?.loopControl?.reservedContextSize ??
+            agent.cloudCodeConfig?.loopControl?.reservedContextSize ??
             DEFAULT_COMPACTION_CONFIG.reservedContextSize,
         },
       );
@@ -453,7 +453,7 @@ export class FullCompaction {
         provider: this.agent.config.provider,
         budget: resolveCompletionBudget({
           maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
-          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+          reservedContextSize: this.agent.cloudCodeConfig?.loopControl?.reservedContextSize,
         }),
         capability,
       });

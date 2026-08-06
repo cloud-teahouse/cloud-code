@@ -25,7 +25,7 @@ import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
 import { handleUpgrade } from './cli/sub/upgrade';
 import { runUpdatePreflight } from './cli/update/preflight';
-import { createKimiCodeHostIdentity, getVersion } from './cli/version';
+import { createCloudCodeHostIdentity, getVersion } from './cli/version';
 import { PROCESS_NAME } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
@@ -78,7 +78,7 @@ export async function handleMainCommand(
 export async function handleUpgradeCommand(version: string): Promise<void> {
   const harness = createCloudCodeHarness({
     homeDir: resolveCloudCodeHome(),
-    identity: createKimiCodeHostIdentity(version),
+    identity: createCloudCodeHostIdentity(version),
   });
   let exitCode = 1;
   try {

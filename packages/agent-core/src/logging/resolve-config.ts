@@ -1,3 +1,4 @@
+import { cloudCodeEnv } from '../utils/env';
 import { resolveGlobalLogPath } from './logger';
 import type { LogLevel, LoggingConfig } from './types';
 
@@ -17,22 +18,24 @@ export interface ResolveLoggingInput {
  *
  * v1 deliberately does not read `config.toml [logging]` — the schema is in
  * flux and reading it adds a startup-time failure surface. Users who need to
- * override the defaults set env vars:
+ * override the defaults set env vars (legacy `KIMI_LOG_*` names are honored
+ * as fallbacks):
  *
- *   KIMI_LOG_LEVEL=debug
- *   KIMI_LOG_GLOBAL_MAX_BYTES=... KIMI_LOG_GLOBAL_FILES=...
- *   KIMI_LOG_SESSION_MAX_BYTES=... KIMI_LOG_SESSION_FILES=...
+ *   CLOUD_CODE_LOG_LEVEL=debug
+ *   CLOUD_CODE_LOG_GLOBAL_MAX_BYTES=... CLOUD_CODE_LOG_GLOBAL_FILES=...
+ *   CLOUD_CODE_LOG_SESSION_MAX_BYTES=... CLOUD_CODE_LOG_SESSION_FILES=...
  */
 export function resolveLoggingConfig(input: ResolveLoggingInput): LoggingConfig {
   const env = input.env ?? process.env;
+  const logEnv = (name: string) => cloudCodeEnv(`CLOUD_CODE_LOG_${name}`, `KIMI_LOG_${name}`, env);
   return {
-    level: parseLevel(env['KIMI_LOG_LEVEL']) ?? DEFAULT_LOG_LEVEL,
+    level: parseLevel(logEnv('LEVEL')) ?? DEFAULT_LOG_LEVEL,
     globalLogPath: resolveGlobalLogPath(input.homeDir),
-    globalMaxBytes: parsePositiveInt(env['KIMI_LOG_GLOBAL_MAX_BYTES']) ?? DEFAULT_GLOBAL_MAX_BYTES,
-    globalFiles: parsePositiveInt(env['KIMI_LOG_GLOBAL_FILES']) ?? DEFAULT_GLOBAL_FILES,
+    globalMaxBytes: parsePositiveInt(logEnv('GLOBAL_MAX_BYTES')) ?? DEFAULT_GLOBAL_MAX_BYTES,
+    globalFiles: parsePositiveInt(logEnv('GLOBAL_FILES')) ?? DEFAULT_GLOBAL_FILES,
     sessionMaxBytes:
-      parsePositiveInt(env['KIMI_LOG_SESSION_MAX_BYTES']) ?? DEFAULT_SESSION_MAX_BYTES,
-    sessionFiles: parsePositiveInt(env['KIMI_LOG_SESSION_FILES']) ?? DEFAULT_SESSION_FILES,
+      parsePositiveInt(logEnv('SESSION_MAX_BYTES')) ?? DEFAULT_SESSION_MAX_BYTES,
+    sessionFiles: parsePositiveInt(logEnv('SESSION_FILES')) ?? DEFAULT_SESSION_FILES,
   };
 }
 

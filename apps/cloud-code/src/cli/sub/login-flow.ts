@@ -15,7 +15,7 @@ import { createInterface } from 'node:readline/promises';
 import { CHATGPT_CODEX_PROVIDER_NAME } from '@cloud-code/oauth';
 import { createCloudCodeHarness } from '@cloud-code/sdk';
 
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createCloudCodeHostIdentity } from '#/cli/version';
 import { openUrl } from '#/utils/open-url';
 
 export interface LoginFlowOptions {
@@ -31,7 +31,7 @@ export async function runLoginFlow(options: LoginFlowOptions = {}): Promise<neve
 }
 
 async function runCloudCodeLoginFlow(): Promise<never> {
-  const identity = createKimiCodeHostIdentity();
+  const identity = createCloudCodeHostIdentity();
   const harness = createCloudCodeHarness({
     identity,
     uiMode: 'cli',
@@ -89,7 +89,7 @@ async function runCloudCodeLoginFlow(): Promise<never> {
  * URL (which fails to load remotely) or the bare authorization code.
  */
 async function runChatGptCodexLoginFlow(): Promise<never> {
-  const identity = createKimiCodeHostIdentity();
+  const identity = createCloudCodeHostIdentity();
   const harness = createCloudCodeHarness({
     identity,
     uiMode: 'cli',

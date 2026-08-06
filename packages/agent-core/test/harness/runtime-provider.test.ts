@@ -14,12 +14,12 @@ import { resolveThinkingEffort } from '../../src/agent/config/thinking';
 function resolveRuntimeProvider(input: {
   readonly config: CloudCodeConfig;
   readonly model?: string;
-  readonly kimiRequestHeaders?: Record<string, string>;
+  readonly cloudCodeRequestHeaders?: Record<string, string>;
   readonly promptCacheKey?: string;
 }): ReturnType<ProviderManager['resolveProviderConfig']> {
   const manager = new ProviderManager({
     config: input.config,
-    kimiRequestHeaders: input.kimiRequestHeaders,
+    cloudCodeRequestHeaders: input.cloudCodeRequestHeaders,
     promptCacheKey: input.promptCacheKey,
   });
   const model = input.model ?? input.config.defaultModel;
@@ -644,7 +644,7 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
 });
 
 describe('resolveRuntimeProvider Kimi request headers', () => {
-  it('does not set defaultHeaders when no kimiRequestHeaders or customHeaders exist', () => {
+  it('does not set defaultHeaders when no cloudCodeRequestHeaders or customHeaders exist', () => {
     const resolved = resolveRuntimeProvider({ config: BASE_CONFIG });
 
     expect(resolved.provider).toMatchObject({
@@ -654,7 +654,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
     expect('defaultHeaders' in resolved.provider).toBe(false);
   });
 
-  it('uses only customHeaders when kimiRequestHeaders are missing', () => {
+  it('uses only customHeaders when cloudCodeRequestHeaders are missing', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         ...BASE_CONFIG,
@@ -679,10 +679,10 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
     });
   });
 
-  it('passes kimiRequestHeaders through to Kimi provider defaultHeaders', () => {
+  it('passes cloudCodeRequestHeaders through to Kimi provider defaultHeaders', () => {
     const resolved = resolveRuntimeProvider({
       config: BASE_CONFIG,
-      kimiRequestHeaders: TEST_KIMI_HEADERS,
+      cloudCodeRequestHeaders: TEST_KIMI_HEADERS,
     });
 
     expect(resolved.provider).toMatchObject({
@@ -705,7 +705,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
     });
   });
 
-  it('lets provider customHeaders override kimiRequestHeaders', () => {
+  it('lets provider customHeaders override cloudCodeRequestHeaders', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         ...BASE_CONFIG,
@@ -721,7 +721,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
           },
         },
       },
-      kimiRequestHeaders: TEST_KIMI_HEADERS,
+      cloudCodeRequestHeaders: TEST_KIMI_HEADERS,
     });
 
     expect(resolved.provider).toMatchObject({
@@ -734,7 +734,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
     });
   });
 
-  it('applies only the User-Agent from kimiRequestHeaders to non-Kimi providers', () => {
+  it('applies only the User-Agent from cloudCodeRequestHeaders to non-Kimi providers', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         defaultModel: 'gpt-alias',
@@ -752,7 +752,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
           },
         },
       },
-      kimiRequestHeaders: TEST_KIMI_HEADERS,
+      cloudCodeRequestHeaders: TEST_KIMI_HEADERS,
       promptCacheKey: 'session-test',
     });
 

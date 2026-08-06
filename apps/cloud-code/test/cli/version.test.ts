@@ -4,8 +4,8 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildKimiDefaultHeaders,
-  createKimiCodeUserAgent,
+  buildCloudCodeDefaultHeaders,
+  createCloudCodeUserAgent,
   getHostPackageJsonPath,
   getHostPackageRoot,
   getVersion,
@@ -22,12 +22,12 @@ describe('cli version helpers', () => {
   });
 
   it('builds default headers with the cloud-code-cli user-agent', () => {
-    const headers = buildKimiDefaultHeaders('1.2.3');
+    const headers = buildCloudCodeDefaultHeaders('1.2.3');
 
     expect(headers['User-Agent']).toBe('cloud-code-cli/1.2.3');
   });
 
   it('builds the product user-agent for ad-hoc fetches', () => {
-    expect(createKimiCodeUserAgent('1.2.3')).toBe('cloud-code-cli/1.2.3');
+    expect(createCloudCodeUserAgent('1.2.3')).toBe('cloud-code-cli/1.2.3');
   });
 });

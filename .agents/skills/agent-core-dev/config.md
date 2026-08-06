@@ -22,7 +22,7 @@ Config holds **preferences**: values a user or operator *chooses*, with a schema
 | Type | Example | Home |
 |---|---|---|
 | User preference | model, theme, permission mode | **config.toml** |
-| Operational override | `KIMI_MODEL_*`, `CLOUD_CODE_*` env | config (env overlay at the consumption site) |
+| Operational override | `CLOUD_CODE_*` env (legacy `KIMI_*` aliases) | config (env overlay at the consumption site) |
 | Per-run intent | CLI `--model` | runtime options, never persisted |
 | Session runtime state | active model mid-session, plan mode | session/agent runtime + wire record — **not** config |
 | Tuning constant | retry backoffs, buffer sizes | code; promote only when user-tunable |
@@ -31,8 +31,8 @@ Config holds **preferences**: values a user or operator *chooses*, with a schema
 
 ## Env overlays
 
-- `KIMI_MODEL_*` family (`config/env-model.ts`) synthesizes a runtime-only provider/model (reserved keys `__kimi_env__` / `__kimi_env_model__`) — **never persisted**. This env family is part of the Moonshot service contract (brand.md); the names stay.
-- `KIMI_MODEL_TEMPERATURE/TOP_P/THINKING_EFFORT` (`config/cloud-code-env-params.ts`) override sampling.
+- `CLOUD_CODE_MODEL_*` family (`config/env-model.ts`) synthesizes a runtime-only provider/model (reserved keys `__kimi_env__` / `__kimi_env_model__`) — **never persisted**. The legacy `KIMI_MODEL_*` names keep working as aliases via `cloudCodeEnv`; the reserved keys keep their old values because they can leak into session records.
+- `CLOUD_CODE_MODEL_TEMPERATURE/TOP_P/THINKING_EFFORT` (`config/cloud-code-env-params.ts`) override sampling.
 - Generic precedence helper `config/resolve.ts` `resolveConfigValue({ env, envKey, configValue, defaultValue })`: **env > config value > default**. Scattered `CLOUD_CODE_*` vars (e.g. `CLOUD_CODE_DEBUG_CACHE`, `CLOUD_CODE_MCP_*_TIMEOUT_MS`) win over specific config keys.
 - Business code reads resolved config; it never parses `process.env` ad hoc.
 
@@ -60,5 +60,5 @@ There is no full project-level `config.toml`. TUI keys never go into `config.tom
 - snake_case on disk, camelCase in memory — never hand-map keys and never write camelCase to disk.
 - Runtime state (model switch, plan mode) never rewrites `config.toml`; it lives in memory and the `config.update` wire record.
 - Env overlays are resolved at the consumption site via `resolveConfigValue`; no ad-hoc `process.env` reads in business code.
-- The `KIMI_MODEL_*` env family and reserved `__kimi_env__` keys are service contract — never persisted, never renamed.
+- The `CLOUD_CODE_MODEL_*` env family (legacy `KIMI_MODEL_*` aliases) is runtime-only — never persisted. Reserved `__kimi_env__` keys keep their literal values for session-record compat.
 - `tui.toml` and `config.toml` are separate schemas; do not cross-contaminate.

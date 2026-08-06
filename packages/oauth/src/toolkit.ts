@@ -6,7 +6,7 @@ import { CLOUD_CODE_FLOW_CONFIG } from './constants';
 import { OAuthUnauthorizedError } from './errors';
 import {
   assertCloudCodeHostIdentity,
-  createKimiDefaultHeaders,
+  createCloudCodeDefaultHeaders,
   type CloudCodeHostIdentity,
 } from './identity';
 import {
@@ -446,7 +446,7 @@ export class CloudCodeOAuthToolkit<TConfig = unknown> {
               // Full identity headers (User-Agent + X-Msh-*): the OAuth host
               // reads the platform for the client family and the UA (suffix)
               // for the runtime surface.
-              createKimiDefaultHeaders({
+              createCloudCodeDefaultHeaders({
                 homeDir: this.homeDir,
                 ...identity,
               }),
@@ -482,7 +482,7 @@ export class CloudCodeOAuthToolkit<TConfig = unknown> {
 
   private identityHeaders(): Record<string, string> | undefined {
     if (this.identity === undefined) return undefined;
-    this._identityHeaders ??= createKimiDefaultHeaders({
+    this._identityHeaders ??= createCloudCodeDefaultHeaders({
       homeDir: this.homeDir,
       ...this.identity,
     });
@@ -503,7 +503,7 @@ export function resolveKimiTokenStorageName(input: {
   }
 
   if (!key.includes('/') && !key.startsWith('.')) return key;
-  throw new Error(`Invalid Kimi OAuth token key: "${key}".`);
+  throw new Error(`Invalid managed OAuth token key: "${key}".`);
 }
 
 function defaultCloudCodeHome(): string {

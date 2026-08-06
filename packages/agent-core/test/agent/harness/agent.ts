@@ -170,14 +170,14 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
-  private kimiConfig: CloudCodeConfig;
+  private cloudCodeConfig: CloudCodeConfig;
 
   constructor(options: TestAgentOptions = {}) {
     this.options = options;
     this.emitter.on('error', () => {});
-    this.kimiConfig = options.initialConfig ?? emptyConfig();
+    this.cloudCodeConfig = options.initialConfig ?? emptyConfig();
     const providerManager = options.providerManager ?? new ProviderManager({
-      config: () => this.kimiConfig,
+      config: () => this.cloudCodeConfig,
       ...(options.sessionId !== undefined ? { promptCacheKey: options.sessionId } : {}),
       ...options.providerManagerOverrides,
     });
@@ -190,7 +190,7 @@ export class AgentTestContext {
     this.agent = new Agent({
       kaos,
       toolServices,
-      config: this.kimiConfig,
+      config: this.cloudCodeConfig,
       rpc: this.createRpcProxy(),
       homedir: options.homedir,
       brandHomeDir: options.brandHomeDir,
@@ -252,7 +252,7 @@ export class AgentTestContext {
     modelCapabilities?: ModelCapability | undefined,
   ): void {
     if (this.options.providerManager === undefined) {
-      this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
+      this.cloudCodeConfig = configWithProvider(this.cloudCodeConfig, provider, modelCapabilities);
     }
     this.agent.config.update({ modelAlias: provider.model });
   }
@@ -758,7 +758,7 @@ export class AgentTestContext {
         webSearcher: this.agent.toolServices?.webSearcher,
       },
       providerManager: this.options.providerManager,
-      initialConfig: this.kimiConfig,
+      initialConfig: this.cloudCodeConfig,
       providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,

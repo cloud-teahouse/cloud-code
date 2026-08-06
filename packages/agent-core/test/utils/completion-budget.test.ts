@@ -153,23 +153,36 @@ describe('applyCompletionBudget', () => {
 });
 
 describe('resolveCompletionBudget', () => {
-  it('reads KIMI_MODEL_MAX_COMPLETION_TOKENS first', () => {
+  it('reads CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS first', () => {
     const budget = resolveCompletionBudget({
       reservedContextSize: 1000,
       env: {
-        KIMI_MODEL_MAX_COMPLETION_TOKENS: '4096',
-        KIMI_MODEL_MAX_TOKENS: '2048',
+        CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS: '4096',
+        CLOUD_CODE_MODEL_MAX_TOKENS: '2048',
       },
     });
     expect(budget?.hardCap).toBe(4096);
   });
 
-  it('falls back to legacy KIMI_MODEL_MAX_TOKENS when the new var is unset', () => {
+  it('falls back to legacy CLOUD_CODE_MODEL_MAX_TOKENS when the new var is unset', () => {
     const budget = resolveCompletionBudget({
       reservedContextSize: 1000,
-      env: { KIMI_MODEL_MAX_TOKENS: '2048' },
+      env: { CLOUD_CODE_MODEL_MAX_TOKENS: '2048' },
     });
     expect(budget?.hardCap).toBe(2048);
+  });
+
+  it('honors the pre-rebrand KIMI_MODEL_* names below the CLOUD_CODE_MODEL_* ones', () => {
+    const legacyOnly = resolveCompletionBudget({
+      reservedContextSize: 1000,
+      env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: '4096', KIMI_MODEL_MAX_TOKENS: '2048' },
+    });
+    expect(legacyOnly?.hardCap).toBe(4096);
+    const newWins = resolveCompletionBudget({
+      reservedContextSize: 1000,
+      env: { CLOUD_CODE_MODEL_MAX_TOKENS: '8192', KIMI_MODEL_MAX_TOKENS: '2048' },
+    });
+    expect(newWins?.hardCap).toBe(8192);
   });
 
   it('uses reservedContextSize as the unknown-context fallback when no env var is set', () => {
@@ -206,26 +219,26 @@ describe('resolveCompletionBudget', () => {
     expect(budget?.fallback).toBe(32000);
   });
 
-  it('treats non-positive KIMI_MODEL_MAX_COMPLETION_TOKENS as an opt-out', () => {
+  it('treats non-positive CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS as an opt-out', () => {
     expect(
       resolveCompletionBudget({
         reservedContextSize: 1000,
-        env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: '0' },
+        env: { CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS: '0' },
       }),
     ).toBeUndefined();
     expect(
       resolveCompletionBudget({
         reservedContextSize: 1000,
-        env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: '-1' },
+        env: { CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS: '-1' },
       }),
     ).toBeUndefined();
   });
 
-  it('treats non-positive legacy KIMI_MODEL_MAX_TOKENS as an opt-out when the new var is unset', () => {
+  it('treats non-positive legacy CLOUD_CODE_MODEL_MAX_TOKENS as an opt-out when the new var is unset', () => {
     expect(
       resolveCompletionBudget({
         reservedContextSize: 1000,
-        env: { KIMI_MODEL_MAX_TOKENS: '-1' },
+        env: { CLOUD_CODE_MODEL_MAX_TOKENS: '-1' },
       }),
     ).toBeUndefined();
   });
@@ -233,8 +246,8 @@ describe('resolveCompletionBudget', () => {
   it('lets the new var override a legacy disable signal', () => {
     const budget = resolveCompletionBudget({
       env: {
-        KIMI_MODEL_MAX_COMPLETION_TOKENS: '4096',
-        KIMI_MODEL_MAX_TOKENS: '-1',
+        CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS: '4096',
+        CLOUD_CODE_MODEL_MAX_TOKENS: '-1',
       },
     });
     expect(budget?.hardCap).toBe(4096);
@@ -242,7 +255,7 @@ describe('resolveCompletionBudget', () => {
 
   it('falls back to defaults when the env var is non-numeric garbage', () => {
     const budget = resolveCompletionBudget({
-      env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: 'not-a-number' },
+      env: { CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS: 'not-a-number' },
     });
     expect(budget?.hardCap).toBeUndefined();
     expect(budget?.fallback).toBe(32000);

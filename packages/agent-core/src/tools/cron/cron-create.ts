@@ -32,6 +32,7 @@ import type { ToolExecution } from '../../loop/types';
 import type { ToolResultDisplayRef } from '../display';
 import { toInputJsonSchema } from '../support/input-schema';
 import { literalRulePattern } from '../support/rule-match';
+import { cloudCodeEnv } from '../../utils/env';
 import {
   computeNextCronRun,
   cronToHuman,
@@ -137,10 +138,10 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     // 1. Global killswitch — checked first so a flipped env stops all
     //    further work, including the cron parse which can throw on
     //    legitimately-malformed input.
-    if (process.env['KIMI_DISABLE_CRON'] === '1') {
+    if (cloudCodeEnv('CLOUD_CODE_DISABLE_CRON', 'KIMI_DISABLE_CRON') === '1') {
       return {
         isError: true,
-        output: 'Cron scheduling is disabled (KIMI_DISABLE_CRON=1).',
+        output: 'Cron scheduling is disabled (CLOUD_CODE_DISABLE_CRON=1).',
       };
     }
 

@@ -196,7 +196,7 @@ describe('max_output_tokens recovery chain', () => {
   });
 
   it('skips escalation when the user explicitly capped completion tokens', async () => {
-    vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '4096');
+    vi.stubEnv('CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS', '4096');
     const spy = overrideSpy();
     const { generate, calls } = createScriptedGenerate([
       textStep('chunk one, cut', 'truncated'),

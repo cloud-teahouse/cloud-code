@@ -30,13 +30,13 @@ export { OAuthManager, defaultRefreshThreshold, newInstanceId } from './oauth-ma
 
 export {
   assertCloudCodeHostIdentity,
-  createKimiDefaultHeaders,
+  createCloudCodeDefaultHeaders,
   createCloudCodeDeviceHeaders,
   createKimiDeviceId,
   createCloudCodeUserAgent,
   CLOUD_CODE_CUSTOM_HEADERS_ENV,
   CLOUD_CODE_PLATFORM,
-  parseKimiCodeCustomHeaders,
+  parseCloudCodeCustomHeaders,
   readKimiDeviceId,
 } from './identity';
 export type { CloudCodeHostIdentity, CloudCodeIdentityOptions } from './identity';

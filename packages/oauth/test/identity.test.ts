@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createKimiDefaultHeaders,
+  createCloudCodeDefaultHeaders,
   createCloudCodeDeviceHeaders,
   createKimiDeviceId,
   createCloudCodeUserAgent,
@@ -27,7 +27,7 @@ afterEach(() => {
   }
 });
 
-describe('Kimi identity factories', () => {
+describe('host identity factories', () => {
   it('creates and reuses a device id in the explicit homeDir', () => {
     const homeDir = tempHome();
     const first = createKimiDeviceId(homeDir);
@@ -107,7 +107,7 @@ describe('Kimi identity factories', () => {
       expect(
         () => createCloudCodeDeviceHeaders({ homeDir: tempHome(), version: '1.2.3', platform }),
         JSON.stringify(platform),
-      ).toThrow('Kimi identity platform');
+      ).toThrow('host identity platform');
     }
   });
 
@@ -121,7 +121,7 @@ describe('Kimi identity factories', () => {
   });
 
   it('merges User-Agent and device headers into default headers', () => {
-    const headers = createKimiDefaultHeaders({
+    const headers = createCloudCodeDefaultHeaders({
       homeDir: tempHome(),
       userAgentProduct: 'cloud-code-cli',
       version: '1.2.3',
@@ -135,7 +135,7 @@ describe('Kimi identity factories', () => {
   });
 
   it('threads the identity platform into default headers', () => {
-    const headers = createKimiDefaultHeaders({
+    const headers = createCloudCodeDefaultHeaders({
       homeDir: tempHome(),
       userAgentProduct: 'kimi-code-desktop',
       version: '0.0.13',

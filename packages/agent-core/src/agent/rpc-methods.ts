@@ -197,7 +197,7 @@ export function buildRpcMethods(agent: Agent): PromisableMethods<AgentAPI> {
     getPermission: () => agent.permission.data(),
     getSandboxStatus: () =>
       buildSandboxStatus({
-        sandboxConfig: agent.kimiConfig?.sandbox,
+        sandboxConfig: agent.cloudCodeConfig?.sandbox,
         modeOverride: agent.config.sandboxMode,
         kaos: agent.kaos,
         homedir: agent.homedir,

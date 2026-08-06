@@ -667,17 +667,17 @@ export class GoalMode {
 
   /**
    * Resolved `[goal]` completion-gate config. Lazy static read off
-   * `agent.kimiConfig` at each use site — the same precedent as
-   * `kimiConfig?.loopControl` (turn/index.ts), which also means a mid-run
+   * `agent.cloudCodeConfig` at each use site — the same precedent as
+   * `cloudCodeConfig?.loopControl` (turn/index.ts), which also means a mid-run
    * config reload affects the gate exactly as much as it affects loopControl
-   * (it does not propagate to live agents; `kimiConfig` is constructor-fixed).
+   * (it does not propagate to live agents; `cloudCodeConfig` is constructor-fixed).
    */
   private completionGateConfig(): {
     readonly enabled: boolean;
     readonly leaseTurns: number;
     readonly leaseMs: number;
   } {
-    const config = this.agent.kimiConfig?.goal;
+    const config = this.agent.cloudCodeConfig?.goal;
     return {
       enabled: config?.completionGate ?? DEFAULT_COMPLETION_GATE_ENABLED,
       leaseTurns: config?.evidenceLeaseTurns ?? GOAL_EVIDENCE_LEASE_TURNS_DEFAULT,
@@ -700,7 +700,7 @@ export class GoalMode {
     readonly source: 'hint' | 'heuristic';
     readonly budgetLimits: GoalBudgetLimits;
   } | undefined {
-    const config = this.agent.kimiConfig?.goal;
+    const config = this.agent.cloudCodeConfig?.goal;
     const enabled = config?.tieredBudgets ?? DEFAULT_TIERED_BUDGETS_ENABLED;
     if (!enabled) return undefined;
     const tier = sizeHint ?? inferGoalTier(objective);

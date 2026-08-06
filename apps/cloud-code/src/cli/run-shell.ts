@@ -24,7 +24,7 @@ import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
 import { selectHarnessTransport } from './options';
 
-import { createKimiCodeHostIdentity } from './version';
+import { createCloudCodeHostIdentity } from './version';
 
 export async function runShell(
   opts: CLIOptions,
@@ -53,7 +53,7 @@ export async function runShell(
   const workDir = process.cwd();
   const harness = createCloudCodeHarness({
     homeDir: resolveCloudCodeHome(),
-    identity: createKimiCodeHostIdentity(version),
+    identity: createCloudCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
     // `--server-stdio` / `--server <ws-url>` swap the in-process
     // core for the JSON-RPC protocol (spawned child or running daemon).

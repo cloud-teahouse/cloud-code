@@ -897,15 +897,15 @@ export class ToolManager {
         new b.BashTool(bashKaos, cwd, background, {
           allowBackground,
           autoBackgroundOnTimeout:
-            this.agent.kimiConfig?.background?.bashAutoBackgroundOnTimeout ?? true,
-          backgroundTimeoutS: this.agent.kimiConfig?.background?.bashTaskTimeoutS,
+            this.agent.cloudCodeConfig?.background?.bashAutoBackgroundOnTimeout ?? true,
+          backgroundTimeoutS: this.agent.cloudCodeConfig?.background?.bashTaskTimeoutS,
           sandbox: bashSandboxOptions,
-          wrapperStripping: this.agent.kimiConfig?.permission?.wrapperStripping ?? true,
+          wrapperStripping: this.agent.cloudCodeConfig?.permission?.wrapperStripping ?? true,
         }),
         new b.ExecSessionTool(bashKaos, cwd, this.agent.shellSessions, {
           allowBackground,
           sandbox: execSessionSandboxOptions,
-          wrapperStripping: this.agent.kimiConfig?.permission?.wrapperStripping ?? true,
+          wrapperStripping: this.agent.cloudCodeConfig?.permission?.wrapperStripping ?? true,
         }),
         new b.WriteStdinTool(this.agent.shellSessions, { allowBackground }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
@@ -955,13 +955,13 @@ export class ToolManager {
             {
               allowBackground,
               log: this.agent.log,
-              subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+              subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.cloudCodeConfig?.subagent?.timeoutMs),
               // Cloud Code's secondary model is a stable feature (no
               // experiment flag): the `model` parameter is always advertised.
               showModelPreferences: true,
               modelChoiceEnabled: true,
               subagentModelDescription: buildSubagentModelDescriptions(
-                this.agent.kimiConfig,
+                this.agent.cloudCodeConfig,
                 this.agent.config.modelAlias,
               ),
             },
@@ -970,9 +970,9 @@ export class ToolManager {
           new b.AgentSwarmTool(
             this.agent.subagentHost,
             this.agent.swarmMode,
-            resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+            resolveSubagentTimeoutMs(this.agent.cloudCodeConfig?.subagent?.timeoutMs),
             buildSubagentModelDescriptions(
-              this.agent.kimiConfig,
+              this.agent.cloudCodeConfig,
               this.agent.config.modelAlias,
             ),
             true,
@@ -1008,7 +1008,7 @@ export class ToolManager {
     kaos: Kaos,
     cwd: string,
   ): { kaos: Kaos; sandboxOptions: b.BashSandboxOptions | undefined } {
-    const sandboxConfig = this.agent.kimiConfig?.sandbox;
+    const sandboxConfig = this.agent.cloudCodeConfig?.sandbox;
     // The mode resolves per spawn: the session override (/sandbox on|off)
     // wins over the file config, so a runtime toggle applies to the very next
     // command with no tool rebuild. `SandboxManager.resolvePlan` short-

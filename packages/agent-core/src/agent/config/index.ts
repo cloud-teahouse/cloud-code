@@ -57,7 +57,7 @@ export class ConfigState {
     // The persisted config.toml preference seeds every session (fresh and
     // resumed); an explicit config.update — e.g. a /fast toggle replayed from
     // the session records — overrides it afterwards.
-    this._serviceTier = serviceTierFromConfig(agent.kimiConfig?.serviceTier);
+    this._serviceTier = serviceTierFromConfig(agent.cloudCodeConfig?.serviceTier);
   }
 
   update(changed: AgentConfigUpdateData): void {
@@ -73,7 +73,7 @@ export class ConfigState {
     if (changed.thinkingEffort !== undefined) {
       unforcedThinkingEffort = resolveThinkingEffort(
         changed.thinkingEffort,
-        this.agent.kimiConfig?.thinking,
+        this.agent.cloudCodeConfig?.thinking,
         targetModel,
         kimiProtocol,
       );
@@ -85,7 +85,7 @@ export class ConfigState {
       // efforts include the provider-level protocol inference.
       unforcedThinkingEffort = resolveThinkingEffort(
         this._unforcedThinkingEffort,
-        this.agent.kimiConfig?.thinking,
+        this.agent.cloudCodeConfig?.thinking,
         targetModel,
         kimiProtocol,
       );
@@ -247,7 +247,7 @@ export class ConfigState {
     }
     const provider = this.providerMemo.provider.withThinking(this.thinkingEffort);
     const withSampling = applyCloudCodeEnvSamplingParams(provider);
-    const configKeep = this.agent.kimiConfig?.thinking?.keep;
+    const configKeep = this.agent.cloudCodeConfig?.thinking?.keep;
     const withCloudCodeKeep = applyCloudCodeEnvThinkingKeep(
       withSampling,
       this.thinkingEffort,
@@ -309,7 +309,7 @@ export class ConfigState {
         defaultEffort: resolved.defaultEffort,
       };
     }
-    return alias === undefined ? undefined : this.agent.kimiConfig?.models?.[alias];
+    return alias === undefined ? undefined : this.agent.cloudCodeConfig?.models?.[alias];
   }
 
   get profileName(): string | undefined {

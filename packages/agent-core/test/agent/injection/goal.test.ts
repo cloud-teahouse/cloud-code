@@ -11,7 +11,7 @@ function makeStore(config?: CloudCodeConfig) {
   const agent = {
     records: { logRecord: () => {} },
     emitEvent: () => {},
-    kimiConfig: config,
+    cloudCodeConfig: config,
   } as unknown as Agent;
   return new GoalMode(agent);
 }
@@ -29,7 +29,7 @@ function injectorAgent(
   const agent = {
     type: 'main',
     goal: store,
-    kimiConfig: config,
+    cloudCodeConfig: config,
     context: {
       history,
       appendSystemReminder: (content: string) => {

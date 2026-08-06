@@ -43,7 +43,7 @@ export class GoalInjector extends DynamicInjector {
 
 /** Resolved evidence-lease values for the gate status line (same `[goal]` config the gate reads). */
 function completionGateLease(agent: Agent): { leaseTurns: number; leaseMs: number } {
-  const config = agent.kimiConfig?.goal;
+  const config = agent.cloudCodeConfig?.goal;
   return {
     leaseTurns: config?.evidenceLeaseTurns ?? GOAL_EVIDENCE_LEASE_TURNS_DEFAULT,
     leaseMs: config?.evidenceLeaseMs ?? GOAL_EVIDENCE_LEASE_MS_DEFAULT,

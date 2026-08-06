@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { CloudCodeConfig } from '@cloud-code/agent-core';
-import { createKimiDefaultHeaders, CLOUD_CODE_PLATFORM } from '@cloud-code/oauth';
+import { createCloudCodeDefaultHeaders, CLOUD_CODE_PLATFORM } from '@cloud-code/oauth';
 
 import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 import { SDKRpcClient } from '#/index';
@@ -16,11 +16,11 @@ const tempDirs: string[] = [];
 function resolveRuntimeProvider(options: {
   readonly config: CloudCodeConfig;
   readonly model?: string;
-  readonly kimiRequestHeaders?: Record<string, string>;
+  readonly cloudCodeRequestHeaders?: Record<string, string>;
 }) {
   const manager = new ProviderManager({
     config: options.config,
-    kimiRequestHeaders: options.kimiRequestHeaders,
+    cloudCodeRequestHeaders: options.cloudCodeRequestHeaders,
   });
   const model = options.model ?? options.config.defaultModel;
   if (model === undefined) {
@@ -52,11 +52,11 @@ describe('runtime provider identity headers', () => {
       },
     });
     const core = client.core as unknown as {
-      readonly kimiRequestHeaders?: Record<string, string>;
+      readonly cloudCodeRequestHeaders?: Record<string, string>;
     };
 
     try {
-      expect(core.kimiRequestHeaders).toMatchObject({
+      expect(core.cloudCodeRequestHeaders).toMatchObject({
         'User-Agent': 'cloud-code-cli/0.0.0-test (web-runtime)',
         'X-Msh-Version': '0.0.0-test',
       });
@@ -67,7 +67,7 @@ describe('runtime provider identity headers', () => {
 
   it('adds cloud-code-cli User-Agent and complete X-Msh headers to the default Kimi provider', async () => {
     const homeDir = await makeTempDir();
-    const kimiRequestHeaders = createKimiDefaultHeaders({ homeDir, ...TEST_IDENTITY });
+    const cloudCodeRequestHeaders = createCloudCodeDefaultHeaders({ homeDir, ...TEST_IDENTITY });
     const resolved = resolveRuntimeProvider({
       config: {
         defaultModel: 'kimi-model',
@@ -85,7 +85,7 @@ describe('runtime provider identity headers', () => {
           },
         },
       },
-      kimiRequestHeaders,
+      cloudCodeRequestHeaders,
     });
 
     expect(resolved.provider).toMatchObject({
@@ -104,7 +104,7 @@ describe('runtime provider identity headers', () => {
 
   it('lets Kimi provider customHeaders override default identity headers', async () => {
     const homeDir = await makeTempDir();
-    const kimiRequestHeaders = createKimiDefaultHeaders({ homeDir, ...TEST_IDENTITY });
+    const cloudCodeRequestHeaders = createCloudCodeDefaultHeaders({ homeDir, ...TEST_IDENTITY });
     const config: CloudCodeConfig = {
       providers: {
         kimi: {
@@ -129,7 +129,7 @@ describe('runtime provider identity headers', () => {
 
     const resolved = resolveRuntimeProvider({
       config,
-      kimiRequestHeaders,
+      cloudCodeRequestHeaders,
     });
 
     expect(resolved.provider).toMatchObject({
@@ -144,7 +144,7 @@ describe('runtime provider identity headers', () => {
 
   it('applies only the User-Agent (no device identity headers) to non-Kimi providers', async () => {
     const homeDir = await makeTempDir();
-    const kimiRequestHeaders = createKimiDefaultHeaders({ homeDir, ...TEST_IDENTITY });
+    const cloudCodeRequestHeaders = createCloudCodeDefaultHeaders({ homeDir, ...TEST_IDENTITY });
     const config: CloudCodeConfig = {
       providers: {
         openai: {
@@ -166,7 +166,7 @@ describe('runtime provider identity headers', () => {
 
     const resolved = resolveRuntimeProvider({
       config,
-      kimiRequestHeaders,
+      cloudCodeRequestHeaders,
     });
 
     expect(resolved.provider).toMatchObject({

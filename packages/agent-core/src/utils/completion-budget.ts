@@ -1,5 +1,7 @@
 import type { ChatProvider, ModelCapability } from '@cloud-code/kosong';
 
+import { cloudCodeEnv } from './env';
+
 /** Completion-token budget for the next LLM request. */
 export interface CompletionBudgetConfig {
   /** Explicit user-configured maximum. */
@@ -21,11 +23,15 @@ export function resolveCompletionBudget(args: {
   readonly env?: NodeJS.ProcessEnv;
 }): CompletionBudgetConfig | undefined {
   const env = args.env ?? process.env;
-  const fromNew = parseEnvBudget(env['KIMI_MODEL_MAX_COMPLETION_TOKENS']);
+  const fromNew = parseEnvBudget(
+    cloudCodeEnv('CLOUD_CODE_MODEL_MAX_COMPLETION_TOKENS', 'KIMI_MODEL_MAX_COMPLETION_TOKENS', env),
+  );
   if (fromNew !== 'absent') {
     return fromNew === 'disabled' ? undefined : { hardCap: fromNew };
   }
-  const fromLegacy = parseEnvBudget(env['KIMI_MODEL_MAX_TOKENS']);
+  const fromLegacy = parseEnvBudget(
+    cloudCodeEnv('CLOUD_CODE_MODEL_MAX_TOKENS', 'KIMI_MODEL_MAX_TOKENS', env),
+  );
   if (fromLegacy !== 'absent') {
     return fromLegacy === 'disabled' ? undefined : { hardCap: fromLegacy };
   }

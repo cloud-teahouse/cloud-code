@@ -9,11 +9,14 @@
  * transcript grows long.
  *
  * The cache is on by default and can be disabled with
- * `KIMI_TUI_NO_RENDER_CACHE=1` as an escape hatch (and to let benchmarks
+ * `CLOUD_CODE_TUI_NO_RENDER_CACHE=1` (legacy `KIMI_TUI_NO_RENDER_CACHE` honored)
+ * as an escape hatch (and to let benchmarks
  * compare cached vs. uncached runs in the same process).
  */
 
-let enabled = process.env['KIMI_TUI_NO_RENDER_CACHE'] !== '1';
+let enabled =
+  (process.env['CLOUD_CODE_TUI_NO_RENDER_CACHE'] ?? process.env['KIMI_TUI_NO_RENDER_CACHE']) !==
+  '1';
 
 export function isRenderCacheEnabled(): boolean {
   return enabled;

@@ -128,7 +128,7 @@ describe('llm request trace records', () => {
   });
 
   it('records the effective kimi thinking effort and keep passthrough', async () => {
-    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    vi.stubEnv('CLOUD_CODE_MODEL_THINKING_EFFORT', 'max');
     try {
       const persistence = new InMemoryAgentRecordPersistence();
       const ctx = testAgent({ persistence });

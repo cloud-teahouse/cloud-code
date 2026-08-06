@@ -99,7 +99,7 @@ export class GitMutationGatePermissionPolicy implements PermissionPolicy {
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     // Yolo contract: only deny rules intercept; the gate stays out entirely.
     if (this.agent.permission.mode === 'yolo') return;
-    const setting = this.agent.kimiConfig?.permission?.gitMutation ?? 'ask';
+    const setting = this.agent.cloudCodeConfig?.permission?.gitMutation ?? 'ask';
     if (setting === 'allow') return;
 
     const gitClass = representativeMutationClass(context.execution.gitClasses);

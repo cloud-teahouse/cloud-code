@@ -17,7 +17,7 @@ type InitializeResultServerInfo = InitializeResult['serverInfo'];
 export interface ServerHostOptions {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
-  readonly kimiRequestHeaders?: Record<string, string> | undefined;
+  readonly cloudCodeRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
   readonly skillDirs?: readonly string[] | undefined;
   readonly appVersion?: string | undefined;
@@ -63,7 +63,7 @@ export class ServerHost {
     this.core = new CloudCodeCore(() => Promise.resolve(this.multiplexer.asSdkRpc()), {
       homeDir: options.homeDir,
       configPath: options.configPath,
-      kimiRequestHeaders: options.kimiRequestHeaders,
+      cloudCodeRequestHeaders: options.cloudCodeRequestHeaders,
       resolveOAuthTokenProvider: options.resolveOAuthTokenProvider,
       skillDirs: options.skillDirs,
       appVersion: options.appVersion,

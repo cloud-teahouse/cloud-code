@@ -63,7 +63,7 @@ interface BehaviorRemindersResolution {
 }
 
 function resolveBehaviorReminders(agent: Agent): BehaviorRemindersResolution {
-  const config = agent.kimiConfig?.behaviorReminders;
+  const config = agent.cloudCodeConfig?.behaviorReminders;
   return {
     enabled: config?.enabled ?? true,
     intervalTurns: config?.intervalTurns ?? BEHAVIOR_REMINDERS_INTERVAL_TURNS_DEFAULT,

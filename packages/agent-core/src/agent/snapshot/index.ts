@@ -293,7 +293,7 @@ export class SnapshotManager {
 
   private get maxFileSizeBytes(): number {
     return (
-      this.agent.kimiConfig?.snapshot?.maxFileSizeBytes ?? SNAPSHOT_MAX_FILE_SIZE_BYTES_DEFAULT
+      this.agent.cloudCodeConfig?.snapshot?.maxFileSizeBytes ?? SNAPSHOT_MAX_FILE_SIZE_BYTES_DEFAULT
     );
   }
 
@@ -307,7 +307,7 @@ export class SnapshotManager {
   private staticallyEnabled(): boolean {
     return (
       this.agent.type === 'main' &&
-      this.agent.kimiConfig?.snapshot?.enabled !== false &&
+      this.agent.cloudCodeConfig?.snapshot?.enabled !== false &&
       this.brandHome !== undefined &&
       this.agent.kaos.name === 'local'
     );

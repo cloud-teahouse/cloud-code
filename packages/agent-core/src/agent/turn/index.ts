@@ -581,7 +581,7 @@ export class TurnFlow {
     const pending = this.rateLimitResume;
     this.rateLimitResume = null;
     if (pending === null) return;
-    const loopControl = this.agent.kimiConfig?.loopControl;
+    const loopControl = this.agent.cloudCodeConfig?.loopControl;
     const autoResume = resolveRetryAutoResume(loopControl?.retryAutoResume) ?? true;
     if (!autoResume) return;
     const maxAttempts = resolveRetryAutoResumeMaxAttempts(loopControl?.retryAutoResumeMaxAttempts);
@@ -1059,7 +1059,7 @@ export class TurnFlow {
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
-      const loopControl = this.agent.kimiConfig?.loopControl;
+      const loopControl = this.agent.cloudCodeConfig?.loopControl;
       const maxStepsPerTurn = resolveMaxStepsPerTurn(loopControl?.maxStepsPerTurn);
       const maxRetriesPerStep = resolveMaxRetriesPerStep(loopControl?.maxRetriesPerStep);
       // Foreground retry gates (C1 P2), re-resolved per step like the other

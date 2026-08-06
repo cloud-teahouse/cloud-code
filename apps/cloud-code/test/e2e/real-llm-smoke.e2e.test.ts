@@ -17,7 +17,7 @@ import process from 'node:process';
 import { createCloudCodeHarness, type Event } from '@cloud-code/sdk';
 import { describe, expect, test } from 'vitest';
 
-import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
+import { createCloudCodeHostIdentity, getVersion } from '#/cli/version';
 
 const DEFAULT_PROMPT = 'Reply with a single word: hi';
 const DEFAULT_WORKDIR = '/tmp/kimi-e2e';
@@ -42,7 +42,7 @@ describe.skipIf(!ENABLED)('SDK e2e — real LLM smoke', () => {
       );
 
       const harness = createCloudCodeHarness({
-        identity: createKimiCodeHostIdentity(version),
+        identity: createCloudCodeHostIdentity(version),
       });
 
       try {

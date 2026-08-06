@@ -4111,7 +4111,7 @@ describe('Git mutation gate policy (C3 P3)', () => {
   it('turns the gate off with git_mutation = "allow"', async () => {
     const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
-      { kimiConfig: { providers: {}, permission: { gitMutation: 'allow' } } },
+      { cloudCodeConfig: { providers: {}, permission: { gitMutation: 'allow' } } },
     );
     manager.mode = 'auto';
 
@@ -4124,7 +4124,7 @@ describe('Git mutation gate policy (C3 P3)', () => {
   it('hard-blocks with git_mutation = "deny" and never offers a prompt', async () => {
     const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
-      { kimiConfig: { providers: {}, permission: { gitMutation: 'deny' } } },
+      { cloudCodeConfig: { providers: {}, permission: { gitMutation: 'deny' } } },
     );
 
     await expect(
@@ -4139,7 +4139,7 @@ describe('Git mutation gate policy (C3 P3)', () => {
   it('still honors configured allow rules under git_mutation = "deny"', async () => {
     const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
-      { kimiConfig: { providers: {}, permission: { gitMutation: 'deny' } } },
+      { cloudCodeConfig: { providers: {}, permission: { gitMutation: 'deny' } } },
     );
     manager.rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(git push *)' });
 
@@ -4293,7 +4293,7 @@ function makePermissionManager(
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
     readonly swarmModeActive?: boolean;
-    readonly kimiConfig?: Agent['kimiConfig'];
+    readonly cloudCodeConfig?: Agent['cloudCodeConfig'];
   } = {},
 ): {
   manager: PermissionManager;
@@ -4307,7 +4307,7 @@ function makePermissionManager(
     type: options.agentType ?? 'main',
     config: { cwd: options.cwd ?? '/workspace' },
     kaos: options.kaos ?? createFakeKaos(),
-    kimiConfig: options.kimiConfig,
+    cloudCodeConfig: options.cloudCodeConfig,
     getAdditionalDirs: () => options.additionalDirs ?? [],
     emitStatusUpdated: vi.fn(),
     records: { logRecord: record },

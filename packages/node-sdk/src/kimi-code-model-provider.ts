@@ -7,12 +7,12 @@ import {
   type ResolvedRuntimeProvider,
 } from '@cloud-code/agent-core';
 import {
-  createKimiDefaultHeaders,
+  createCloudCodeDefaultHeaders,
   CLOUD_CODE_FLOW_CONFIG,
   CLOUD_CODE_PROVIDER_NAME,
   CloudCodeOAuthToolkit,
   kimiCodeBaseUrl,
-  parseKimiCodeCustomHeaders,
+  parseCloudCodeCustomHeaders,
   resolveKimiCodeOAuthRef,
   type CloudCodeHostIdentity,
   type ManagedKimiOAuthRef,
@@ -85,8 +85,8 @@ export class KimiForCodingProvider implements ModelProvider {
         ? { prompt_cache_key: this.promptCacheKey }
         : undefined,
       defaultHeaders: {
-        ...parseKimiCodeCustomHeaders(),
-        ...createKimiDefaultHeaders({
+        ...parseCloudCodeCustomHeaders(),
+        ...createCloudCodeDefaultHeaders({
           homeDir: this.homeDir,
           ...this.identity,
         }),

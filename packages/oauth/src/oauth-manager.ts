@@ -17,6 +17,8 @@ import { dirname } from 'node:path';
 
 import lockfile from 'proper-lockfile';
 
+import { cloudCodeEnv } from './env';
+
 import {
   accountSnapshotFromTokenState,
   type OAuthAccountSnapshot,
@@ -87,7 +89,7 @@ export interface OAuthManagerOptions {
    * falls back to `process.env.CLOUD_CODE_HOME` so multi-process test
    * harnesses don't need to thread the dir through every fixture. In
    * production the fallback is inert. Windows platforms and
-   * `process.env.KIMI_DISABLE_OAUTH_LOCK === '1'` always skip; the
+   * `CLOUD_CODE_DISABLE_OAUTH_LOCK=1` (legacy `KIMI_DISABLE_OAUTH_LOCK`)  always skip; the
    * "re-read storage" fail-safe remains as a best-effort coordinator.
    */
   readonly configDir?: string | undefined;
@@ -194,7 +196,7 @@ export class OAuthManager {
    */
   private resolveLockTarget(): string | undefined {
     if (process.platform === 'win32') return undefined;
-    if (process.env['KIMI_DISABLE_OAUTH_LOCK'] === '1') return undefined;
+    if (cloudCodeEnv('CLOUD_CODE_DISABLE_OAUTH_LOCK', 'KIMI_DISABLE_OAUTH_LOCK') === '1') return undefined;
     if (this.configDir === undefined) return undefined;
     return `${this.configDir}/oauth/${this.config.name}`;
   }

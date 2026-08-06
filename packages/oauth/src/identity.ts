@@ -1,5 +1,5 @@
 /**
- * Kimi host and device identity header factories.
+ * Host and device identity header factories.
  *
  * The caller owns the host identity (product name + host app version)
  * and the `homeDir` where the stable device id is stored. This module
@@ -23,7 +23,7 @@ export interface CloudCodeHostIdentity {
   /**
    * `X-Msh-Platform` value reported to the OAuth host and managed endpoints
    * (e.g. `kimi_code_cli`, `kimi_code_desktop`). Every host must state its own
-   * explicitly — `KIMI_CODE_PLATFORM` is the CLI's value, not a default to
+   * explicitly — `CLOUD_CODE_PLATFORM` is the CLI's value, not a default to
    * inherit silently.
    */
   readonly platform: string;
@@ -82,8 +82,8 @@ export function createCloudCodeDeviceHeaders(options: {
   readonly platform: string;
 }): DeviceHeaders {
   return {
-    'X-Msh-Platform': requiredAsciiHeader(options.platform, 'Kimi identity platform'),
-    'X-Msh-Version': requiredAsciiHeader(options.version, 'Kimi identity version'),
+    'X-Msh-Platform': requiredAsciiHeader(options.platform, 'host identity platform'),
+    'X-Msh-Version': requiredAsciiHeader(options.version, 'host identity version'),
     'X-Msh-Device-Name': asciiHeader(hostname()),
     'X-Msh-Device-Model': asciiHeader(deviceModel()),
     'X-Msh-Os-Version': asciiHeader(release()),
@@ -96,8 +96,8 @@ export function createCloudCodeUserAgent(options: {
   readonly version: string;
   readonly userAgentSuffix?: string | undefined;
 }): string {
-  const product = requiredAsciiHeader(options.userAgentProduct, 'Kimi identity product');
-  const version = requiredAsciiHeader(options.version, 'Kimi identity version');
+  const product = requiredAsciiHeader(options.userAgentProduct, 'host identity product');
+  const version = requiredAsciiHeader(options.version, 'host identity version');
   const suffix =
     options.userAgentSuffix === undefined ? undefined : asciiHeader(options.userAgentSuffix, '');
   return suffix === undefined || suffix.length === 0
@@ -105,7 +105,7 @@ export function createCloudCodeUserAgent(options: {
     : `${product}/${version} (${suffix})`;
 }
 
-export function createKimiDefaultHeaders(options: CloudCodeIdentityOptions): Record<string, string> {
+export function createCloudCodeDefaultHeaders(options: CloudCodeIdentityOptions): Record<string, string> {
   return {
     'User-Agent': createCloudCodeUserAgent(options),
     ...createCloudCodeDeviceHeaders({
@@ -122,7 +122,7 @@ export function createKimiDefaultHeaders(options: CloudCodeIdentityOptions): Rec
  * newline-separated `Name: Value` lines; lines without a colon are skipped;
  * names and values are trimmed.
  *
- * These headers form the lowest-precedence layer — the Kimi identity headers
+ * These headers form the lowest-precedence layer — the host identity headers
  * (User-Agent, X-Msh-*), per-provider `customHeaders`, and request auth
  * (Authorization) all override them.
  *
@@ -132,7 +132,7 @@ export function createKimiDefaultHeaders(options: CloudCodeIdentityOptions): Rec
  */
 export const CLOUD_CODE_CUSTOM_HEADERS_ENV = 'CLOUD_CODE_CUSTOM_HEADERS';
 
-export function parseKimiCodeCustomHeaders(
+export function parseCloudCodeCustomHeaders(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   const raw = env[CLOUD_CODE_CUSTOM_HEADERS_ENV]?.trim();
@@ -150,10 +150,10 @@ export function parseKimiCodeCustomHeaders(
 
 export function assertCloudCodeHostIdentity(identity: CloudCodeHostIdentity | undefined): CloudCodeHostIdentity {
   if (identity === undefined) {
-    throw new Error('Kimi host identity is required. Pass the host product name and version.');
+    throw new Error('Host identity is required. Pass the host product name and version.');
   }
-  requiredAsciiHeader(identity.userAgentProduct, 'Kimi identity product');
-  requiredAsciiHeader(identity.version, 'Kimi identity version');
+  requiredAsciiHeader(identity.userAgentProduct, 'host identity product');
+  requiredAsciiHeader(identity.version, 'host identity version');
   return identity;
 }
 

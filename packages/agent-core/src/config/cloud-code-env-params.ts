@@ -7,20 +7,28 @@ import {
 import { AnthropicChatProvider } from '@cloud-code/kosong/providers/anthropic';
 
 import { parseFloatEnv } from '#/config/resolve';
+import { cloudCodeEnv } from '../utils/env';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
+/** `CLOUD_CODE_MODEL_*` knob with the legacy `KIMI_MODEL_*` name as fallback. */
+function modelEnv(env: Env, name: string): string | undefined {
+  return cloudCodeEnv(`CLOUD_CODE_MODEL_${name}`, `KIMI_MODEL_${name}`, env);
+}
+
 /**
- * Apply Kimi sampling params (`KIMI_MODEL_TEMPERATURE`, `KIMI_MODEL_TOP_P`) from
- * the environment to a chat provider. Applied at provider construction
+ * Apply sampling params (`CLOUD_CODE_MODEL_TEMPERATURE`, `CLOUD_CODE_MODEL_TOP_P`;
+ * legacy `KIMI_MODEL_*` names honored) from the environment to a chat provider.
+ * Applied at provider construction
  * (`ConfigState.provider`) so every request built from `config.provider` — the
  * main loop AND full-history compaction — carries them, matching kimi-cli where
  * these live on the shared `create_llm` provider. Applies globally to any Kimi
- * provider (not tied to `KIMI_MODEL_NAME`).
+ * provider (not tied to `CLOUD_CODE_MODEL_NAME`).
  *
  * Non-Kimi providers — and Kimi providers with neither var set — are returned
- * unchanged. `max_tokens` is intentionally NOT handled here: `KIMI_MODEL_MAX_TOKENS`
- * already flows through the completion-budget path (`resolveCompletionBudget`).
+ * unchanged. `max_tokens` is intentionally NOT handled here:
+ * `CLOUD_CODE_MODEL_MAX_TOKENS` already flows through the completion-budget path
+ * (`resolveCompletionBudget`).
  */
 export function applyCloudCodeEnvSamplingParams(
   provider: ChatProvider,
@@ -29,17 +37,18 @@ export function applyCloudCodeEnvSamplingParams(
   if (!(provider instanceof KimiChatProvider)) return provider;
 
   const kwargs: GenerationKwargs = {};
-  const temperature = parseFloatEnv(env['KIMI_MODEL_TEMPERATURE'], 'KIMI_MODEL_TEMPERATURE');
+  const temperature = parseFloatEnv(modelEnv(env, 'TEMPERATURE'), 'CLOUD_CODE_MODEL_TEMPERATURE');
   if (temperature !== undefined) kwargs.temperature = temperature;
-  const topP = parseFloatEnv(env['KIMI_MODEL_TOP_P'], 'KIMI_MODEL_TOP_P');
+  const topP = parseFloatEnv(modelEnv(env, 'TOP_P'), 'CLOUD_CODE_MODEL_TOP_P');
   if (topP !== undefined) kwargs.top_p = topP;
 
   return Object.keys(kwargs).length > 0 ? provider.withGenerationKwargs(kwargs) : provider;
 }
 
 /**
- * Resolve the operational `KIMI_MODEL_THINKING_EFFORT` override after the
- * model-aware effort has been resolved. The override intentionally bypasses
+ * Resolve the operational `CLOUD_CODE_MODEL_THINKING_EFFORT` override (legacy
+ * `KIMI_MODEL_THINKING_EFFORT` honored) after the model-aware effort has been
+ * resolved. The override intentionally bypasses
  * `support_efforts`, but cannot turn Thinking on after the user disabled it.
  *
  * Provider identity is supplied separately from the wire adapter so a Kimi
@@ -51,7 +60,7 @@ export function resolveCloudCodeEnvThinkingEffort(
   env: Env = process.env,
 ): ThinkingEffort | undefined {
   if (!kimiProvider || thinkingEffort === 'off') return undefined;
-  const effort = env['KIMI_MODEL_THINKING_EFFORT']?.trim().toLowerCase();
+  const effort = modelEnv(env, 'THINKING_EFFORT')?.trim().toLowerCase();
   return effort === undefined || effort.length === 0 ? undefined : effort;
 }
 
@@ -77,7 +86,8 @@ function parseKeepValue(raw: string | undefined): KeepResolution {
 /**
  * Resolve the Preserved Thinking passthrough (Kimi `thinking.keep` / Anthropic
  * `context_management` `clear_thinking_20251015`) with precedence env
- * (`KIMI_MODEL_THINKING_KEEP`) > config (`thinking.keep`) > default `"all"`.
+ * (`CLOUD_CODE_MODEL_THINKING_KEEP`, legacy `KIMI_MODEL_THINKING_KEEP`) > config
+ * (`thinking.keep`) > default `"all"`.
  * Only meaningful while thinking is on — otherwise the API would receive a keep
  * directive with no accompanying `thinking.type` it honors, so it resolves to
  * `undefined`. Applied via `ConfigState.provider`, which is shared by the main
@@ -94,7 +104,7 @@ export function resolveThinkingKeep(
   thinkingEffort: ThinkingEffort,
 ): string | undefined {
   if (thinkingEffort === 'off') return undefined;
-  const fromEnv = parseKeepValue(env['KIMI_MODEL_THINKING_KEEP']);
+  const fromEnv = parseKeepValue(modelEnv(env, 'THINKING_KEEP'));
   if (fromEnv.specified) return fromEnv.value;
   const fromConfig = parseKeepValue(configKeep);
   if (fromConfig.specified) return fromConfig.value;

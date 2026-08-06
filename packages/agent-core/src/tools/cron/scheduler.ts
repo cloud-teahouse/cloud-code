@@ -39,7 +39,7 @@
  *
  *   - **Bad tasks do not poison the loop.** Each task's processing is
  *     wrapped in try/catch; failures are swallowed (with an optional
- *     stderr trace gated on `KIMI_CRON_DEBUG=1`) so one busted cron
+ *     stderr trace gated on `CLOUD_CODE_CRON_DEBUG=1`) so one busted cron
  *     expression cannot starve the other tasks.
  */
 
@@ -47,6 +47,7 @@ import type { ParsedCronExpression } from './cron-expr';
 import { computeNextCronRun, parseCronExpression } from './cron-expr';
 import type { ClockSources } from './clock';
 import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from './jitter';
+import { cloudCodeEnv } from '../../utils/env';
 import type { CronTask } from './types';
 
 export interface CronSchedulerOptions {
@@ -105,7 +106,7 @@ export interface CronSchedulerOptions {
    *   - 0 or null → no automatic polling. Caller drives tick()
    *     manually.
    *
-   * Used to wire `KIMI_CRON_MANUAL_TICK=1` to disable the timer.
+   * Used to wire `CLOUD_CODE_CRON_MANUAL_TICK=1` to disable the timer.
    */
   readonly pollIntervalMs?: number | null;
 }
@@ -202,7 +203,7 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
   }
 
   function debugLog(message: string): void {
-    if (process.env['KIMI_CRON_DEBUG'] === '1') {
+    if (cloudCodeEnv('CLOUD_CODE_CRON_DEBUG', 'KIMI_CRON_DEBUG') === '1') {
       process.stderr.write(`[cron/scheduler] ${message}\n`);
     }
   }

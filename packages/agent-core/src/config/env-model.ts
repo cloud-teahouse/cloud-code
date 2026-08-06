@@ -1,4 +1,5 @@
 import { ErrorCodes, CloudCodeError } from '#/errors';
+import { cloudCodeEnv } from '../utils/env';
 import { parseBooleanEnv } from './resolve';
 import {
   validateConfig,
@@ -21,13 +22,21 @@ const DEFAULT_BASE_URL: Partial<Record<ProviderType, string>> = {
   // anthropic: omitted -> let the Anthropic SDK pick its default
 };
 
-/** Default context window (256K) used when KIMI_MODEL_MAX_CONTEXT_SIZE is unset. */
+/** Default context window (256K) used when CLOUD_CODE_MODEL_MAX_CONTEXT_SIZE is unset. */
 const DEFAULT_MAX_CONTEXT_SIZE = 262144;
 
-/** Default capabilities when KIMI_MODEL_CAPABILITIES is unset (kimi models support both). */
+/** Default capabilities when CLOUD_CODE_MODEL_CAPABILITIES is unset (kimi models support both). */
 const DEFAULT_CAPABILITIES = ['image_in', 'thinking'];
 
 type Env = Readonly<Record<string, string | undefined>>;
+
+/**
+ * Resolve a `CLOUD_CODE_MODEL_*` knob, accepting the pre-rebrand `KIMI_MODEL_*`
+ * name as a fallback so existing setups keep working.
+ */
+function modelEnv(env: Env, name: string): string | undefined {
+  return cloudCodeEnv(`CLOUD_CODE_MODEL_${name}`, `KIMI_MODEL_${name}`, env);
+}
 
 function trimmed(value: string | undefined): string | undefined {
   const t = value?.trim();
@@ -50,7 +59,7 @@ function parseProviderType(raw: string | undefined): ProviderType {
   const normalized = raw.toLowerCase() as ProviderType;
   if (!ALLOWED_TYPES.includes(normalized)) {
     fail(
-      `KIMI_MODEL_PROVIDER_TYPE must be one of ${ALLOWED_TYPES.join(', ')}, got "${raw}".`,
+      `CLOUD_CODE_MODEL_PROVIDER_TYPE must be one of ${ALLOWED_TYPES.join(', ')}, got "${raw}".`,
     );
   }
   return normalized;
@@ -67,8 +76,8 @@ function parseCapabilities(raw: string | undefined): string[] | undefined {
 
 // `parseBooleanEnv` returns undefined for unrecognized input. Treat a non-empty
 // but unparseable value (e.g. a typo like `flase`) as a config error so it
-// fails fast like the other KIMI_MODEL_* values, instead of silently keeping
-// config.toml's existing value.
+// fails fast like the other CLOUD_CODE_MODEL_* values, instead of silently
+// keeping config.toml's existing value.
 function parseBooleanVar(raw: string | undefined, varName: string): boolean | undefined {
   const value = trimmed(raw);
   if (value === undefined) return undefined;
@@ -80,8 +89,9 @@ function parseBooleanVar(raw: string | undefined, varName: string): boolean | un
 }
 
 /**
- * When `KIMI_MODEL_NAME` is set, synthesize one provider + one model alias from
- * the `KIMI_MODEL_*` environment variables and make it the default model.
+ * When `CLOUD_CODE_MODEL_NAME` is set, synthesize one provider + one model alias
+ * from the `CLOUD_CODE_MODEL_*` environment variables (legacy `KIMI_MODEL_*`
+ * names are honored as fallbacks) and make it the default model.
  * Returns the config unchanged when the trigger variable is absent.
  *
  * IMPORTANT: the synthesized provider/model/default_model exist ONLY in the
@@ -91,22 +101,22 @@ function parseBooleanVar(raw: string | undefined, varName: string): boolean | un
  * a final guard against patch round-trips (getConfig -> setConfig).
  */
 export function applyEnvModelConfig(config: CloudCodeConfig, env: Env = process.env): CloudCodeConfig {
-  const model = trimmed(env['KIMI_MODEL_NAME']);
+  const model = trimmed(modelEnv(env, 'NAME'));
   if (model === undefined) return config;
 
-  const apiKey = trimmed(env['KIMI_MODEL_API_KEY']);
+  const apiKey = trimmed(modelEnv(env, 'API_KEY'));
   if (apiKey === undefined) {
-    fail('KIMI_MODEL_NAME is set but KIMI_MODEL_API_KEY is missing.');
+    fail('CLOUD_CODE_MODEL_NAME is set but CLOUD_CODE_MODEL_API_KEY is missing.');
   }
 
-  const maxContextRaw = trimmed(env['KIMI_MODEL_MAX_CONTEXT_SIZE']);
+  const maxContextRaw = trimmed(modelEnv(env, 'MAX_CONTEXT_SIZE'));
   const maxContextSize =
     maxContextRaw === undefined
       ? DEFAULT_MAX_CONTEXT_SIZE
-      : parsePositiveInt(maxContextRaw, 'KIMI_MODEL_MAX_CONTEXT_SIZE');
+      : parsePositiveInt(maxContextRaw, 'CLOUD_CODE_MODEL_MAX_CONTEXT_SIZE');
 
-  const type = parseProviderType(trimmed(env['KIMI_MODEL_PROVIDER_TYPE']));
-  const baseUrl = trimmed(env['KIMI_MODEL_BASE_URL']) ?? DEFAULT_BASE_URL[type];
+  const type = parseProviderType(trimmed(modelEnv(env, 'PROVIDER_TYPE')));
+  const baseUrl = trimmed(modelEnv(env, 'BASE_URL')) ?? DEFAULT_BASE_URL[type];
 
   const provider: ProviderConfig = {
     type,
@@ -114,17 +124,17 @@ export function applyEnvModelConfig(config: CloudCodeConfig, env: Env = process.
     ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 
-  const maxOutputRaw = trimmed(env['KIMI_MODEL_MAX_OUTPUT_SIZE']);
+  const maxOutputRaw = trimmed(modelEnv(env, 'MAX_OUTPUT_SIZE'));
   const maxOutputSize =
     maxOutputRaw !== undefined
-      ? parsePositiveInt(maxOutputRaw, 'KIMI_MODEL_MAX_OUTPUT_SIZE')
+      ? parsePositiveInt(maxOutputRaw, 'CLOUD_CODE_MODEL_MAX_OUTPUT_SIZE')
       : undefined;
-  const capabilities = parseCapabilities(env['KIMI_MODEL_CAPABILITIES']) ?? DEFAULT_CAPABILITIES;
-  const displayName = trimmed(env['KIMI_MODEL_DISPLAY_NAME']);
-  const reasoningKey = trimmed(env['KIMI_MODEL_REASONING_KEY']);
+  const capabilities = parseCapabilities(modelEnv(env, 'CAPABILITIES')) ?? DEFAULT_CAPABILITIES;
+  const displayName = trimmed(modelEnv(env, 'DISPLAY_NAME'));
+  const reasoningKey = trimmed(modelEnv(env, 'REASONING_KEY'));
   const adaptiveThinking = parseBooleanVar(
-    env['KIMI_MODEL_ADAPTIVE_THINKING'],
-    'KIMI_MODEL_ADAPTIVE_THINKING',
+    modelEnv(env, 'ADAPTIVE_THINKING'),
+    'CLOUD_CODE_MODEL_ADAPTIVE_THINKING',
   );
 
   const alias: ModelAlias = {
@@ -138,7 +148,7 @@ export function applyEnvModelConfig(config: CloudCodeConfig, env: Env = process.
     ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
   };
 
-  const thinkingEffort = trimmed(env['KIMI_MODEL_THINKING_EFFORT']);
+  const thinkingEffort = trimmed(modelEnv(env, 'THINKING_EFFORT'));
   const thinking: ThinkingConfig | undefined =
     thinkingEffort !== undefined ? { ...config.thinking, effort: thinkingEffort } : config.thinking;
 

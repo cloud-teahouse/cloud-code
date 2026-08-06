@@ -7,7 +7,7 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerExportCommand } from '#/cli/sub/export';
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createCloudCodeHostIdentity } from '#/cli/version';
 import { createCloudCodeHarness, log } from '@cloud-code/sdk';
 import { __resetRootLoggerForTest } from '../../../../packages/agent-core/src/logging/logger';
 
@@ -26,9 +26,9 @@ beforeEach(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-work-'));
   oldHome = process.env['CLOUD_CODE_HOME'];
-  oldLogLevel = process.env['KIMI_LOG_LEVEL'];
+  oldLogLevel = process.env['CLOUD_CODE_LOG_LEVEL'];
   process.env['CLOUD_CODE_HOME'] = homeDir;
-  process.env['KIMI_LOG_LEVEL'] = 'info';
+  process.env['CLOUD_CODE_LOG_LEVEL'] = 'info';
 });
 
 afterEach(async () => {
@@ -39,9 +39,9 @@ afterEach(async () => {
     process.env['CLOUD_CODE_HOME'] = oldHome;
   }
   if (oldLogLevel === undefined) {
-    delete process.env['KIMI_LOG_LEVEL'];
+    delete process.env['CLOUD_CODE_LOG_LEVEL'];
   } else {
-    process.env['KIMI_LOG_LEVEL'] = oldLogLevel;
+    process.env['CLOUD_CODE_LOG_LEVEL'] = oldLogLevel;
   }
   await rm(homeDir, { recursive: true, force: true });
   await rm(workDir, { recursive: true, force: true });
@@ -51,7 +51,7 @@ describe.skipIf(!ENABLED)('local logging export e2e', () => {
   it('exports session log and global log by default, and allows skipping global log', async () => {
     const harness = createCloudCodeHarness({
       homeDir,
-      identity: createKimiCodeHostIdentity('0.1.1'),
+      identity: createCloudCodeHostIdentity('0.1.1'),
     });
     try {
       const session = await harness.createSession({

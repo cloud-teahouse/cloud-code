@@ -4,7 +4,9 @@ export type UIMode = 'shell' | 'print';
 export type PromptOutputFormat = 'text' | 'stream-json';
 
 /** Environment variable that sets the default `-p` output format (flag wins). */
-export const OUTPUT_FORMAT_ENV = 'KIMI_MODEL_OUTPUT_FORMAT';
+export const OUTPUT_FORMAT_ENV = 'CLOUD_CODE_MODEL_OUTPUT_FORMAT';
+/** Pre-rebrand name for {@link OUTPUT_FORMAT_ENV}, still honored as a fallback. */
+export const LEGACY_OUTPUT_FORMAT_ENV = 'KIMI_MODEL_OUTPUT_FORMAT';
 /** Environment variable that supplies the bearer token for `--server` (flag wins). */
 export const SERVER_TOKEN_ENV = 'CLOUD_CODE_SERVER_TOKEN';
 
@@ -17,8 +19,9 @@ function isOutputFormat(value: string): value is PromptOutputFormat {
 /**
  * Resolve the effective `-p` output format.
  *
- * Precedence: explicit `--output-format` flag → `KIMI_MODEL_OUTPUT_FORMAT` env
- * (prompt mode only) → `text`. The env var is ignored outside prompt mode so an
+ * Precedence: explicit `--output-format` flag → `CLOUD_CODE_MODEL_OUTPUT_FORMAT`
+ * env (legacy `KIMI_MODEL_OUTPUT_FORMAT` honored; prompt mode only) → `text`.
+ * The env var is ignored outside prompt mode so an
  * ambient value never affects interactive `cloud-code`. An invalid env value fails
  * fast via `OptionConflictError`.
  */
@@ -28,7 +31,7 @@ export function resolveOutputFormat(
 ): PromptOutputFormat {
   if (opts.outputFormat !== undefined) return opts.outputFormat;
   if (opts.prompt === undefined) return 'text';
-  const raw = (env[OUTPUT_FORMAT_ENV] ?? '').trim();
+  const raw = (env[OUTPUT_FORMAT_ENV] ?? env[LEGACY_OUTPUT_FORMAT_ENV] ?? '').trim();
   if (raw.length === 0) return 'text';
   if (!isOutputFormat(raw)) {
     throw new OptionConflictError(
@@ -146,7 +149,7 @@ export function validateOptions(
   if (opts.server === undefined && opts.serverToken !== undefined) {
     throw new OptionConflictError('--server-token requires --server.');
   }
-  // Validate `KIMI_MODEL_OUTPUT_FORMAT` eagerly in prompt mode so a typo fails
+  // Validate `CLOUD_CODE_MODEL_OUTPUT_FORMAT` eagerly in prompt mode so a typo fails
   // fast through the friendly `error:` path instead of mid-run.
   if (promptMode) resolveOutputFormat(opts, env);
   return { options: opts, uiMode: promptMode ? 'print' : 'shell' };

@@ -99,7 +99,7 @@ export async function detectEnvironment(deps: EnvironmentDeps): Promise<Environm
 async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
   const checked: string[] = [];
 
-  const override = deps.env['KIMI_SHELL_PATH']?.trim();
+  const override = (deps.env['CLOUD_CODE_SHELL_PATH'] ?? deps.env['KIMI_SHELL_PATH'])?.trim();
   if (override !== undefined && override.length > 0) {
     checked.push(override);
     if (await deps.isFile(override)) {

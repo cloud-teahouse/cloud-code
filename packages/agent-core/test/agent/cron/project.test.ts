@@ -36,7 +36,7 @@ let projectDir: string;
 let sessionDir: string;
 
 beforeEach(async () => {
-  vi.stubEnv('KIMI_CRON_NO_JITTER', '1');
+  vi.stubEnv('CLOUD_CODE_CRON_NO_JITTER', '1');
   projectDir = await mkdtemp(join(tmpdir(), 'cloud-code-cron-proj-'));
   sessionDir = await mkdtemp(join(tmpdir(), 'cloud-code-cron-sess-'));
 });

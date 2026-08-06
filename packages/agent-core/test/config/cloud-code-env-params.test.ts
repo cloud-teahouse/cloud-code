@@ -43,8 +43,8 @@ describe('applyCloudCodeEnvSamplingParams', () => {
 
   it('injects temperature and top_p for a kimi provider', () => {
     const out = applyCloudCodeEnvSamplingParams(kimi(), {
-      KIMI_MODEL_TEMPERATURE: '0.3',
-      KIMI_MODEL_TOP_P: '0.95',
+      CLOUD_CODE_MODEL_TEMPERATURE: '0.3',
+      CLOUD_CODE_MODEL_TOP_P: '0.95',
     });
     const state = genState(out);
     expect(state.temperature).toBe(0.3);
@@ -53,12 +53,12 @@ describe('applyCloudCodeEnvSamplingParams', () => {
 
   it('leaves non-kimi providers untouched', () => {
     const stub = { name: 'stub' } as unknown as ChatProvider;
-    expect(applyCloudCodeEnvSamplingParams(stub, { KIMI_MODEL_TEMPERATURE: '0.3' })).toBe(stub);
+    expect(applyCloudCodeEnvSamplingParams(stub, { CLOUD_CODE_MODEL_TEMPERATURE: '0.3' })).toBe(stub);
   });
 
   it('throws config.invalid for an invalid temperature', () => {
     expectConfigInvalid(() =>
-      applyCloudCodeEnvSamplingParams(kimi(), { KIMI_MODEL_TEMPERATURE: 'abc' }),
+      applyCloudCodeEnvSamplingParams(kimi(), { CLOUD_CODE_MODEL_TEMPERATURE: 'abc' }),
     );
   });
 });
@@ -70,7 +70,7 @@ describe('applyCloudCodeEnvThinkingKeep', () => {
   });
 
   it('injects thinking.keep from env when thinking is on', () => {
-    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: 'all' });
+    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' });
     expect(genState(out).extra_body?.thinking?.keep).toBe('all');
   });
 
@@ -80,14 +80,14 @@ describe('applyCloudCodeEnvThinkingKeep', () => {
   });
 
   it('env takes precedence over config', () => {
-    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: 'all' }, 'off');
+    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' }, 'off');
     expect(genState(out).extra_body?.thinking?.keep).toBe('all');
   });
 
   it.each(['off', 'false', '0', 'no', 'none', 'null', 'OFF', 'None'])(
     'env off-value %s disables keep even when config enables it',
     (off) => {
-      const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: off }, 'all');
+      const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { CLOUD_CODE_MODEL_THINKING_KEEP: off }, 'all');
       expect(genState(out).extra_body).toBeUndefined();
     },
   );
@@ -98,18 +98,18 @@ describe('applyCloudCodeEnvThinkingKeep', () => {
   });
 
   it('blank env falls through to config', () => {
-    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: '  ' }, 'off');
+    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'high', { CLOUD_CODE_MODEL_THINKING_KEEP: '  ' }, 'off');
     expect(genState(out).extra_body).toBeUndefined();
   });
 
   it('does NOT inject thinking.keep when thinking is off', () => {
-    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'off', { KIMI_MODEL_THINKING_KEEP: 'all' });
+    const out = applyCloudCodeEnvThinkingKeep(kimi(), 'off', { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' });
     expect(genState(out).extra_body).toBeUndefined();
   });
 
   it('leaves non-kimi providers untouched', () => {
     const stub = { name: 'stub' } as unknown as ChatProvider;
-    expect(applyCloudCodeEnvThinkingKeep(stub, 'high', { KIMI_MODEL_THINKING_KEEP: 'all' })).toBe(stub);
+    expect(applyCloudCodeEnvThinkingKeep(stub, 'high', { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' })).toBe(stub);
   });
 });
 
@@ -117,7 +117,7 @@ describe('resolveCloudCodeEnvThinkingEffort', () => {
   it('returns the trimmed force override for an enabled Kimi model', () => {
     expect(
       resolveCloudCodeEnvThinkingEffort('high', true, {
-        KIMI_MODEL_THINKING_EFFORT: ' max ',
+        CLOUD_CODE_MODEL_THINKING_EFFORT: ' max ',
       }),
     ).toBe('max');
   });
@@ -125,7 +125,7 @@ describe('resolveCloudCodeEnvThinkingEffort', () => {
   it('lowercases the force override', () => {
     expect(
       resolveCloudCodeEnvThinkingEffort('high', true, {
-        KIMI_MODEL_THINKING_EFFORT: ' MAX ',
+        CLOUD_CODE_MODEL_THINKING_EFFORT: ' MAX ',
       }),
     ).toBe('max');
   });
@@ -133,7 +133,7 @@ describe('resolveCloudCodeEnvThinkingEffort', () => {
   it('does not override an explicit off effort', () => {
     expect(
       resolveCloudCodeEnvThinkingEffort('off', true, {
-        KIMI_MODEL_THINKING_EFFORT: 'max',
+        CLOUD_CODE_MODEL_THINKING_EFFORT: 'max',
       }),
     ).toBeUndefined();
   });
@@ -142,7 +142,7 @@ describe('resolveCloudCodeEnvThinkingEffort', () => {
     expect(resolveCloudCodeEnvThinkingEffort('high', true, {})).toBeUndefined();
     expect(
       resolveCloudCodeEnvThinkingEffort('high', true, {
-        KIMI_MODEL_THINKING_EFFORT: '  ',
+        CLOUD_CODE_MODEL_THINKING_EFFORT: '  ',
       }),
     ).toBeUndefined();
   });
@@ -150,7 +150,7 @@ describe('resolveCloudCodeEnvThinkingEffort', () => {
   it('does not apply the Kimi force override to another provider', () => {
     expect(
       resolveCloudCodeEnvThinkingEffort('high', false, {
-        KIMI_MODEL_THINKING_EFFORT: 'max',
+        CLOUD_CODE_MODEL_THINKING_EFFORT: 'max',
       }),
     ).toBeUndefined();
   });
@@ -179,7 +179,7 @@ describe('applyAnthropicThinkingKeep', () => {
   });
 
   it('injects keep from env when thinking is on', () => {
-    const out = applyAnthropicThinkingKeep(anthropic(), 'high', { KIMI_MODEL_THINKING_KEEP: 'all' });
+    const out = applyAnthropicThinkingKeep(anthropic(), 'high', { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' });
     expect(anthropicState(out).contextManagement?.edits[0]?.keep).toBe('all');
   });
 
@@ -192,7 +192,7 @@ describe('applyAnthropicThinkingKeep', () => {
     const out = applyAnthropicThinkingKeep(
       anthropic(),
       'high',
-      { KIMI_MODEL_THINKING_KEEP: 'all' },
+      { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' },
       'off',
     );
     expect(anthropicState(out).contextManagement?.edits[0]?.keep).toBe('all');
@@ -204,7 +204,7 @@ describe('applyAnthropicThinkingKeep', () => {
       const out = applyAnthropicThinkingKeep(
         anthropic(),
         'high',
-        { KIMI_MODEL_THINKING_KEEP: off },
+        { CLOUD_CODE_MODEL_THINKING_KEEP: off },
         'all',
       );
       expect(anthropicState(out).contextManagement).toBeUndefined();
@@ -220,14 +220,14 @@ describe('applyAnthropicThinkingKeep', () => {
     const out = applyAnthropicThinkingKeep(
       anthropic(),
       'high',
-      { KIMI_MODEL_THINKING_KEEP: '  ' },
+      { CLOUD_CODE_MODEL_THINKING_KEEP: '  ' },
       'off',
     );
     expect(anthropicState(out).contextManagement).toBeUndefined();
   });
 
   it('does NOT inject context_management when thinking is off', () => {
-    const out = applyAnthropicThinkingKeep(anthropic(), 'off', { KIMI_MODEL_THINKING_KEEP: 'all' });
+    const out = applyAnthropicThinkingKeep(anthropic(), 'off', { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' });
     expect(anthropicState(out).contextManagement).toBeUndefined();
   });
 
@@ -243,6 +243,6 @@ describe('applyAnthropicThinkingKeep', () => {
 
   it('leaves non-anthropic providers untouched', () => {
     const stub = { name: 'stub' } as unknown as ChatProvider;
-    expect(applyAnthropicThinkingKeep(stub, 'high', { KIMI_MODEL_THINKING_KEEP: 'all' })).toBe(stub);
+    expect(applyAnthropicThinkingKeep(stub, 'high', { CLOUD_CODE_MODEL_THINKING_KEEP: 'all' })).toBe(stub);
   });
 });

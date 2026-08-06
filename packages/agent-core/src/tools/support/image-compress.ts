@@ -61,13 +61,18 @@ export const MAX_IMAGE_EDGE_PX = 2000;
  * resolution so it applies in any process without wiring; a value that is
  * not a positive integer is ignored.
  */
-export const MAX_IMAGE_EDGE_ENV = 'KIMI_IMAGE_MAX_EDGE_PX';
+export const MAX_IMAGE_EDGE_ENV = 'CLOUD_CODE_IMAGE_MAX_EDGE_PX';
+/** Pre-rebrand name, still honored as a fallback. */
+export const LEGACY_MAX_IMAGE_EDGE_ENV = 'KIMI_IMAGE_MAX_EDGE_PX';
 
 /** The env override for the longest-edge ceiling, or undefined when unset/invalid. */
 export function maxImageEdgeFromEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): number | undefined {
-  return positiveIntFromEnv(env, MAX_IMAGE_EDGE_ENV);
+  return (
+    positiveIntFromEnv(env, MAX_IMAGE_EDGE_ENV) ??
+    positiveIntFromEnv(env, LEGACY_MAX_IMAGE_EDGE_ENV)
+  );
 }
 
 /**
@@ -117,13 +122,18 @@ export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
  * Env var overriding the read-image byte budget. Read live on every
  * resolution; a value that is not a positive integer is ignored.
  */
-export const READ_IMAGE_BYTE_BUDGET_ENV = 'KIMI_IMAGE_READ_BYTE_BUDGET';
+export const READ_IMAGE_BYTE_BUDGET_ENV = 'CLOUD_CODE_IMAGE_READ_BYTE_BUDGET';
+/** Pre-rebrand name, still honored as a fallback. */
+export const LEGACY_READ_IMAGE_BYTE_BUDGET_ENV = 'KIMI_IMAGE_READ_BYTE_BUDGET';
 
 /** The env override for the read-image byte budget, or undefined when unset/invalid. */
 export function readImageByteBudgetFromEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): number | undefined {
-  return positiveIntFromEnv(env, READ_IMAGE_BYTE_BUDGET_ENV);
+  return (
+    positiveIntFromEnv(env, READ_IMAGE_BYTE_BUDGET_ENV) ??
+    positiveIntFromEnv(env, LEGACY_READ_IMAGE_BYTE_BUDGET_ENV)
+  );
 }
 
 /**

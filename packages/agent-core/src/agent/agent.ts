@@ -83,11 +83,11 @@ export class Agent {
 
   /**
    * The session config snapshot this agent reads (loop control, subagent
-   * binding descriptions, ...). Mutable via {@link updateKimiConfig} so the
+   * binding descriptions, ...). Mutable via {@link updateCloudCodeConfig} so the
    * session can push live config updates (e.g. a `/secondary_model` switch)
    * to already-instantiated agents.
    */
-  kimiConfig?: CloudCodeConfig;
+  cloudCodeConfig?: CloudCodeConfig;
   readonly homedir?: string;
   readonly brandHomeDir?: string;
   readonly mediaOriginalsDir?: string;
@@ -246,7 +246,7 @@ export class Agent {
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
     this._kaos = options.kaos;
-    this.kimiConfig = options.config;
+    this.cloudCodeConfig = options.config;
     this.homedir = options.homedir;
     this.brandHomeDir = options.brandHomeDir;
     this.mediaOriginalsDir = options.mediaOriginalsDir;
@@ -275,7 +275,7 @@ export class Agent {
     this.generatePipeline = new GeneratePipeline(this);
     this.systemPromptSections = new SystemPromptAssembly({
       log: this.log,
-      isDiagnosticsEnabled: () => cacheDiagnosticsEnabled(this.kimiConfig),
+      isDiagnosticsEnabled: () => cacheDiagnosticsEnabled(this.cloudCodeConfig),
     });
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
@@ -321,7 +321,7 @@ export class Agent {
     // (RFC unified-exec-pty §3.5 v2); records.logRecord gates replay writes.
     this.shellSessions = new ShellSessionManager(
       this.background,
-      () => this.kimiConfig?.shellSession ?? {},
+      () => this.cloudCodeConfig?.shellSession ?? {},
       (record) => {
         this.records.logRecord(record);
       },
@@ -449,7 +449,7 @@ export class Agent {
     // All provider-level request config (thinking, sampling params, thinking.keep)
     // is applied in ConfigState.provider so compaction shares it. See get provider().
     const provider = this.config.provider;
-    const loopControl = this.kimiConfig?.loopControl;
+    const loopControl = this.cloudCodeConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       maxOutputSize: this.config.maxOutputSize,
       reservedContextSize: loopControl?.reservedContextSize,
@@ -476,8 +476,8 @@ export class Agent {
   }
 
   /** Push a refreshed session config snapshot and rebuild config-dependent builtin tools. */
-  updateKimiConfig(config: CloudCodeConfig | undefined): void {
-    this.kimiConfig = config;
+  updateCloudCodeConfig(config: CloudCodeConfig | undefined): void {
+    this.cloudCodeConfig = config;
     if (this.config.hasProvider) {
       this.tools.refreshBuiltinTools();
     }

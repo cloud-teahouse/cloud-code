@@ -739,17 +739,17 @@ describe('Session secondary-model live config', () => {
 
       session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG);
 
-      expect(session.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
-      expect(agent.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+      expect(session.cloudCodeConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+      expect(agent.cloudCodeConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
       // A pointer-only recipe synthesizes no derived entry.
-      expect(session.kimiConfig?.models?.['__secondary__']).toBeUndefined();
+      expect(session.cloudCodeConfig?.models?.['__secondary__']).toBeUndefined();
 
       // Agents created after the switch read the updated snapshot too.
       const { agent: second } = await session.createAgent(
         { type: 'sub', generate: createScriptedGenerate().generate },
         { profile: testProfile(), parentAgentId: 'main' },
       );
-      expect(second.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+      expect(second.cloudCodeConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
     } finally {
       await session.close();
     }
@@ -786,12 +786,12 @@ describe('Session secondary-model live config', () => {
     const session = await makeSession(SECONDARY_BASE_CONFIG);
     try {
       session.setSecondaryModelConfig(SECONDARY_PATCHED_CONFIG);
-      const derived = session.kimiConfig?.models?.['__secondary__'];
+      const derived = session.cloudCodeConfig?.models?.['__secondary__'];
       expect(derived).toBeDefined();
       expect(derived?.overrides?.defaultEffort).toBe('low');
 
       session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG);
-      expect(session.kimiConfig?.models?.['__secondary__']).toBeUndefined();
+      expect(session.cloudCodeConfig?.models?.['__secondary__']).toBeUndefined();
     } finally {
       await session.close();
     }
@@ -808,7 +808,7 @@ describe('Session secondary-model live config', () => {
         loopControl: { maxStepsPerTurn: 99 },
       });
 
-      expect(session.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(7);
+      expect(session.cloudCodeConfig?.loopControl?.maxStepsPerTurn).toBe(7);
     } finally {
       await session.close();
     }
@@ -823,7 +823,7 @@ describe('Session secondary-model live config', () => {
           secondaryModel: { model: 'missing-model' },
         }),
       ).toThrow(/\[secondary_model\]\.model/);
-      expect(session.kimiConfig?.secondaryModel).toBeUndefined();
+      expect(session.cloudCodeConfig?.secondaryModel).toBeUndefined();
     } finally {
       await session.close();
     }
