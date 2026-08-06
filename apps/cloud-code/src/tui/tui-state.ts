@@ -9,6 +9,7 @@ import {
 import { BottomAnchorContainer } from './components/chrome/bottom-anchor-container';
 import { FooterComponent } from './components/chrome/footer';
 import { EditorSlotContainer, GutterContainer } from './components/chrome/gutter-container';
+import { LayeredSlotContainer } from './components/chrome/layered-slot-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
@@ -43,7 +44,7 @@ export interface TUIState {
    *  gap after the transcript to bottom-anchor the slot. */
   rootContainer: BottomAnchorContainer;
   /** Fixed bottom slot: notice/activity/swarm/todo/queue/btw/editor/footer, in order. */
-  slotContainer: Container;
+  slotContainer: LayeredSlotContainer;
   transcriptContainer: Container;
   activityContainer: Container;
   todoPanelContainer: Container;
@@ -94,7 +95,7 @@ export function createTUIState(options: CloudCodeTUIOptions): TUIState {
   const ui = new TUI(terminal);
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const slotContainer = new Container();
+  const slotContainer = new LayeredSlotContainer();
   // BottomAnchor only affects inline mode (its render() pads a filler gap);
   // fullscreen renders the registered regions directly and never sees filler.
   const rootContainer = new BottomAnchorContainer(() => terminal.rows, transcriptContainer);
@@ -167,20 +168,33 @@ export function createTUIState(options: CloudCodeTUIOptions): TUIState {
   // message anchoring the current view as a one-line full-width summary at the
   // viewport top. Scrolling past a message flips the header to the previous
   // one; clicking the row jumps to that message's position (pi-tui handles it).
-  ui.setStickyHeaderContent((width, scrollTop, viewportHeight) => {
-    const innerWidth = Math.max(1, width - CHROME_GUTTER * 2);
+  ui.setStickyHeaderContent((width, scrollTop, viewportHeight, transcript) => {
     const viewportBottom = scrollTop + viewportHeight;
-    let offset = 0;
     let selected: { entry: TranscriptEntry; start: number } | null = null;
-    for (const child of state.transcriptContainer.children) {
-      const entry = getTranscriptComponentEntry(child);
-      if (entry?.kind === 'user') {
+    if (transcript !== null) {
+      // Row-index geometry: base/height are exact line offsets at the current
+      // layout width, so a scrolled-up frame costs a number walk instead of a
+      // render call per transcript child.
+      for (const { child, base } of transcript) {
+        const entry = getTranscriptComponentEntry(child);
+        if (entry?.kind !== 'user') continue;
         // The header anchors to the last user message whose first line is
         // above the viewport bottom (visible or just above it).
-        if (offset >= viewportBottom) break;
-        selected = { entry, start: offset };
+        if (base >= viewportBottom) break;
+        selected = { entry, start: base };
       }
-      offset += child.render(innerWidth).length;
+    } else {
+      // Legacy whole-render fallback (row index declined): measure by render.
+      const innerWidth = Math.max(1, width - CHROME_GUTTER * 2);
+      let offset = 0;
+      for (const child of state.transcriptContainer.children) {
+        const entry = getTranscriptComponentEntry(child);
+        if (entry?.kind === 'user') {
+          if (offset >= viewportBottom) break;
+          selected = { entry, start: offset };
+        }
+        offset += child.render(innerWidth).length;
+      }
     }
     if (!selected) return null;
     const firstLine = selected.entry.content.split('\n').find((line) => line.trim().length > 0) ?? '';

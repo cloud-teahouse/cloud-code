@@ -107,6 +107,23 @@ export interface MouseEvent {
 }
 
 /**
+ * A bottom-slot component may implement `renderSlot` to take over clipping
+ * when the slot is taller than the screen. The flat fallback top-clips the
+ * whole slot; a layered slot instead returns the visible lines plus a map
+ * from each visible line to its index in the slot's full render, so mouse
+ * hit-tests keep working against the unclipped coordinate space.
+ */
+export interface SlotClipResult {
+	readonly lines: string[];
+	/** lineMap[i] = the visible line's index in the slot's full render. */
+	readonly lineMap: readonly number[];
+}
+
+export interface LayeredSlot {
+	renderSlot(width: number, maxLines: number): SlotClipResult;
+}
+
+/**
  * Component interface - all components must implement this
  */
 export interface Component {
@@ -591,6 +608,9 @@ export class TUI extends Container {
 	 * this back.
 	 */
 	private lastSlotClipRows = 0;
+	/** Visible slot line → full-render index while a layered slot clip is active
+	 *  (null under the flat top-clip, where lastSlotClipRows suffices). */
+	private lastSlotLineMap: readonly number[] | null = null;
 	private scrollIndicatorLabel: ((hiddenLines: number) => string) | null = null;
 	private scrollIndicatorVisible = false;
 	/** Visible width of the drawn scroll badge — clicks only count on the badge. */
@@ -620,9 +640,11 @@ export class TUI extends Container {
 	private transcriptScrollbarGrabOffset: number | null = null;
 	/** Supplies the one-line sticky prompt header (already styled, width-padded
 	 *  by the app). Drawn over the viewport's top row while scrolled up. The
-	 *  optional jumpTo is the transcript line the header click scrolls to. */
+	 *  optional jumpTo is the transcript line the header click scrolls to. The
+	 *  fourth argument carries the row index's per-child geometry (null when
+	 *  the index declined this container). */
 	private stickyHeaderContent:
-		| ((width: number, scrollTop: number, viewportHeight: number) => {
+		| ((width: number, scrollTop: number, viewportHeight: number, transcript: readonly TranscriptIndexEntry[] | null) => {
 				line: string;
 				jumpTo?: number;
 		  } | null)
@@ -810,11 +832,15 @@ export class TUI extends Container {
 	 * viewport's top row; a left-click on that row scrolls to `jumpTo` (or back
 	 * to the bottom when omitted). The provider receives the frame width plus
 	 * the current scroll position so it can anchor the header to the message
-	 * currently in view.
+	 * currently in view. `transcript` carries the row index's per-child
+	 * geometry (read-only, exact at this point in the compose — the viewport
+	 * window was just materialized from it) so the provider can anchor without
+	 * re-rendering every child each frame; it is null when the index declined
+	 * this scroll container and the legacy whole-render path is active.
 	 */
 	setStickyHeaderContent(
 		provider:
-			| ((width: number, scrollTop: number, viewportHeight: number) => {
+			| ((width: number, scrollTop: number, viewportHeight: number, transcript: readonly TranscriptIndexEntry[] | null) => {
 					line: string;
 					jumpTo?: number;
 			  } | null)
@@ -1334,6 +1360,19 @@ export class TUI extends Container {
 	}
 
 	/**
+	 * Map a 1-based screen row to the slot's full-render line index, or -1 when
+	 * the row is above the slot. Under the flat top-clip the visible window is a
+	 * suffix (lastSlotClipRows); under a layered clip the line map translates
+	 * (and clipped-away lines are unreachable because they share no screen row).
+	 */
+	private slotFullLineAt(screenRow: number): number {
+		const visibleIndex = screenRow - 1 - this.lastViewportHeight;
+		if (visibleIndex < 0) return -1;
+		if (this.lastSlotLineMap !== null) return this.lastSlotLineMap[visibleIndex] ?? -1;
+		return visibleIndex + this.lastSlotClipRows;
+	}
+
+	/**
 	 * Row offset of `descendant`'s first rendered line within `ancestor`'s
 	 * rendered output (0-based), via each container's rendered child heights and
 	 * its {@link Container.rowsBeforeChild} chrome. Press events are one-shot, so
@@ -1646,7 +1685,7 @@ export class TUI extends Container {
 						slot instanceof Container &&
 						this.hoverSlotPanelHit(
 							slot,
-							event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows,
+							this.slotFullLineAt(event.row),
 							event,
 						);
 					if (hit) {
@@ -1667,7 +1706,7 @@ export class TUI extends Container {
 					slot instanceof Container &&
 					this.hoverSlotPanelHit(
 						slot,
-						event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows,
+						this.slotFullLineAt(event.row),
 						event,
 					);
 				if (hit) {
@@ -1780,8 +1819,8 @@ export class TUI extends Container {
 				// output). Container gutters likewise shift the component right.
 				const inner = this.rowOffsetWithin(slot, focused);
 				if (inner === null) return;
-				const slotIndex = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
-				row = slotIndex < this.lastSlotClipRows ? -1 : Math.max(slotIndex - inner, -1);
+				const slotIndex = this.slotFullLineAt(event.row);
+				row = slotIndex < 0 ? -1 : Math.max(slotIndex - inner, -1);
 				col = event.col - (this.colInsetWithin(slot, focused) ?? 0);
 			} else {
 				// Takeover components fill the screen from row 1.
@@ -1840,8 +1879,8 @@ export class TUI extends Container {
 			} else if (slot !== undefined && this.containsComponent(slot, focused)) {
 				const inner = this.rowOffsetWithin(slot, focused);
 				if (inner === null) return;
-				const slotIndex = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
-				row = slotIndex < this.lastSlotClipRows ? -1 : Math.max(slotIndex - inner, -1);
+				const slotIndex = this.slotFullLineAt(event.row);
+				row = slotIndex < 0 ? -1 : Math.max(slotIndex - inner, -1);
 				col = event.col - (this.colInsetWithin(slot, focused) ?? 0);
 			} else {
 				// Takeover components fill the screen from row 1.
@@ -1915,7 +1954,7 @@ export class TUI extends Container {
 						slot instanceof Container &&
 						this.slotPanelZonePress(
 							slot,
-							event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows,
+							this.slotFullLineAt(event.row),
 							event,
 						)
 					) {
@@ -1967,10 +2006,10 @@ export class TUI extends Container {
 				// output). Container gutters likewise shift the component right.
 				const inner = this.rowOffsetWithin(slot, focused);
 				if (inner === null) return;
-				const slotIndex = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
+				const slotIndex = this.slotFullLineAt(event.row);
 				// Rows above the visible slot top are transcript viewport (or
 				// clipped-away slot lines), not component hits.
-				if (slotIndex < this.lastSlotClipRows) return;
+				if (slotIndex < 0) return;
 				row = slotIndex - inner;
 				col = event.col - (this.colInsetWithin(slot, focused) ?? 0);
 			} else {
@@ -2267,7 +2306,7 @@ export class TUI extends Container {
 			// A visible overlay owns the pointer inside its rect.
 			!this.isPointShieldedByOverlay(event.row, event.col)
 		) {
-			const row = event.row - 1 - this.lastViewportHeight + this.lastSlotClipRows;
+			const row = this.slotFullLineAt(event.row);
 			const focused = this.focusedComponent;
 			const width = Math.max(1, this.terminal.columns);
 			// Render-free pre-check, same as slotPanelZonePress: bail before the
@@ -2848,14 +2887,33 @@ export class TUI extends Container {
 			this.lastScrollRegionLineCount = 0;
 			this.lastViewportHeight = height;
 			this.lastSlotClipRows = 0;
+			this.lastSlotLineMap = null;
 			return this.clipKittyImagesToSlice(lines);
 		}
 
-		// Bottom slot: clipped from the top when taller than the screen (viewport keeps 1 row).
-		const slotLines = slot.render(width);
-		const slotHeight = Math.min(slotLines.length, Math.max(1, height - 1));
-		const slotView = slotHeight < slotLines.length ? slotLines.slice(slotLines.length - slotHeight) : slotLines;
-		this.lastSlotClipRows = slotLines.length - slotView.length;
+		// Bottom slot: when the slot is taller than the screen it must shrink to
+		// leave the viewport 1 row. A layered slot clips per layer (status layers
+		// keep their lines, content panels yield first) and reports the visible
+		// line → full-render map for mouse hit-tests; the flat fallback top-clips.
+		const slotMaxLines = Math.max(1, height - 1);
+		const layeredClip =
+			typeof (slot as Partial<LayeredSlot>).renderSlot === "function"
+				? (slot as unknown as LayeredSlot).renderSlot(width, slotMaxLines)
+				: undefined;
+		let slotView: string[];
+		let slotHeight: number;
+		if (layeredClip !== undefined) {
+			slotView = [...layeredClip.lines];
+			slotHeight = slotView.length;
+			this.lastSlotLineMap = layeredClip.lineMap;
+			this.lastSlotClipRows = 0;
+		} else {
+			const slotLines = slot.render(width);
+			slotHeight = Math.min(slotLines.length, slotMaxLines);
+			slotView = slotHeight < slotLines.length ? slotLines.slice(slotLines.length - slotHeight) : slotLines;
+			this.lastSlotLineMap = null;
+			this.lastSlotClipRows = slotLines.length - slotView.length;
+		}
 		this.clipKittyImagesToSlice(slotView);
 		const viewportHeight = height - slotHeight;
 		this.lastViewportHeight = viewportHeight;
@@ -2948,7 +3006,12 @@ export class TUI extends Container {
 		this.stickyHeaderVisible = false;
 		this.stickyJumpTo = null;
 		if (!this.followOutput && this.stickyHeaderContent && viewportHeight > 1) {
-			const header = this.stickyHeaderContent(width, this.scrollTop, viewportHeight);
+			const header = this.stickyHeaderContent(
+				width,
+				this.scrollTop,
+				viewportHeight,
+				indexed ? this.transcriptIndex.allEntries() : null,
+			);
 			// Dedup: when the anchored message is itself visible in the viewport
 			// (its start line is at or below the viewport top), showing it in the
 			// header too reads as a duplicate — suppress the header.

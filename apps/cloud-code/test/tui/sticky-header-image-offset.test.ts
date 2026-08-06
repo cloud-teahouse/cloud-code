@@ -1,8 +1,9 @@
 /**
  * Sticky prompt header × inline (kitty) images — scroll-offset unit consistency.
  *
- * The sticky header provider in tui-state.ts accumulates each transcript
- * child's `render(innerWidth).length` to compute `jumpTo`, and pi-tui applies
+ * The sticky header provider in tui-state.ts anchors on the row index's
+ * per-child geometry (falling back to accumulating each transcript child's
+ * `render(innerWidth).length`) to compute `jumpTo`, and pi-tui applies
  * `jumpTo` as `scrollTop` — an index into `scroll.render(width)`'s output
  * array (composeFullscreenFrame slices that array by scrollTop/viewportHeight).
  *
@@ -38,10 +39,12 @@ const WIDTH = 80;
 const INNER_WIDTH = WIDTH - CHROME_GUTTER * 2;
 
 type StickyHeaderResult = { line: string; jumpTo?: number } | null;
+type StickyHeaderGeometry = readonly { child: unknown; base: number; height: number }[] | null;
 type StickyHeaderProvider = (
   width: number,
   scrollTop: number,
   viewportHeight: number,
+  transcript: StickyHeaderGeometry,
 ) => StickyHeaderResult;
 
 /** Access the provider registered by createTUIState (private on TUI). */
@@ -194,7 +197,29 @@ describe('sticky header jumpTo with kitty images in the transcript', () => {
     // Scrolled so user2's start is above the viewport top.
     const scrollTop = expectedStart + 2;
     const viewportHeight = 20;
-    const header = stickyProvider(state)(WIDTH, scrollTop, viewportHeight);
+    const header = stickyProvider(state)(WIDTH, scrollTop, viewportHeight, null);
+
+    expect(header).not.toBeNull();
+    expect(header!.jumpTo).toBe(expectedStart);
+  });
+
+  it('row-index geometry yields the same anchor as the render walk', () => {
+    const { state, user2 } = buildTranscript();
+    const expectedStart = scrollRegionStartOf(state, user2, USER_2_TEXT);
+
+    // Fabricate the geometry the row index would hand over: per-child base
+    // offsets measured at the transcript's inner width.
+    let base = 0;
+    const geometry = state.transcriptContainer.children.map((child) => {
+      const lines = child.render(INNER_WIDTH);
+      const entry = { child, base, height: lines.length };
+      base += lines.length;
+      return entry;
+    });
+
+    const scrollTop = expectedStart + 2;
+    const viewportHeight = 20;
+    const header = stickyProvider(state)(WIDTH, scrollTop, viewportHeight, geometry);
 
     expect(header).not.toBeNull();
     expect(header!.jumpTo).toBe(expectedStart);

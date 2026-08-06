@@ -137,11 +137,30 @@ export async function runShell(
     }
     emergencyExit(1);
   };
+  // A real SIGINT (not the raw-mode \x03 keypress) reaches an interactive TUI
+  // in two windows: an external editor holding the terminal in cooked mode
+  // (the signal hits the whole foreground process group) and the startup /
+  // shutdown transitions. Exit 130 with the terminal restored — but while the
+  // external editor is up it owns the signal (vim users hit Ctrl+C routinely);
+  // our cleanup runs from openExternalEditor's finally when the editor exits.
+  const onSigint = (): void => {
+    if (tui.state.externalEditorRunning) return;
+    try {
+      flushDiagnosticLogsSync();
+    } catch {
+      /* ignore */
+    }
+    restoreTerminalModes();
+    restoreStty();
+    process.exit(130);
+  };
+  process.on('SIGINT', onSigint);
   process.on('uncaughtException', onUncaughtException);
   process.on('unhandledRejection', onUnhandledRejection);
   // Remove the crash handlers once the TUI exits cleanly so repeated runShell()
   // calls in the same process (e.g. tests) don't accumulate process listeners.
   const removeCrashHandlers = (): void => {
+    process.off('SIGINT', onSigint);
     process.off('uncaughtException', onUncaughtException);
     process.off('unhandledRejection', onUnhandledRejection);
   };

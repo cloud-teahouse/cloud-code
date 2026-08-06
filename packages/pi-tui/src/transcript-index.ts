@@ -155,6 +155,17 @@ export class TranscriptRowIndex {
 	}
 
 	/**
+	 * The full per-child geometry, in transcript order. Callers must treat the
+	 * array and its entries as read-only: the composer reuses them across
+	 * frames, and a mutation would corrupt every consumer. Exposed for the
+	 * sticky-header provider so it can anchor on child geometry without
+	 * re-rendering the transcript every frame.
+	 */
+	allEntries(): readonly TranscriptIndexEntry[] {
+		return this.entries;
+	}
+
+	/**
 	 * Index of the entry owning `line`: the rightmost entry with base ≤ line,
 	 * provided the line falls within its height (zero-height entries can never
 	 * own a line). -1 when the line falls outside the synced content.

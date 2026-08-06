@@ -128,6 +128,7 @@ export {
 	CURSOR_MARKER,
 	type Focusable,
 	isFocusable,
+	type LayeredSlot,
 	type MouseEvent,
 	type OverlayAnchor,
 	type OverlayHandle,
@@ -135,6 +136,7 @@ export {
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
 	type SizeValue,
+	type SlotClipResult,
 	TUI,
 } from "./tui.ts";
 // Utilities

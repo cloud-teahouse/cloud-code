@@ -476,6 +476,81 @@ describe("TUI fullscreen rendering", () => {
 		assert.strictEqual(terminal.getViewport()[0], " ⏺ anchored");
 	});
 
+	it("layered slot clips by policy and keeps mouse rows in full-render coordinates", async () => {
+		// A slot whose renderSlot takes over overflow clipping: header (status)
+		// keeps its 2 lines, the body (MouseAware) keeps its bottom 3 of 6 —
+		// the visible window is NOT a suffix of the full render, so hit-tests
+		// must go through the line map.
+		class LayeredSlot extends Container {
+			renderSlot(width: number, maxLines: number) {
+				const lines: string[] = [];
+				const lineMap: number[] = [];
+				let base = 0;
+				for (const child of this.children) {
+					const childLines = child.render(width);
+					const keep = base === 0 ? childLines.length : Math.min(3, childLines.length);
+					for (let j = childLines.length - keep; j < childLines.length; j++) {
+						lines.push(childLines[j]!);
+						lineMap.push(base + j);
+					}
+					base += childLines.length;
+				}
+				if (lines.length > maxLines) {
+					const drop = lines.length - maxLines;
+					lines.splice(0, drop);
+					lineMap.splice(0, drop);
+				}
+				return { lines, lineMap };
+			}
+		}
+
+		const terminal = new VirtualTerminal(80, 6);
+		const tui = new TUI(terminal);
+		const scroll = new TestComponent();
+		const slot = new LayeredSlot();
+		const header = new TestComponent();
+		header.lines = ["status-1", "status-2"];
+		const body = new MouseAwareComponent();
+		body.lines = makeLines("body", 6);
+		slot.addChild(header);
+		slot.addChild(body);
+		const root = new Container();
+		root.addChild(scroll);
+		root.addChild(slot);
+		tui.addChild(root);
+		tui.setFullscreen(true);
+		tui.setLayoutRegions({ scroll, slot });
+		tui.start();
+		scroll.lines = ["msg"];
+		await terminal.waitForRender();
+
+		// 6 rows: viewport keeps 1, slot shows 5 = header(2) + body bottom 3.
+		const view = terminal.getViewport();
+		assert.strictEqual(view[1], "status-1");
+		assert.strictEqual(view[2], "status-2");
+		assert.strictEqual(view[3], "body-4");
+		assert.strictEqual(view[5], "body-6");
+
+		// Press the body's middle visible line (screen row 5 = "body-5":
+		// visible slot index 3 → full-render index 6 → body-local row 4).
+		tui.setFocus(body);
+		terminal.sendInput("\x1b[<0;5;5M");
+		await terminal.waitForRender();
+		assert.strictEqual(body.mouse.length, 1);
+		assert.strictEqual(body.mouse[0]!.row, 4);
+	});
+
+	it("flat slot still top-clips when the slot has no renderSlot", async () => {
+		const { tui, terminal, scroll, slot } = await setupFullscreen(80, 6);
+		scroll.lines = ["msg"];
+		slot.lines = makeLines("slot", 8);
+		await render(tui, terminal);
+		const view = terminal.getViewport();
+		// slotMaxLines = 5: the flat suffix clip keeps the bottom 5 lines.
+		assert.strictEqual(view[1], "slot-4");
+		assert.strictEqual(view[5], "slot-8");
+	});
+
 	it("isolates the scroll badge from the row's background colour", async () => {
 		class LoggingTerminal extends VirtualTerminal {
 			writes: string[] = [];

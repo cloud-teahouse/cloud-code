@@ -1075,6 +1075,16 @@ export class CloudCodeTUI {
     slotContainer.addChild(this.state.queueContainer);
     slotContainer.addChild(this.state.btwPanelContainer);
     slotContainer.addChild(this.state.editorContainer);
+    // Overflow clipping policy (fullscreen, slot taller than the screen):
+    // editor/footer and the transient status rows keep their lines; the
+    // content panels yield their top lines first.
+    slotContainer.setLayer(this.state.noticeContainer, 'status');
+    slotContainer.setLayer(this.state.activityContainer, 'status');
+    slotContainer.setLayer(this.state.swarmContainer, 'status');
+    slotContainer.setLayer(this.state.todoPanelContainer, 'panel');
+    slotContainer.setLayer(this.state.queueContainer, 'panel');
+    slotContainer.setLayer(this.state.btwPanelContainer, 'panel');
+    slotContainer.setLayer(this.state.editorContainer, 'pinned');
     // Footer is mounted later (mountFooter), not here.
   }
 
@@ -1087,6 +1097,7 @@ export class CloudCodeTUI {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
     this.state.slotContainer.addChild(footerWrap);
+    this.state.slotContainer.setLayer(footerWrap, 'pinned');
     // Clickable footer segments (mouse only; the keyboard flow is untouched).
     // Every action routes through the same dispatch as the typed command, so
     // a click is exactly equivalent to typing /model, /status, or using /copy.
