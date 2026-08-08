@@ -44,6 +44,11 @@ function fakeTerminal(rows: number, columns = 120): Terminal {
   };
 }
 
+// Frozen fixture clock: per-call Date.now() reads tick forward on slow
+// machines, which would reshuffle compareTasks' startedAt ordering between
+// fixtures built in sequence. One base keeps relative order deterministic.
+const FIXTURE_NOW = Date.now();
+
 function task(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
   return {
     taskId: 'bash-abcd1234',
@@ -53,7 +58,7 @@ function task(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
     status: 'running',
     pid: 1234,
     exitCode: null,
-    startedAt: Date.now() - 60_000,
+    startedAt: FIXTURE_NOW - 60_000,
     endedAt: null,
     ...overrides,
   } as BackgroundTaskInfo;

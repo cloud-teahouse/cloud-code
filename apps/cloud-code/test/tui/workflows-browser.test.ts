@@ -762,6 +762,13 @@ describe('WorkflowTracker', () => {
 // Component helpers
 // ---------------------------------------------------------------------------
 
+// Frozen fixture clock: per-call Date.now() reads tick forward on slow
+// machines, which scrambles the roster's lastEventAt ordering between
+// fixtures built in sequence (the CI wheel flake was that fixture drift,
+// not a component race). One base for the whole file keeps relative order
+// deterministic while durations still read ≈65s.
+const FIXTURE_NOW = Date.now();
+
 function node(overrides: Partial<WorkflowAgentNode> & { agentId: string }): WorkflowAgentNode {
   return {
     name: overrides.agentId,
@@ -777,7 +784,7 @@ function node(overrides: Partial<WorkflowAgentNode> & { agentId: string }): Work
     currentActivity: undefined,
     model: undefined,
     step: 0,
-    startedAt: Date.now() - 65_000,
+    startedAt: FIXTURE_NOW - 65_000,
     endedAt: undefined,
     usage: undefined,
     contextTokens: undefined,
@@ -837,7 +844,7 @@ function sampleAgents(): WorkflowAgentNode[] {
       name: 'explore',
       parentAgentId: 'a1',
       status: 'done',
-      endedAt: Date.now() - 30_000,
+      endedAt: FIXTURE_NOW - 30_000,
       usage: usage(2000, 0),
     }),
     node({ agentId: 'w0', name: 'worker', parentAgentId: 'main', swarmIndex: 0, status: 'waiting' }),
@@ -848,7 +855,7 @@ function sampleAgents(): WorkflowAgentNode[] {
       swarmIndex: 1,
       status: 'failed',
       statusDetail: 'boom',
-      endedAt: Date.now() - 5000,
+      endedAt: FIXTURE_NOW - 5000,
     }),
   ];
 }
