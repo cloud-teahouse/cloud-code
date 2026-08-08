@@ -42,6 +42,11 @@ export class FloatingDialogSurface extends EditorSlotContainer implements Focusa
     this.invalidate();
   }
 
+  /** The notice currently hosted on this surface, if any (identity checks). */
+  get currentNotice(): Component | undefined {
+    return this.noticeChild;
+  }
+
   /** Detach the current notice without replacing it (the host re-homes it to
    * the slot's notice row when the dialog closes). */
   takeNotice(): Component | undefined {

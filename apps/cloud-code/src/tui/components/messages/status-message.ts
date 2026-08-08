@@ -3,10 +3,26 @@ import { Container, Spacer, Text } from '@cloud-code/pi-tui';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 
+/** Cells in the countdown gauge attached to a transient notice line. */
+export const NOTICE_COUNTDOWN_CELLS = 8;
+
+/**
+ * Render the notice's remaining-lifetime gauge: a short `━` run that shrinks
+ * to nothing as `remaining` goes 1 → 0, so the eye reads the deadline without
+ * a number. Undefined hides the gauge (recorded/persistent notices).
+ */
+export function renderNoticeCountdown(remaining: number | undefined): string {
+  if (remaining === undefined) return '';
+  const cells = Math.max(0, Math.round(remaining * NOTICE_COUNTDOWN_CELLS));
+  if (cells === 0) return '';
+  return ` ${currentTheme.fg('textDim', '━'.repeat(cells))}`;
+}
+
 export class StatusMessageComponent extends Container {
   private textComponent: Text;
   private content: string;
   private color?: ColorToken;
+  private remaining: number | undefined;
 
   constructor(content: string, color?: ColorToken) {
     super();
@@ -20,6 +36,13 @@ export class StatusMessageComponent extends Container {
   // remounting the component.
   updateContent(content: string): void {
     this.content = content;
+    this.textComponent.setText(this.renderText());
+  }
+
+  /** Remaining lifetime as 0..1 (the gauge); undefined clears it. */
+  setCountdown(remaining: number | undefined): void {
+    if (this.remaining === remaining) return;
+    this.remaining = remaining;
     this.textComponent.setText(this.renderText());
   }
 
@@ -39,7 +62,11 @@ export class StatusMessageComponent extends Container {
       this.color === undefined
         ? currentTheme.fg('textDim', this.content)
         : currentTheme.fg(this.color, this.content);
-    return colored.replaceAll('\r', '').split('\n').map((line) => `  ${line}`).join('\n');
+    return colored
+      .replaceAll('\r', '')
+      .split('\n')
+      .map((line, index) => `  ${line}${index === 0 ? renderNoticeCountdown(this.remaining) : ''}`)
+      .join('\n');
   }
 }
 
@@ -48,13 +75,14 @@ export class NoticeMessageComponent extends Container {
   private detailText?: Text;
   private title: string;
   private detail?: string;
+  private remaining: number | undefined;
 
   constructor(title: string, detail: string | undefined) {
     super();
     this.title = title;
     this.detail = detail;
     this.addChild(new Spacer(1));
-    this.titleText = new Text(`  ${currentTheme.fg('textStrong', title)}`, 0, 0);
+    this.titleText = new Text(this.renderTitle(), 0, 0);
     this.addChild(this.titleText);
     if (detail !== undefined && detail.length > 0) {
       this.detailText = new Text(`  ${currentTheme.fg('textDim', detail)}`, 0, 0);
@@ -62,8 +90,19 @@ export class NoticeMessageComponent extends Container {
     }
   }
 
+  /** Remaining lifetime as 0..1 (the gauge on the title line); undefined clears it. */
+  setCountdown(remaining: number | undefined): void {
+    if (this.remaining === remaining) return;
+    this.remaining = remaining;
+    this.titleText.setText(this.renderTitle());
+  }
+
+  private renderTitle(): string {
+    return `  ${currentTheme.fg('textStrong', this.title)}${renderNoticeCountdown(this.remaining)}`;
+  }
+
   override invalidate(): void {
-    this.titleText.setText(`  ${currentTheme.fg('textStrong', this.title)}`);
+    this.titleText.setText(this.renderTitle());
     if (this.detailText !== undefined && this.detail !== undefined) {
       this.detailText.setText(`  ${currentTheme.fg('textDim', this.detail)}`);
     }

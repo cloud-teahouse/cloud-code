@@ -350,6 +350,16 @@ const DETACH_HINT_DISPLAY_MS = 4_000;
  */
 const NOTICE_DISPLAY_MS = 8_000;
 
+/** Ticks per second for the transient-notice countdown gauge. */
+const NOTICE_COUNTDOWN_TICK_MS = 500;
+
+/** Notices that can render their remaining lifetime as a shrinking gauge. */
+function hasNoticeCountdown(
+  component: Component,
+): component is Component & { setCountdown(remaining: number | undefined): void } {
+  return typeof (component as { setCountdown?: unknown }).setCountdown === 'function';
+}
+
 export class CloudCodeTUI {
   readonly harness: CloudCodeHarness;
   readonly options: CloudCodeTUIOptions;
@@ -410,6 +420,7 @@ export class CloudCodeTUI {
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
   private noticeClearTimer: ReturnType<typeof setTimeout> | undefined;
+  private noticeCountdownInterval: ReturnType<typeof setInterval> | undefined;
 
   // The currently-mounted approval panel, if any. Kept so the full-screen
   // preview viewer can restore focus to the exact same instance (and its
@@ -1067,7 +1078,10 @@ export class CloudCodeTUI {
     // Transient status heads the slot, right under the transcript viewport:
     // notices, the activity spinner and the swarm progress all read as part
     // of the conversation flow — never wedged between the content panels
-    // (todo/queue/btw) and the editor below.
+    // (todo/queue/btw) and the editor below. The idle gap row sits above
+    // them: the blank belongs between the transcript and the status chrome,
+    // not between the chrome and the editor.
+    slotContainer.addChild(this.state.slotGapContainer);
     slotContainer.addChild(this.state.noticeContainer);
     slotContainer.addChild(this.state.activityContainer);
     slotContainer.addChild(this.state.swarmContainer);
@@ -1078,6 +1092,7 @@ export class CloudCodeTUI {
     // Overflow clipping policy (fullscreen, slot taller than the screen):
     // editor/footer and the transient status rows keep their lines; the
     // content panels yield their top lines first.
+    slotContainer.setLayer(this.state.slotGapContainer, 'status');
     slotContainer.setLayer(this.state.noticeContainer, 'status');
     slotContainer.setLayer(this.state.activityContainer, 'status');
     slotContainer.setLayer(this.state.swarmContainer, 'status');
@@ -2393,6 +2408,7 @@ export class CloudCodeTUI {
     // Drop any lingering transient notice: a session reset starts pristine.
     this.clearNoticeClearTimer();
     this.state.noticeContainer.clear();
+    this.state.slotGapContainer.clear();
     this.sessionEventHandler.clearAgentSwarmProgress();
     this.imageStore.clear();
     this.renderWelcome();
@@ -2723,27 +2739,44 @@ export class CloudCodeTUI {
   }
 
   private armNoticeClearTimer(component: Component): void {
-    if (this.noticeClearTimer !== undefined) {
-      clearTimeout(this.noticeClearTimer);
-      this.noticeClearTimer = undefined;
+    this.clearNoticeClearTimer();
+    const armedAt = Date.now();
+    if (hasNoticeCountdown(component)) {
+      component.setCountdown(1);
+      // Wall-clock driven: only the gauge text changes between ticks, so a
+      // paused render (background tab, heavy output) can never desync it.
+      this.noticeCountdownInterval = setInterval(() => {
+        if (hasNoticeCountdown(component)) {
+          component.setCountdown(Math.max(0, 1 - (Date.now() - armedAt) / NOTICE_DISPLAY_MS));
+          this.state.ui.requestRender();
+        }
+      }, NOTICE_COUNTDOWN_TICK_MS);
     }
     this.noticeClearTimer = setTimeout(() => {
+      this.stopNoticeCountdown();
       this.noticeClearTimer = undefined;
-      // Don't clobber a notice that replaced (or was cleared independently
-      // of) the one this timer was armed for.
+      // Clear the armed component wherever it currently lives — its home may
+      // have moved (slot notice row ↔ dialog surface) since the timer was
+      // armed, and a newer notice may have replaced it in either spot.
       const overlay = this.editorSlotOwner?.overlay;
-      if (overlay !== undefined) {
+      if (overlay?.surface.currentNotice === component) {
         overlay.surface.takeNotice();
-        this.state.ui.requestRender();
-        return;
       }
-      if (!this.state.noticeContainer.children.includes(component)) return;
-      this.state.noticeContainer.clear();
+      if (this.state.noticeContainer.children.includes(component)) {
+        this.state.noticeContainer.clear();
+      }
       this.state.ui.requestRender();
     }, NOTICE_DISPLAY_MS);
   }
 
+  private stopNoticeCountdown(): void {
+    if (this.noticeCountdownInterval === undefined) return;
+    clearInterval(this.noticeCountdownInterval);
+    this.noticeCountdownInterval = undefined;
+  }
+
   private clearNoticeClearTimer(): void {
+    this.stopNoticeCountdown();
     if (this.noticeClearTimer === undefined) return;
     clearTimeout(this.noticeClearTimer);
     this.noticeClearTimer = undefined;
@@ -2838,6 +2871,7 @@ export class CloudCodeTUI {
 
     this.lastActivityMode = activityModeKey;
     this.state.activityContainer.clear();
+    this.state.slotGapContainer.clear();
 
     switch (effectiveMode) {
       case 'hidden':
@@ -2894,10 +2928,12 @@ export class CloudCodeTUI {
       case 'session': {
         this.stopActivitySpinner();
         this.syncAgentSwarmActivitySpinner(undefined);
-        // Keep a placeholder row so the activity area does not fully shrink
-        // when the spinner is removed at the end of streaming; combined with
-        // pi-tui's clamp, this avoids a destructive full redraw (viewport jump).
-        this.state.activityContainer.addChild(new Spacer(1));
+        // Keep a placeholder row so the slot does not shrink when the spinner
+        // is removed at the end of streaming; combined with pi-tui's clamp,
+        // this avoids a destructive full redraw (viewport jump). The row heads
+        // the slot: the blank separates transcript from status chrome instead
+        // of sitting between the notice row and the editor.
+        this.state.slotGapContainer.addChild(new Spacer(1));
         break;
       }
     }

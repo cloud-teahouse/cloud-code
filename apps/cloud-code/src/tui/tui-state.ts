@@ -43,8 +43,13 @@ export interface TUIState {
    *  directly; in inline mode this container's own render() inserts a filler
    *  gap after the transcript to bottom-anchor the slot. */
   rootContainer: BottomAnchorContainer;
-  /** Fixed bottom slot: notice/activity/swarm/todo/queue/btw/editor/footer, in order. */
+  /** Fixed bottom slot: gap/notice/activity/swarm/todo/queue/btw/editor/footer, in order. */
   slotContainer: LayeredSlotContainer;
+  /** The idle gap row heading the slot: a single blank line between the
+   *  transcript and the status chrome, shown only while the activity area is
+   *  idle (the anti-shrink placeholder — it keeps the slot height constant
+   *  when the spinner is removed at the end of streaming). */
+  slotGapContainer: Container;
   transcriptContainer: Container;
   activityContainer: Container;
   todoPanelContainer: Container;
@@ -96,6 +101,7 @@ export function createTUIState(options: CloudCodeTUIOptions): TUIState {
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const slotContainer = new LayeredSlotContainer();
+  const slotGapContainer = new Container();
   // BottomAnchor only affects inline mode (its render() pads a filler gap);
   // fullscreen renders the registered regions directly and never sees filler.
   const rootContainer = new BottomAnchorContainer(() => terminal.rows, transcriptContainer);
@@ -149,6 +155,7 @@ export function createTUIState(options: CloudCodeTUIOptions): TUIState {
     livePane: { ...INITIAL_LIVE_PANE },
     transcriptEntries: [],
     terminalState: createTerminalState(),
+    slotGapContainer,
     activitySpinner: null,
     toolOutputExpanded: false,
     sessions: [],

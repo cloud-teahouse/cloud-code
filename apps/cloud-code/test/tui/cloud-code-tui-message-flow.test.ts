@@ -7,7 +7,12 @@ import {
   deleteAllKittyImages,
   resetCapabilitiesCache,
   setCapabilities,
+  Text,
+  type Component,
+  type Focusable,
 } from '@cloud-code/pi-tui';
+import { FloatingDialogSurface } from '#/tui/components/chrome/floating-dialog-surface';
+import type { EditorSlotHandle } from '#/tui/editor-slot';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -124,6 +129,8 @@ interface MessageDriver {
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   getCurrentSessionId(): string;
   showStatus(message: string, color?: string, options?: StatusNoticeOptions): void;
+  restoreEditor(handle?: EditorSlotHandle): void;
+  updateActivityPane(): void;
 }
 
 interface FeedbackDriver extends MessageDriver {
@@ -383,6 +390,25 @@ function renderTranscript(driver: MessageDriver): string {
 // container at the top of the slot, not in the transcript.
 function renderNoticeArea(driver: MessageDriver): string {
   return driver.state.noticeContainer.render(120).join('\n');
+}
+
+function makeFloatingSurface(): FloatingDialogSurface {
+  const panel = new Text('dialog panel', 0, 0) as unknown as Component & Focusable;
+  return new FloatingDialogSurface(1, 1, panel);
+}
+
+/** Fake a floating dialog owning the editor slot (notice routing target). */
+function setEditorSlotOverlay(
+  driver: MessageDriver,
+  surface: FloatingDialogSurface,
+): EditorSlotHandle {
+  const handle: EditorSlotHandle = { id: 999 };
+  (driver as unknown as { editorSlotOwner: unknown }).editorSlotOwner = {
+    handle,
+    kind: 'dialog',
+    overlay: { handle: { hide: vi.fn() }, surface },
+  };
+  return handle;
 }
 
 async function confirmUndoSelection(driver: MessageDriver): Promise<void> {
@@ -2873,7 +2899,8 @@ command = "vim"
     // Transient status (notice, activity, swarm) heads the slot, right under
     // the transcript — content panels (todo/queue/btw) sit below it, so a
     // running swarm never wedges between the btw panel and the editor.
-    expect(rootChildren.indexOf(driver.state.noticeContainer)).toBe(0);
+    expect(rootChildren.indexOf(driver.state.slotGapContainer)).toBe(0);
+    expect(rootChildren.indexOf(driver.state.noticeContainer)).toBe(1);
     expect(rootChildren.indexOf(driver.state.swarmContainer)).toBe(
       rootChildren.indexOf(driver.state.todoPanelContainer) - 1,
     );
@@ -6317,5 +6344,74 @@ describe('transient notice expiry', () => {
 
     vi.advanceTimersByTime(30_000);
     expect(stripSgr(renderTranscript(driver))).toContain('kept in transcript');
+  });
+
+  it('clears a container notice even when a dialog owns the surface at fire time', async () => {
+    const { driver } = await makeDriver();
+    vi.useFakeTimers();
+
+    driver.showStatus('slot note');
+    expect(driver.state.noticeContainer.children).toHaveLength(1);
+
+    // A floating dialog arrives while the timer runs; the notice never
+    // migrated, so the fire-time clear must still find it in the slot row.
+    setEditorSlotOverlay(driver, makeFloatingSurface());
+
+    vi.advanceTimersByTime(8_000);
+    expect(driver.state.noticeContainer.children).toHaveLength(0);
+  });
+
+  it('clears a dialog-surface notice after it migrates back to the slot row', async () => {
+    const { driver } = await makeDriver();
+    vi.useFakeTimers();
+
+    const surface = makeFloatingSurface();
+    const handle = setEditorSlotOverlay(driver, surface);
+    driver.showStatus('dialog note');
+    expect(surface.currentNotice).toBeDefined();
+    expect(driver.state.noticeContainer.children).toHaveLength(0);
+
+    // The dialog closes mid-window: the notice re-homes to the slot's notice
+    // row, where the same timer must still reach it.
+    driver.restoreEditor(handle);
+    expect(driver.state.noticeContainer.children).toHaveLength(1);
+
+    vi.advanceTimersByTime(8_000);
+    expect(driver.state.noticeContainer.children).toHaveLength(0);
+  });
+
+  it('renders a shrinking countdown gauge on transient notices', async () => {
+    const { driver } = await makeDriver();
+    vi.useFakeTimers();
+
+    driver.showStatus('timed note');
+    const initial = stripSgr(renderNoticeArea(driver));
+    const initialGauge = (initial.match(/━/g) ?? []).length;
+    expect(initialGauge).toBeGreaterThan(4);
+
+    vi.advanceTimersByTime(4_000);
+    const halfway = stripSgr(renderNoticeArea(driver));
+    const halfwayGauge = (halfway.match(/━/g) ?? []).length;
+    expect(halfwayGauge).toBeGreaterThan(0);
+    expect(halfwayGauge).toBeLessThan(initialGauge);
+
+    vi.advanceTimersByTime(4_000);
+    expect(stripSgr(renderNoticeArea(driver)).trim()).toBe('');
+  });
+
+  it('places the idle gap row above the status chrome and drops it while busy', async () => {
+    const { driver } = await makeDriver();
+    const { state } = driver;
+
+    state.livePane = { ...state.livePane, mode: 'idle' };
+    state.appState.streamingPhase = 'idle';
+    driver.updateActivityPane();
+    expect(state.slotGapContainer.children).toHaveLength(1);
+    expect(state.activityContainer.children).toHaveLength(0);
+    expect(state.slotContainer.children.indexOf(state.slotGapContainer)).toBe(0);
+
+    state.livePane = { ...state.livePane, mode: 'tool' };
+    driver.updateActivityPane();
+    expect(state.slotGapContainer.children).toHaveLength(0);
   });
 });
