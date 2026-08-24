@@ -658,23 +658,25 @@ describe('runUpdatePreflight', () => {
     }));
   });
 
-  it('defaults to automatic background updates when client preferences cannot be loaded', async () => {
+  it('prompts instead of background-installing when client preferences cannot be loaded', async () => {
     mocks.loadTuiConfig.mockRejectedValue(new Error('broken tui.toml'));
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.readUpdateInstallState.mockResolvedValue(installState());
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.detectInstallSource.mockResolvedValue('npm-global');
-    mockSpawnExit(0);
+    mocks.promptForInstallChoice.mockResolvedValue('skip');
     const { options } = captureOutput();
 
     await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    await flushBackgroundInstall();
 
-    expect(promptForInstallChoice).not.toHaveBeenCalled();
-    expect(mocks.spawn).toHaveBeenCalledWith(
-      expect.stringMatching(/^npm(\.cmd)?$/),
-      ['install', '-g', '@cloud-teahouse/cloudcode-cli@0.5.0'],
-      { detached: true, stdio: 'ignore' },
+    expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installCommand: 'npm install -g @cloud-teahouse/cloudcode-cli@0.5.0',
+        installSource: 'npm-global',
+      }),
     );
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it('starts only one background update when two sessions preflight concurrently', async () => {

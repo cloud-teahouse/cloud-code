@@ -37,7 +37,7 @@ describe('TUI config', () => {
     expect(text).toContain('language = "auto"');
     expect(text).toContain('command = ""');
     expect(text).toContain('[upgrade]');
-    expect(text).toContain('auto_install = true');
+    expect(text).toContain('auto_install = false');
     expect(text).toContain('[notifications]');
     expect(text).toContain('enabled = true');
     expect(text).toContain('notification_condition = "unfocused"');
@@ -130,7 +130,7 @@ command = "   "
       editorCommand: null,
       vimMode: false,
       notifications: { enabled: true, condition: 'unfocused' },
-      upgrade: { autoInstall: true },
+      upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
     });
   });
@@ -139,7 +139,7 @@ command = "   "
     const config = parseTuiConfig(`theme = "dark"`);
 
     expect(config.notifications).toEqual({ enabled: true, condition: 'unfocused' });
-    expect(config.upgrade).toEqual({ autoInstall: true });
+    expect(config.upgrade).toEqual({ autoInstall: false });
   });
 
   it('throws TuiConfigParseError with fallback when parsing fails, leaving the file untouched', async () => {

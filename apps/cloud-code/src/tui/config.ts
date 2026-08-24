@@ -111,7 +111,9 @@ export const DEFAULT_NOTIFICATIONS_CONFIG: NotificationsConfig = {
 };
 
 export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
-  autoInstall: true,
+  // Off by default: replacing the installed binary in the background is an
+  // action the user must opt into (/config, or upgrade.auto_install = true).
+  autoInstall: false,
 };
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({

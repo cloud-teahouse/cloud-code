@@ -383,7 +383,9 @@ async function shouldAutoInstallUpdates(): Promise<boolean> {
     const config = await loadTuiConfig();
     return config.upgrade.autoInstall;
   } catch {
-    return true;
+    // An unreadable config means unknown consent — never silently replace
+    // the binary on a guess. The update stays visible via the TUI notice.
+    return false;
   }
 }
 
