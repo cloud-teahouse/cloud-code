@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Replay dev commits onto public-main as curated public commits, one per
-# logical change, then print the push command. Replaces the old single
-# mega-snapshot so the public history reads like real development.
+# logical change, then print the push command. public-main is a curated
+# release log published at change-level granularity; it is not a mirror of
+# the private dev history and must never be presented as evidence of how
+# development happened.
 #
 #   scripts/public-sync.sh                 # replay everything since the last sync
 #   scripts/public-sync.sh --dry-run       # print the plan, touch nothing
