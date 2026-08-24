@@ -1,8 +1,8 @@
 # Cloud Code CLI — Repository Guide
 
-Cloud Code CLI 是一个终端 AI coding agent，fork 自 [kimi-code](https://github.com/MoonshotAI/kimi-code)（MIT，见 `LICENSE` 与 `NOTICE`），在其架构骨架上融合多款主流 coding agent 的设计优点并独立发展。本文面向贡献者与代码阅读者。
+Cloud Code CLI 是一个终端 AI coding agent，fork 自 [kimi-code](https://github.com/MoonshotAI/kimi-code)（MIT，见 `LICENSE` 与 `NOTICE`），大部分代码继承自上游，在其架构骨架上添加了一些有趣的功能。本文面向贡献者与代码阅读者。
 
-## 有趣的独立特性（与上游的差异）
+## 有趣的特性（与上游的差异）
 
 - **多供应商账号体系**：Kimi（OAuth/API key）+ ChatGPT Codex（OAuth，套餐用量/限额窗口/重置机会兑换）+ 完全自定义供应商与模型（/provider、/model 内置增删改）；子代理可独立设定模型（/model Alt+A）。
 - **GUI 级 TUI**：自研 bottom-slot 全屏架构 + 经典 inline 双模式；全鼠标支持（点击/悬停/虚拟滚动条/浮层对话框）、声明式命中区（HitRegistry）、DialogFrame 对话框骨架、搜索选择器、vim 模式、运行动效（blink + shimmer）。

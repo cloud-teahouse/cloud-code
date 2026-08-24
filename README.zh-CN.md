@@ -1,10 +1,10 @@
 # Cloud Code CLI
 
-终端里的独立编码 agent——多供应商、GUI 级 TUI、原生 swarm 协作。
+Kimi Code CLI 的 fork，加了一些有趣的功能——多供应商、GUI 级 TUI、原生 swarm 协作。
 
 Cloud Code CLI 是一个住在终端里的编码 agent：读你的代码库、规划并执行多步任务、跑命令、改文件、协调子代理团队——全屏 TUI 同时为键盘和鼠标设计。
 
-> 本项目 fork 自 [MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code)（MIT）并独立发展。署名见 [NOTICE](NOTICE)。
+> 本项目 fork 自 [MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code)（MIT），大部分代码继承自上游。署名见 [NOTICE](NOTICE)。
 
 ## 亮点
 

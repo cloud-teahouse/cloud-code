@@ -1,10 +1,10 @@
 # Cloud Code CLI
 
-An independent coding agent for the terminal — multi-provider, GUI-grade TUI, swarm-native.
+A fork of Kimi Code CLI with some interesting features — multi-provider, GUI-grade TUI, swarm-native.
 
 Cloud Code CLI is a coding agent that lives in your terminal: it reads your codebase, plans and executes multi-step tasks, runs commands, edits files, and coordinates teams of subagents — with a full-screen TUI designed to be driven by keyboard *and* mouse.
 
-> Forked from [MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code) (MIT) and developed independently. See [NOTICE](NOTICE) for attribution.
+> Forked from [MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code) (MIT). Much of the code is inherited from upstream; see [NOTICE](NOTICE) for attribution.
 
 ## Highlights
 
