@@ -1,52 +1,55 @@
 # Cloud Code
 
-## 0.2.1
-
-The open-source readiness release. Highlights:
-
-- **GUI-grade TUI**: unified tree-gutter details with click-to-expand cards
-  (hover highlight, click gray-block expand, ctrl+o keyboard expand),
-  consecutive same-tool grouping, virtual scrollbar with smooth grab-delta
-  dragging, floating dialogs, running-tool blink + shimmer, scroll badge
-  matching the input background, ctrl+home/end jumps.
-- **ChatGPT account experience**: plan usage fetched fresh from the codex
-  usage endpoint (no message needed), rate-limit reset-credit list and
-  redeem flow in /status, and plan-exhaustion errors that stop retrying and
-  show the reset time.
-- **Compaction that actually fires**: fixed the double-subtracted savings
-  that stalled graduated layers and blocked auto-compaction, aligned the
-  footer percentage with the trigger's accounting, and hardened the
-  summarizer (no-tools requests, state-persistence clause, known-open-issues).
-- **git worktree support** (EnterWorktree/ExitWorktree), output styles with
-  five builtins and /output-style, /sandbox status, loop skill, durable
-  project cron, memdir, fork subagents, custom plugin marketplaces, dual
-  fullscreen/inline TUI modes.
-- **Distribution**: bun single-file binaries for five platforms, bilingual
-  release notes, and /update self-updates with sha256 verification.
-
 ## 0.2.0
 
-The independent-product release after the 0.1.0 foundation. Highlights:
+The first release with verifiable artifacts, and the first since the project
+was published as a fork of [kimi-code](https://github.com/MoonshotAI/kimi-code).
+Highlights:
 
+- **Signed releases**: every release now ships a minisign (Ed25519) signature
+  over `sha256sums.txt`. `/update apply`, the npm installer, and `install.sh`
+  all verify it against a public key pinned in the source tree and refuse to
+  install a release whose signature is missing or invalid, so checksums no
+  longer have to be trusted just because they sit beside the artifacts they
+  describe. `install.sh` uses minisign when the host has it and an inline
+  RFC 8032 verifier in python3 otherwise. Auto-install of updates is off by
+  default and fails closed when the config cannot be read.
+- **A TUI that behaves like a GUI**: tree-gutter tool details with
+  click-to-expand cards (hover highlight, click gray-block expand, ctrl+o
+  keyboard expand), consecutive same-tool grouping, a virtual scrollbar with
+  smooth grab-delta dragging, floating dialogs, running-tool blink + shimmer,
+  ctrl+home/end jumps, a layered bottom slot that clips panels before status
+  rows, geometry-driven sticky headers, and a redesigned `/workflows` panel
+  (tree roster, conversational detail, inline interrupt confirmation).
 - **Claude Code backend port**: section-based system prompt assembly, reminder
-  authority tiers + long-session behavior re-injection, session resume
+  authority tiers with long-session behavior re-injection, session resume
   engineering (wire-lite reader, metadata re-append, consistency audit,
-  interruption continuation), sandbox exec guard + control-plane denyWrite +
-  MCP hardening, coordinator mode, guardian consent bars, compaction
-  attribution anti-forgery, enriched system prompt and tool descriptions.
+  interruption continuation), sandbox exec guard, control-plane denyWrite, MCP
+  hardening, coordinator mode, guardian consent bars, and compaction
+  attribution anti-forgery.
+- **Accounts and providers**: ChatGPT plan usage fetched straight from the
+  usage endpoint, rate-limit reset-credit list and redeem flow in `/status`,
+  plan-exhaustion errors that stop retrying and show the reset time, custom
+  provider/model wizards with reserved-name protection, and per-subagent
+  models.
 - **/import**: three-source import (Claude Code / Codex / Kimi Code) with a
-  deterministic Kimi Code engine — config merge, sessions, input history,
+  deterministic Kimi Code engine — config merge, sessions, input history, and
   opt-in credentials.
-- **Reasonix cache architecture**: compaction keep policy (error results,
-  `[[keep]]` markers, pinned digests), per-tool snip geometry,
-  reasoningRoundTrip knob, cache hit-rate guard e2e.
-- **UX**: coordinator mode UI, /provider and /model custom-add wizards,
-  custom-named thinking efforts, first-token latency in the footer,
-  click-to-select and hover wheel everywhere, localized backend error
-  presentation (en/zh-CN), per-subagent custom models, third-party /fast
-  opt-in, btw panel wheel + layout fixes.
-- **House**: upstream kimi-code 0.29.1 merged (history grafted for ongoing
-  syncs), telemetry removed system-wide.
+- **Compaction that actually fires**: fixed the double-subtracted savings that
+  stalled graduated layers and blocked auto-compaction, aligned the footer
+  percentage with the trigger's accounting, and hardened the summarizer.
+  Compaction keep policy covers error results, `[[keep]]` markers, and pinned
+  digests.
+- **Engineering depth**: git worktree isolation (EnterWorktree/ExitWorktree),
+  output styles with five builtins, `/sandbox` status and per-session
+  on/off, durable project cron, project and user memory, fork subagents,
+  custom plugin marketplaces, and dual fullscreen/inline TUI modes.
+- **Performance**: row-height indexing with binary-search hit testing,
+  viewport-only steady-state frames, width-keyed caches on the tool-card
+  wrappers, and batched replay — long streaming sessions no longer stutter.
+- **Distribution**: bun single-file binaries for five platforms, bilingual
+  release notes, three channels (release / beta / dev), and npm publishing
+  over trusted publishing (OIDC).
 
 ## Upstream sync 0.29.2–0.31.1
 
