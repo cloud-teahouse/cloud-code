@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
@@ -183,6 +183,35 @@ describe('install.sh verify_signature', () => {
         signature,
       ]),
     ).rejects.toMatchObject({ code: 1 });
+  });
+});
+
+/**
+ * The cleanup trap fires after main() returns. A scratch path scoped to main()
+ * would already be gone by then, so `set -u` would abort the trap: the
+ * directory would leak and a successful install would still exit non-zero.
+ */
+describe('install.sh cleanup', () => {
+  it('leaves the scratch path bound for the exit trap', async () => {
+    const { stdout } = await execFileAsync('bash', [
+      '-c',
+      'INSTALL_SH_SOURCE_ONLY=1; source "$1"; echo "value:[${tmp?unbound}]"',
+      'install-sh-test',
+      script,
+    ]);
+    expect(stdout).toContain('value:[]');
+  });
+
+  it('removes the scratch directory when the shell exits', async () => {
+    const scratch = join(mkdtempSync(join(tmpdir(), 'install-sh-cleanup-')), 'scratch');
+    await execFileAsync('bash', [
+      '-c',
+      'INSTALL_SH_SOURCE_ONLY=1; source "$1"; mkdir -p "$2"; tmp="$2"',
+      'install-sh-test',
+      script,
+      scratch,
+    ]);
+    expect(existsSync(scratch)).toBe(false);
   });
 });
 

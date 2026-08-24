@@ -29,6 +29,20 @@ ALIAS_NAME="cloud-code"
 # time would be a key an attacker can choose.
 RELEASE_SIGNING_PUBLIC_KEY="RWRSCedfeEAUBWZPDn2NRhR1Wgb+c3PvDMQYZOKXwpK37dzjBK+XxeZ+"
 
+# Download scratch directory, cleaned up on exit. It has to be global: the EXIT
+# trap runs after main() returns, so a `local` here would already be out of
+# scope and `set -u` would abort the trap — leaving the directory behind and
+# turning a successful install into a non-zero exit.
+tmp=""
+cleanup() {
+  # `if` rather than `[ … ] && …` so an empty tmp is not a non-zero return
+  # from the trap.
+  if [ -n "$tmp" ]; then
+    rm -rf "$tmp"
+  fi
+}
+trap cleanup EXIT
+
 # Map `uname -s`/`uname -m` (lowercased by the caller) to a release asset name.
 asset_name() {
   case "$1/$2" in
@@ -247,10 +261,9 @@ main() {
     exit 1
   fi
 
-  local base tmp
+  local base
   base="$(release_base_url "$channel")"
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
 
   echo "install.sh: downloading ${asset} (${channel} channel)…"
   curl -fsSL "${base}/sha256sums.txt" -o "${tmp}/sha256sums.txt"
