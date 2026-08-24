@@ -1,5 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
+import { verifyMinisignSignature } from '../../npm/minisign.mjs';
 import {
   assetName,
   findSha256Entry,
@@ -59,5 +63,48 @@ describe('postinstall findSha256Entry', () => {
 
   it('returns undefined when the asset is missing', () => {
     expect(findSha256Entry(sums, 'cloud-code-linux-arm64')).toBeUndefined();
+  });
+});
+
+/**
+ * The npm installer carries its own copy of the verifier because it runs from
+ * the published package, before any build output exists. It has to reach the
+ * same verdicts as the one compiled into the CLI, so it is held to the same
+ * signed fixture.
+ */
+describe('postinstall signature verification', () => {
+  const fixtures = join(import.meta.dirname, '../fixtures/release-signature');
+  const sums = readFileSync(join(fixtures, 'sha256sums.txt'));
+  const signature = readFileSync(join(fixtures, 'sha256sums.txt.minisig'), 'utf-8');
+
+  it('accepts checksums signed by the release key', () => {
+    expect(verifyMinisignSignature(sums, signature)).toMatchObject({ ok: true });
+  });
+
+  it('accepts the legacy minisign format', () => {
+    const legacy = readFileSync(join(fixtures, 'sha256sums.legacy.minisig'), 'utf-8');
+    expect(verifyMinisignSignature(sums, legacy)).toMatchObject({ ok: true });
+  });
+
+  it('rejects checksums edited after signing', () => {
+    const tampered = Buffer.from(sums.toString('utf-8').replace(/^./, 'b'));
+    expect(verifyMinisignSignature(tampered, signature)).toMatchObject({ ok: false });
+  });
+
+  it('rejects a forged trusted comment', () => {
+    const lines = signature.split('\n');
+    lines[2] = 'trusted comment: file:innocent.txt';
+    expect(verifyMinisignSignature(sums, lines.join('\n'))).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('trusted comment'),
+    });
+  });
+
+  it('rejects a key that is not the release key', () => {
+    expect(
+      verifyMinisignSignature(sums, signature, [
+        'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3',
+      ]),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('untrusted key') });
   });
 });

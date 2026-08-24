@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +11,10 @@ import {
   detectBinaryInstall,
   findChecksumForAsset,
 } from '#/cli/update/github/binary';
-import { SHA256SUMS_ASSET_NAME } from '#/cli/update/github/constants';
+import {
+  SHA256SUMS_ASSET_NAME,
+  SHA256SUMS_SIGNATURE_ASSET_NAME,
+} from '#/cli/update/github/constants';
 import type { GithubRelease } from '#/cli/update/github/types';
 
 // Mutable flag so one test can force the atomic replace to fail (simulating a
@@ -34,6 +38,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 const NEW_BINARY_BYTES = Buffer.from('new-cloud-code-binary-bytes');
 const NEW_BINARY_SHA256 = createHash('sha256').update(NEW_BINARY_BYTES).digest('hex');
 
+/**
+ * A real release-key signature is needed to get past verification, so the
+ * happy paths serve the signed fixture instead of a string built here.
+ * `sumsContent` still describes the shape the workflows emit; the assertion
+ * pairing them fails if they drift, which is the signal to re-sign the fixture
+ * (see test/cli/update/minisign.test.ts).
+ */
+const fixtures = join(import.meta.dirname, '../../../fixtures/release-signature');
+const SIGNED_SUMS = readFileSync(join(fixtures, 'sha256sums.txt'));
+const SIGNED_SUMS_SIGNATURE = readFileSync(join(fixtures, 'sha256sums.txt.minisig'));
+
 function sumsContent(sha256: string, assetName = 'cloud-code-linux-x64'): string {
   return `${sha256}  ${assetName}\n${'0'.repeat(64)}  cloud-code-darwin-arm64\n`;
 }
@@ -46,8 +61,21 @@ function makeRelease(overrides: Partial<GithubRelease> = {}): GithubRelease {
     assets: [
       { name: 'cloud-code-linux-x64', downloadUrl: 'https://example.test/cloud-code-linux-x64' },
       { name: SHA256SUMS_ASSET_NAME, downloadUrl: 'https://example.test/sha256sums.txt' },
+      {
+        name: SHA256SUMS_SIGNATURE_ASSET_NAME,
+        downloadUrl: 'https://example.test/sha256sums.txt.minisig',
+      },
     ],
     ...overrides,
+  };
+}
+
+/** Routes every download a successful apply makes. */
+function signedRoutes(binary: Buffer): Record<string, Buffer> {
+  return {
+    'https://example.test/sha256sums.txt': SIGNED_SUMS,
+    'https://example.test/sha256sums.txt.minisig': SIGNED_SUMS_SIGNATURE,
+    'https://example.test/cloud-code-linux-x64': binary,
   };
 }
 
@@ -117,11 +145,12 @@ describe('findChecksumForAsset', () => {
 describe('applyBinaryUpdate', () => {
   const baseDeps = { platform: 'linux' as const, arch: 'x64' };
 
+  it('serves the same checksum file the workflows build', () => {
+    expect(SIGNED_SUMS.toString('utf-8')).toBe(sumsContent(NEW_BINARY_SHA256));
+  });
+
   it('downloads, verifies, backs up, and atomically replaces the binary', async () => {
-    const fetchImpl = mockDownloadFetch({
-      'https://example.test/sha256sums.txt': Buffer.from(sumsContent(NEW_BINARY_SHA256)),
-      'https://example.test/cloud-code-linux-x64': NEW_BINARY_BYTES,
-    });
+    const fetchImpl = mockDownloadFetch(signedRoutes(NEW_BINARY_BYTES));
 
     const result = await applyBinaryUpdate(makeRelease(), { ...baseDeps, execPath, fetchImpl });
 
@@ -145,10 +174,7 @@ describe('applyBinaryUpdate', () => {
   });
 
   it('rejects a corrupt download and leaves the binary untouched', async () => {
-    const fetchImpl = mockDownloadFetch({
-      'https://example.test/sha256sums.txt': Buffer.from(sumsContent(NEW_BINARY_SHA256)),
-      'https://example.test/cloud-code-linux-x64': Buffer.from('tampered-bytes'),
-    });
+    const fetchImpl = mockDownloadFetch(signedRoutes(Buffer.from('tampered-bytes')));
 
     const result = await applyBinaryUpdate(makeRelease(), { ...baseDeps, execPath, fetchImpl });
 
@@ -157,6 +183,48 @@ describe('applyBinaryUpdate', () => {
       expect(result.stage).toBe('checksum');
       expect(result.message).toMatch(/sha256 mismatch/);
     }
+    expect(await readFile(execPath, 'utf-8')).toBe('old-binary-bytes');
+  });
+
+  it('refuses a release whose checksums are not signed', async () => {
+    const unsigned = makeRelease({
+      assets: makeRelease().assets.filter(
+        (asset) => asset.name !== SHA256SUMS_SIGNATURE_ASSET_NAME,
+      ),
+    });
+    const fetchImpl = mockDownloadFetch(signedRoutes(NEW_BINARY_BYTES));
+
+    const result = await applyBinaryUpdate(unsigned, { ...baseDeps, execPath, fetchImpl });
+
+    expect(result.kind).toBe('failed');
+    if (result.kind === 'failed') {
+      expect(result.stage).toBe('asset-missing');
+      expect(result.message).toMatch(/is not signed/);
+    }
+    // Refused before the binary was fetched, let alone written.
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await readFile(execPath, 'utf-8')).toBe('old-binary-bytes');
+  });
+
+  it('refuses checksums the release key did not sign', async () => {
+    const forged = sumsContent(createHash('sha256').update('attacker-payload').digest('hex'));
+    const fetchImpl = mockDownloadFetch({
+      ...signedRoutes(NEW_BINARY_BYTES),
+      'https://example.test/sha256sums.txt': Buffer.from(forged),
+    });
+
+    const result = await applyBinaryUpdate(makeRelease(), { ...baseDeps, execPath, fetchImpl });
+
+    expect(result.kind).toBe('failed');
+    if (result.kind === 'failed') {
+      expect(result.stage).toBe('signature');
+      expect(result.message).toMatch(/failed signature verification/);
+    }
+    // The binary URL is never requested once the checksums are in doubt.
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      'https://example.test/cloud-code-linux-x64',
+      expect.anything(),
+    );
     expect(await readFile(execPath, 'utf-8')).toBe('old-binary-bytes');
   });
 
@@ -183,10 +251,10 @@ describe('applyBinaryUpdate', () => {
   });
 
   it('fails cleanly when the download errors', async () => {
-    const fetchImpl = mockDownloadFetch({
-      'https://example.test/sha256sums.txt': Buffer.from(sumsContent(NEW_BINARY_SHA256)),
-      // Binary URL intentionally unrouted → 404.
-    });
+    const routes = signedRoutes(NEW_BINARY_BYTES);
+    // Binary URL intentionally unrouted → 404.
+    delete routes['https://example.test/cloud-code-linux-x64'];
+    const fetchImpl = mockDownloadFetch(routes);
     const result = await applyBinaryUpdate(makeRelease(), { ...baseDeps, execPath, fetchImpl });
     expect(result.kind).toBe('failed');
     if (result.kind === 'failed') expect(result.stage).toBe('download');
@@ -195,10 +263,7 @@ describe('applyBinaryUpdate', () => {
 
   it('restores the backup when the atomic replace fails', async () => {
     renameControl.fail = true;
-    const fetchImpl = mockDownloadFetch({
-      'https://example.test/sha256sums.txt': Buffer.from(sumsContent(NEW_BINARY_SHA256)),
-      'https://example.test/cloud-code-linux-x64': NEW_BINARY_BYTES,
-    });
+    const fetchImpl = mockDownloadFetch(signedRoutes(NEW_BINARY_BYTES));
 
     const result = await applyBinaryUpdate(makeRelease(), { ...baseDeps, execPath, fetchImpl });
 

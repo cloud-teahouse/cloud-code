@@ -42,7 +42,7 @@ export type BinaryUpdateResult =
   | { readonly kind: 'unsupported-platform'; readonly platform: string; readonly arch: string }
   | {
       readonly kind: 'failed';
-      readonly stage: 'asset-missing' | 'download' | 'checksum' | 'replace';
+      readonly stage: 'asset-missing' | 'download' | 'signature' | 'checksum' | 'replace';
       readonly message: string;
       readonly execPath: string;
       /** Set once a backup exists so the UI can print a restore hint. */

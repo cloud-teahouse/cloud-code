@@ -27,9 +27,26 @@ npm install -g @cloud-teahouse/cloudcode-cli
 
 Then run `cloudcode`, and `/login` to connect an account.
 
+## Verifying a release
+
+Every release publishes `sha256sums.txt` together with a detached [minisign](https://jedisct1.github.io/minisign/) signature, `sha256sums.txt.minisig`. The signing key is:
+
+```
+RWRSCedfeEAUBWZPDn2NRhR1Wgb+c3PvDMQYZOKXwpK37dzjBK+XxeZ+
+```
+
+The install script, the npm package's installer, and `/update apply` all check that signature before they believe a single checksum, and refuse to install if it is missing or invalid — a checksum file served from the same page as the artifacts it describes proves the download arrived intact, not that we published it. The key is pinned in this repository ([`release-keys.ts`](apps/cloud-code/src/cli/update/release-keys.ts)), so trusting a release means trusting a commit here, not a Release page.
+
+To check a download by hand:
+
+```sh
+minisign -Vm sha256sums.txt -P RWRSCedfeEAUBWZPDn2NRhR1Wgb+c3PvDMQYZOKXwpK37dzjBK+XxeZ+
+sha256sum -c --ignore-missing sha256sums.txt
+```
+
 ## Update
 
-Inside the app: `/update` checks the latest release; `/update apply` downloads, verifies (sha256), and swaps the binary with a backup.
+Inside the app: `/update` checks the latest release; `/update apply` downloads, verifies the release signature and the sha256, and swaps the binary with a backup.
 
 ## Development
 

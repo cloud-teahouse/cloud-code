@@ -27,9 +27,26 @@ npm install -g @cloud-teahouse/cloudcode-cli
 
 运行 `cloudcode`，然后 `/login` 连接账号。
 
+## 验证发布产物
+
+每次发布都会同时提供 `sha256sums.txt` 和它的 [minisign](https://jedisct1.github.io/minisign/) 分离签名 `sha256sums.txt.minisig`。签名公钥为：
+
+```
+RWRSCedfeEAUBWZPDn2NRhR1Wgb+c3PvDMQYZOKXwpK37dzjBK+XxeZ+
+```
+
+安装脚本、npm 包的安装器与 `/update apply` 都会先验证这个签名，之后才采信其中的任何一条校验和；签名缺失或无效一律拒绝安装——与产物同页提供的校验和文件只能证明下载完整，不能证明它出自我们之手。公钥随本仓库源码入库（见 [`release-keys.ts`](apps/cloud-code/src/cli/update/release-keys.ts)），因此信任一次发布等于信任这里的一个提交，而不是信任 Release 页面。
+
+手动校验：
+
+```sh
+minisign -Vm sha256sums.txt -P RWRSCedfeEAUBWZPDn2NRhR1Wgb+c3PvDMQYZOKXwpK37dzjBK+XxeZ+
+sha256sum -c --ignore-missing sha256sums.txt
+```
+
 ## 更新
 
-应用内：`/update` 检查最新版本；`/update apply` 下载、校验（sha256）并替换二进制（自动备份）。
+应用内：`/update` 检查最新版本；`/update apply` 下载、验证发布签名与 sha256，并替换二进制（自动备份）。
 
 ## 开发
 

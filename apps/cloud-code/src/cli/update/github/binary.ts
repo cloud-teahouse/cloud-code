@@ -4,9 +4,12 @@ import { basename } from 'node:path';
 
 import { CLOUD_CODE_BUILD_INFO } from '#/cli/build-info';
 
+import { verifyMinisignSignature } from '../minisign';
+
 import {
   GITHUB_DOWNLOAD_TIMEOUT_MS,
   SHA256SUMS_ASSET_NAME,
+  SHA256SUMS_SIGNATURE_ASSET_NAME,
   getReleaseAssetName,
 } from './constants';
 import type { BinaryInstall, BinaryUpdateResult, GithubRelease } from './types';
@@ -99,9 +102,12 @@ function sha256Hex(bytes: Buffer): string {
 
 /**
  * Download `release`'s asset for this platform, verify it against the
- * release's `sha256sums.txt`, then atomically replace the running binary.
+ * release's signed `sha256sums.txt`, then atomically replace the running
+ * binary.
  *
  * Safety contract:
+ * - the checksum file is rejected unless it carries a valid signature from a
+ *   key pinned in this source tree, and its contents are not read before that;
  * - the checksum is verified before anything is written near the binary;
  * - the current binary is preserved at `<execPath>.bak` before replacement;
  * - replacement is write-tmp + rename on the same filesystem (atomic);
@@ -124,34 +130,68 @@ export async function applyBinaryUpdate(
 
   const asset = release.assets.find((candidate) => candidate.name === assetName);
   const sumsAsset = release.assets.find((candidate) => candidate.name === SHA256SUMS_ASSET_NAME);
-  if (asset === undefined || sumsAsset === undefined) {
+  const signatureAsset = release.assets.find(
+    (candidate) => candidate.name === SHA256SUMS_SIGNATURE_ASSET_NAME,
+  );
+  if (asset === undefined || sumsAsset === undefined || signatureAsset === undefined) {
+    const missing =
+      asset === undefined
+        ? assetName
+        : sumsAsset === undefined
+          ? SHA256SUMS_ASSET_NAME
+          : SHA256SUMS_SIGNATURE_ASSET_NAME;
     return {
       kind: 'failed',
       stage: 'asset-missing',
       message:
-        asset === undefined
-          ? `release ${release.tag} has no asset named ${assetName}`
-          : `release ${release.tag} has no ${SHA256SUMS_ASSET_NAME} asset`,
+        signatureAsset === undefined && asset !== undefined && sumsAsset !== undefined
+          ? `release ${release.tag} is not signed (no ${missing} asset); refusing to install it`
+          : `release ${release.tag} has no asset named ${missing}`,
+      execPath,
+      backupPath: null,
+    };
+  }
+
+  let sumsBytes: Buffer;
+  let signatureText: string;
+  try {
+    sumsBytes = await downloadBytes(fetchImpl, sumsAsset.downloadUrl);
+    signatureText = (await downloadBytes(fetchImpl, signatureAsset.downloadUrl)).toString('utf-8');
+  } catch (error) {
+    return {
+      kind: 'failed',
+      stage: 'download',
+      message: error instanceof Error ? error.message : String(error),
+      execPath,
+      backupPath: null,
+    };
+  }
+
+  // Nothing reads the checksum file until its signature checks out.
+  const verdict = verifyMinisignSignature(sumsBytes, signatureText);
+  if (!verdict.ok) {
+    return {
+      kind: 'failed',
+      stage: 'signature',
+      message: `release ${release.tag} failed signature verification: ${verdict.reason}`,
+      execPath,
+      backupPath: null,
+    };
+  }
+
+  const expectedSha256 = findChecksumForAsset(sumsBytes.toString('utf-8'), assetName);
+  if (expectedSha256 === null) {
+    return {
+      kind: 'failed',
+      stage: 'checksum',
+      message: `${SHA256SUMS_ASSET_NAME} has no entry for ${assetName}`,
       execPath,
       backupPath: null,
     };
   }
 
   let binaryBytes: Buffer;
-  let expectedSha256: string;
   try {
-    const sumsBytes = await downloadBytes(fetchImpl, sumsAsset.downloadUrl);
-    const checksum = findChecksumForAsset(sumsBytes.toString('utf-8'), assetName);
-    if (checksum === null) {
-      return {
-        kind: 'failed',
-        stage: 'checksum',
-        message: `${SHA256SUMS_ASSET_NAME} has no entry for ${assetName}`,
-        execPath,
-        backupPath: null,
-      };
-    }
-    expectedSha256 = checksum;
     binaryBytes = await downloadBytes(fetchImpl, asset.downloadUrl);
   } catch (error) {
     return {

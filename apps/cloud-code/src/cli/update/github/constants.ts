@@ -6,8 +6,16 @@
  * change. The workflow must publish, for every `v*` tag:
  *
  *   - raw binary assets `cloud-code-<platform>-<arch>[.exe]` (the same names
- *     the bun compile matrix already uses internally), and
- *   - a `sha256sums.txt` asset with one `<sha256>  <filename>` line per binary.
+ *     the bun compile matrix already uses internally),
+ *   - a `sha256sums.txt` asset with one `<sha256>  <filename>` line per binary,
+ *     and
+ *   - a `sha256sums.txt.minisig` detached minisign signature over it.
+ *
+ * The signature is the trust anchor and the checksums hang off it: one
+ * verification against a key pinned in this source tree covers every artifact
+ * the release ships. A release missing the signature is refused rather than
+ * downgraded to checksums alone, which an attacker who can rewrite assets
+ * could satisfy trivially.
  *
  * Download URLs are taken from the release JSON (`browser_download_url`), so
  * only the asset *names* are contractual — not the URL shape.
@@ -23,6 +31,9 @@ export function githubReleaseByTagUrl(tag: string): string {
 
 /** Asset holding `<sha256>  <filename>` lines for every binary in a release. */
 export const SHA256SUMS_ASSET_NAME = 'sha256sums.txt';
+
+/** Detached minisign signature over {@link SHA256SUMS_ASSET_NAME}. */
+export const SHA256SUMS_SIGNATURE_ASSET_NAME = `${SHA256SUMS_ASSET_NAME}.minisig`;
 
 /** GitHub API requests are slow enough that the CDN's 3s would false-fail. */
 export const GITHUB_API_TIMEOUT_MS = 10_000;

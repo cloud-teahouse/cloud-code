@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 /**
  * Tests for scripts/install.sh (repo root). Pure functions are exercised by
@@ -88,6 +90,99 @@ describe('install.sh release_base_url (channel resolution)', () => {
 
   it('has no URL for dev', async () => {
     await expect(runFn('release_base_url', 'dev')).rejects.toMatchObject({ code: 1 });
+  });
+});
+
+/**
+ * Signature checking is the one part of the installer with no Node in reach,
+ * so it is exercised against the same signed fixture the CLI's own verifier
+ * uses. On this machine the python3 branch is what runs; a host with minisign
+ * installed takes the other branch and must reach the same verdicts.
+ */
+describe('install.sh verify_signature', () => {
+  const fixtures = resolve(import.meta.dirname, '../fixtures/release-signature');
+  const workDir = mkdtempSync(join(tmpdir(), 'install-sh-signature-'));
+
+  afterAll(() => {
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  /** Copy the fixture pair into the temp dir, optionally rewriting either half. */
+  function stage(
+    name: string,
+    edit: { content?: string; signature?: (text: string) => string } = {},
+  ): [string, string] {
+    const contentPath = join(workDir, `${name}.txt`);
+    const signaturePath = join(workDir, `${name}.txt.minisig`);
+    const signature = readFileSync(join(fixtures, 'sha256sums.txt.minisig'), 'utf-8');
+    writeFileSync(
+      contentPath,
+      edit.content ?? readFileSync(join(fixtures, 'sha256sums.txt'), 'utf-8'),
+    );
+    writeFileSync(signaturePath, edit.signature === undefined ? signature : edit.signature(signature));
+    return [contentPath, signaturePath];
+  }
+
+  it('accepts a checksum file signed by the release key', async () => {
+    const [content, signature] = stage('valid');
+    await expect(runFn('verify_signature', content, signature)).resolves.toBeDefined();
+  });
+
+  it('accepts the legacy minisign format from the same key', async () => {
+    const contentPath = join(workDir, 'legacy.txt');
+    const signaturePath = join(workDir, 'legacy.txt.minisig');
+    writeFileSync(contentPath, readFileSync(join(fixtures, 'sha256sums.txt')));
+    writeFileSync(signaturePath, readFileSync(join(fixtures, 'sha256sums.legacy.minisig')));
+    await expect(runFn('verify_signature', contentPath, signaturePath)).resolves.toBeDefined();
+  });
+
+  it('rejects checksums edited after signing', async () => {
+    const original = readFileSync(join(fixtures, 'sha256sums.txt'), 'utf-8');
+    const [content, signature] = stage('tampered', {
+      content: original.replace(/^./, 'b'),
+    });
+    await expect(runFn('verify_signature', content, signature)).rejects.toMatchObject({ code: 1 });
+  });
+
+  it('rejects a forged trusted comment', async () => {
+    const [content, signature] = stage('forged-comment', {
+      signature: (text) => {
+        const lines = text.split('\n');
+        lines[2] = 'trusted comment: file:innocent.txt';
+        return lines.join('\n');
+      },
+    });
+    await expect(runFn('verify_signature', content, signature)).rejects.toMatchObject({ code: 1 });
+  });
+
+  it('rejects a signature from an untrusted key', async () => {
+    const [content, signature] = stage('wrong-key', {
+      signature: (text) => {
+        const lines = text.split('\n');
+        const decoded = Buffer.from(lines[1]!, 'base64');
+        decoded.write('ffffffffffffffff', 2, 'hex');
+        lines[1] = decoded.toString('base64');
+        return lines.join('\n');
+      },
+    });
+    await expect(runFn('verify_signature', content, signature)).rejects.toMatchObject({ code: 1 });
+  });
+
+  it('refuses to pass when no verifier is available rather than skipping the check', async () => {
+    const [content, signature] = stage('no-verifier');
+    // PATH is emptied after sourcing so bash itself still resolves, but no
+    // verifier does.
+    await expect(
+      execFileAsync('bash', [
+        '-c',
+        'INSTALL_SH_SOURCE_ONLY=1; source "$1"; shift; PATH=/nonexistent; "$@"',
+        'install-sh-test',
+        script,
+        'verify_signature',
+        content,
+        signature,
+      ]),
+    ).rejects.toMatchObject({ code: 1 });
   });
 });
 

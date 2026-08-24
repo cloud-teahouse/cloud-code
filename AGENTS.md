@@ -10,7 +10,7 @@ Cloud Code CLI 是一个终端 AI coding agent，fork 自 [kimi-code](https://gi
 - **工程深水区**：git worktree 隔离（EnterWorktree/ExitWorktree）、渐进式上下文压缩（tool-result budget → pinpoint → full，触发核算精确到 provider usage）、投影缓存、前缀缓存纪律、session 恢复工程（图修复+中断续跑）、durable cron（项目级持久化+跨会话锁）、memdir（MEMORY.md 注入）、output styles（可插拔提示词风格）。
 - **插件生态**：kimi-code 与 Claude Code 双格式插件、自定义 marketplace（git/github/url/local）、双 scope 启用。
 - **国际化**：en + zh-CN 全量 i18n（编译期同形强制），工具输出结构化本地化通道（display/structured refs）。
-- **三通道分发**：release（tag 正式版）/ beta（滚动 pre-release）/ dev（内部构建），/update 自更新（sha256 校验）。验证全绿后自动发 beta（public-sync 推公开 main + 验收 cron），无需逐次确认，除非当批明确缓发。
+- **三通道分发**：release（tag 正式版）/ beta（滚动 pre-release）/ dev（内部构建），/update 自更新（minisign 签名 + sha256 校验，信任根公钥随源码入库；dev 不发布故不签名）。验证全绿后自动发 beta（public-sync 推公开 main + 验收 cron），无需逐次确认，除非当批明确缓发。
 
 ## 仓库布局
 

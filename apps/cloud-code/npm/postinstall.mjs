@@ -1,8 +1,12 @@
 /**
  * Postinstall for the @cloud-teahouse/cloudcode-cli npm package: fetch the
  * matching platform binary from GitHub Releases and verify it against the
- * release's sha256sums.txt. The binary lands next to this script as
+ * release's signed sha256sums.txt. The binary lands next to this script as
  * npm/bin/cloudcode[.exe]; the bin launcher (bin.mjs) execs it.
+ *
+ * The checksum file is only trusted once its detached minisign signature
+ * verifies against the key pinned in minisign.mjs — checksums served beside
+ * the artifacts they describe prove integrity, not origin.
  *
  * Release resolution follows the package version's channel:
  * - `X.Y.Z-beta.<short8>` (npm dist-tag `beta`) → the rolling `beta`
@@ -20,12 +24,18 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
 } from 'node:fs';
 import { get } from 'node:https';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { verifyMinisignSignature } from './minisign.mjs';
+
 const REPO = 'cloud-teahouse/cloud-code';
+const SUMS_NAME = 'sha256sums.txt';
+const SUMS_SIGNATURE_NAME = `${SUMS_NAME}.minisig`;
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, 'bin');
 
@@ -98,19 +108,30 @@ async function main() {
   const base = releaseBaseUrl(version);
   const target = join(outDir, process.platform === 'win32' ? 'cloudcode.exe' : 'cloudcode');
   if (existsSync(target)) process.exit(0);
+  // Downloads land beside the target and are only promoted once verified: a
+  // rejected payload must never survive at the path bin.mjs execs, and the
+  // presence check above would otherwise treat it as a finished install.
+  const staging = `${target}.download`;
 
   try {
     mkdirSync(outDir, { recursive: true });
-    const sums = await download(`${base}/sha256sums.txt`);
+    const sums = await download(`${base}/${SUMS_NAME}`);
+    const signature = await download(`${base}/${SUMS_SIGNATURE_NAME}`);
+    const verdict = verifyMinisignSignature(Buffer.from(sums, 'utf8'), signature);
+    if (!verdict.ok) {
+      throw new Error(`cloudcode-cli: ${SUMS_NAME} failed signature verification (${verdict.reason})`);
+    }
     const expected = findSha256Entry(sums, name);
-    if (expected === undefined) throw new Error(`cloudcode-cli: ${name} not found in sha256sums.txt (${base})`);
+    if (expected === undefined) throw new Error(`cloudcode-cli: ${name} not found in ${SUMS_NAME} (${base})`);
 
-    await download(`${base}/${name}`, target);
-    const actual = createHash('sha256').update(readFileSync(target)).digest('hex');
+    await download(`${base}/${name}`, staging);
+    const actual = createHash('sha256').update(readFileSync(staging)).digest('hex');
     if (actual !== expected) throw new Error(`cloudcode-cli: sha256 mismatch for ${name} (got ${actual})`);
-    chmodSync(target, 0o755);
-    console.log(`cloudcode-cli: installed ${name} (sha256 verified).`);
+    chmodSync(staging, 0o755);
+    renameSync(staging, target);
+    console.log(`cloudcode-cli: installed ${name} (signature verified).`);
   } catch (error) {
+    rmSync(staging, { force: true });
     // Best-effort: never fail the surrounding install. The bin launcher
     // re-runs this script on first use, so a transient failure (offline,
     // release still building) self-heals later with a clear message.

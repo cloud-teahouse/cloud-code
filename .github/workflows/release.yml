@@ -85,6 +85,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - uses: actions/download-artifact@v4
         with:
           pattern: cloud-code-*
@@ -108,6 +112,13 @@ jobs:
           sha256sum raw/* > sha256sums.txt
           sha256sum *.tar.gz *.zip >> sha256sums.txt
           sed -i 's|  raw/|  |' sha256sums.txt
+
+      # The signature over the checksum file is the trust anchor every
+      # installer checks; see ci.yml for why a failure here must stop the job.
+      - name: Sign checksums
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: node scripts/sign-release.mjs release/sha256sums.txt
 
       # Bilingual (en + zh-CN) release notes. The changelog section is pulled
       # from apps/cloud-code/CHANGELOG.md (`## <version>`) when present;
@@ -148,8 +159,15 @@ jobs:
 
           - Install script: `curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash`
           - npm: `npm install -g @cloud-teahouse/cloudcode-cli`
-          - Manual: download the archive for your platform below, verify it against
-            `sha256sums.txt`, unpack it, and check `cloud-code --version`.
+          - Manual: download the archive for your platform below along with
+            `sha256sums.txt` and `sha256sums.txt.minisig`, verify the checksums are
+            signed by the release key, check the archive against them, unpack, and
+            run `cloud-code --version`:
+
+          ```
+          minisign -Vm sha256sums.txt -P RWRSCedfeEAUBWZPDn2NRhR1Wgb+c3PvDMQYZOKXwpK37dzjBK+XxeZ+
+          sha256sum -c --ignore-missing sha256sums.txt
+          ```
 
           ### Changelog
 
@@ -169,8 +187,14 @@ jobs:
 
           - 安装脚本：`curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash`
           - npm：`npm install -g @cloud-teahouse/cloudcode-cli`
-          - 手动安装：在下方下载对应平台的压缩包，用 `sha256sums.txt` 校验后解压，
-            运行 `cloud-code --version` 确认版本。
+          - 手动安装：在下方下载对应平台的压缩包，连同 `sha256sums.txt` 与
+            `sha256sums.txt.minisig`；先验证校验和文件由发布密钥签名，再核对压缩包，
+            然后解压并运行 `cloud-code --version` 确认版本：
+
+          ```
+          minisign -Vm sha256sums.txt -P RWRSCedfeEAUBWZPDn2NRhR1Wgb+c3PvDMQYZOKXwpK37dzjBK+XxeZ+
+          sha256sum -c --ignore-missing sha256sums.txt
+          ```
 
           ### 更新日志
 
@@ -188,3 +212,4 @@ jobs:
             release/*.tar.gz
             release/*.zip
             release/sha256sums.txt
+            release/sha256sums.txt.minisig

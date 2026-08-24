@@ -135,6 +135,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - uses: actions/download-artifact@v4
         with:
           pattern: cloud-code-*
@@ -159,6 +163,15 @@ jobs:
           sha256sum raw/* > sha256sums.txt
           sha256sum *.tar.gz *.zip >> sha256sums.txt
           sed -i 's|  raw/|  |' sha256sums.txt
+
+      # Signing the checksum file signs the whole release through it: the
+      # installers verify this one signature, then trust the digests. A missing
+      # or invalid signature is refused client-side, so a failure here must
+      # fail the job rather than publish assets nothing will install.
+      - name: Sign checksums
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: node scripts/sign-release.mjs release/sha256sums.txt
 
       # The build-commit/build-version lines are the /update contract — the
       # beta-channel checker parses them out of the release body. Keep the
@@ -193,3 +206,4 @@ jobs:
             release/*.tar.gz
             release/*.zip
             release/sha256sums.txt
+            release/sha256sums.txt.minisig
