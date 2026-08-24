@@ -157,7 +157,7 @@ jobs:
 
           ### Install
 
-          - Install script: `curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash`
+          - Install script: `curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh | bash`
           - npm: `npm install -g @cloud-teahouse/cloudcode-cli`
           - Manual: download the archive for your platform below along with
             `sha256sums.txt` and `sha256sums.txt.minisig`, verify the checksums are
@@ -185,7 +185,7 @@ jobs:
 
           ### 安装
 
-          - 安装脚本：`curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/dev/scripts/install.sh | bash`
+          - 安装脚本：`curl -fsSL https://raw.githubusercontent.com/cloud-teahouse/cloud-code/main/scripts/install.sh | bash`
           - npm：`npm install -g @cloud-teahouse/cloudcode-cli`
           - 手动安装：在下方下载对应平台的压缩包，连同 `sha256sums.txt` 与
             `sha256sums.txt.minisig`；先验证校验和文件由发布密钥签名，再核对压缩包，
