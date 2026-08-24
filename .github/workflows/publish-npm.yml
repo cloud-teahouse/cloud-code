@@ -2,15 +2,21 @@ name: Publish to npm
 
 on:
 
-  release:
-    types: [published]
-  # Auto-publish the beta dist-tag: the public repo's CI rebuilds the rolling
-  # `beta` pre-release on every push to main, and its completion fires this.
-  # Inert in the private repo (no main branch, so CI never runs there).
+  # Both channels chain off the workflow that built their artifacts, so the
+  # publish always lands after the assets it points at exist.
+  #
+  # `release: [published]` cannot be used for the tagged channel: the Release
+  # workflow creates that release with the repository's own GITHUB_TOKEN, and
+  # GitHub does not start a workflow run from an event raised that way (the
+  # recursion guard). The event simply never arrives — so the Release run's
+  # completion is what fires this instead.
+  #
+  # Branch filtering has to happen per job rather than here, since the Release
+  # run is tagged rather than on a branch. Inert in the private repo, where
+  # neither workflow publishes.
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "Release"]
     types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       channel:
@@ -48,12 +54,18 @@ concurrency:
 # dist-tag beta.
 jobs:
   publish-release:
-    if: github.event_name == 'release' || inputs.channel == 'release'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.channel == 'release') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Release' &&
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          # head_sha rather than head_branch: for a tag-triggered run the
+          # branch field is the tag name, and the sha is unambiguous either way.
+          ref: ${{ inputs.tag || github.event.workflow_run.head_sha || github.ref }}
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -79,9 +91,15 @@ jobs:
   # completes, so the rolling `beta` pre-release the postinstall downloads
   # from already carries this exact commit's binaries.
   publish-beta:
+    # The main-branch check used to live in the trigger's `branches:` filter;
+    # it moved here when the Release workflow joined, and it still matters —
+    # without it every pull-request CI run would publish a beta.
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.channel == 'beta') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'CI' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
